@@ -25,7 +25,7 @@ Relying Party ID と Origin は環境ごとの vars に持つ。
 Google OAuth のクライアント ID とリダイレクト URI、AI のモデル名も環境ごとの vars に持つ。
 VAPID の公開鍵と subject は環境ごとの vars に持つ。
 Google のクライアントシークレットと VAPID の秘密鍵は、環境ごとの Secret に置く。
-レート制限の上限値も環境ごとの vars に持つ。
+レート制限の上限値と時間窓も環境ごとの vars に持つ。
 ローカルの `.dev.vars` には staging の資格情報だけを置き、本番の資格情報をローカルに置かない。
 
 D1 のマイグレーションは、対象の環境に適用してからデプロイする。
@@ -38,7 +38,7 @@ Preview URLs は D1 と R2 を本番と分離せず、URL が毎回変わるた�
 ## Consequences
 
 staging の初回の設定が必要になる。
-D1、R2、Queues、Workers AI、Cron Triggers の作成、`database_id` の設定、Secret の設定、Google OAuth のリダイレクト URI の追加、R2 のライフサイクルルールの適用を行う。
+D1、R2、Queues の作成、Workers AI のバインディングと Cron Triggers の設定、`database_id` の設定、Secret の設定、Google OAuth のリダイレクト URI の追加、R2 のライフサイクルルールの適用を行う。
 
 ホスト名を変えると、登録済みのパスキーが無効になり、Google OAuth のリダイレクト URI も変わる。
 ホスト名を固定する。
@@ -47,7 +47,7 @@ D1、R2、Queues、Workers AI、Cron Triggers の作成、`database_id` の設�
 一方で、ローカルの名前でリモートに Worker を作らないように、デプロイのタスクは環境の名前を必須にする。
 
 環境ごとに無料枠を消費する。
-staging と production の D1、R2、Queues、Workers AI、Cron Triggers の利用量を分けて確認する。
+staging と production の D1、R2、Queues、Workers AI の利用量と Cron Triggers の実行設定を分けて確認する。
 
 環境を増やすときは、本 ADR を改訂し、`wrangler.toml`、`mise` のタスク、デプロイの手順を合わせて更新する。
 

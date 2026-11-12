@@ -38,8 +38,8 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 ## 完了条件
 
-- [ ] production の D1、R2、Queues が作成され、`wrangler.toml` の値が実物と一致する。
-- [ ] production の D1 にマイグレーションが適用され、適用済みの版が production と同じである。
+- [ ] production の D1、R2、Queues、Workers AI、Cron Triggers が作成され、`wrangler.toml` の値が実物と一致する。
+- [ ] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list --remote --env production` に未適用がない。
 - [ ] production の R2 にライフサイクルルールが設定されている。
 - [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録されている。
 - [ ] VAPID の公開鍵と subject が production の vars に、秘密鍵が production の Secret に設定されている。
@@ -51,6 +51,9 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 Cloudflare のダッシュボードまたは `wrangler` のコマンドで production の資源を作る。
 `wrangler d1 create`、`wrangler r2 bucket create`、`wrangler queues create` を使い、返った ID を `wrangler.toml` の `[env.production]` に書く。
+`wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、レート制限の上限値と時間窓を置く。
+`[env.production.ai]` と `[env.production.triggers]` を production 用に設定する。
+`wrangler d1 migrations apply --remote --env production` でマイグレーションを適用する。
 `wrangler secret put --env production` で production の Secret を設定する。
 Google Cloud の OAuth の設定で、production のリダイレクト URI を追加する。
 R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKET> <NAME> <PREFIX> --expire-days 7` で設定する。
