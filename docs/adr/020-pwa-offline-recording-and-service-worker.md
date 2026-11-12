@@ -54,18 +54,18 @@ iOS ではホーム画面に追加した場合だけプッシュ通知が届く�
 手書きの JavaScript は、Service Worker の登録用のローダーの数行だけになる。
 `wasm-bindgen` の生成物は Rust のビルド成果物であり、手書きの JavaScript ではない。
 
-Service Worker の wasm は `wasm-bindgen-test` で直接テストしにくい。
+Service Worker 自身の wasm は `wasm-bindgen-test` で直接テストしにくい。
 プッシュの payload の解析と、キャッシュのキーの決定を純粋な関数に分けて native のテストで検証し、イベントの処理は E2E のブラウザテストで検証する。
 
-Service Worker の wasm のサイズを計測する。
+Service Worker 自身の wasm のサイズを計測する。
 キャッシュの対象を増やすと、初回のダウンロードと更新の量が増える。
 
 Service Worker のキャッシュが古いままだと、更新が利用者に届かない。
 Service Worker 自身の wasm と JS の版を揃え、新しい版が有効になったら古いキャッシュを削除する。
 
-iOS のホーム画面に追加した PWA で、Service Worker の wasm が起動できることを確認する。
+iOS のホーム画面に追加した PWA で、Service Worker 自身の wasm が起動できることを確認する。
 起動できない場合は、通知の受信と表示だけを JavaScript に残す例外を認め、この ADR を改訂する。
-Service Worker の wasm が起動できない場合に備えて、通知の表示のフォールバックを用意する。
+Service Worker 自身の wasm が起動できない場合に備えて、通知の表示のフォールバックを用意する。
 
 ブラウザは Service Worker の登録に JavaScript のファイルを要求するため、ローダーの JavaScript は残る。
 Service Worker を完全にゼロ JavaScript にすることはできない。
