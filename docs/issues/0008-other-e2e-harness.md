@@ -63,7 +63,7 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 - [ ] テスト用の OIDC の提供者が `/authorize`、`/token`、`/userinfo`、`/test/user` を持ち、Google の応答と同じ形を返す。
 - [ ] 本物の Google のアカウントと外部のサービスに接続しない。
 - [ ] テスト専用の提供者と、その URL を指す vars が本番のビルドに含まれない。
-- [ ] E2E の実行ごとに一意な利用者を作り、D1 の行と R2 の `users/<利用者 ID>/` と `exports/<利用者 ID>/` の接頭辞を分け、teardown で削除する。`exports/` の接頭辞は 0064 の E2E で確かめる。
+- [ ] E2E の実行ごとに一意な利用者を作り、D1 の行と R2 の `users/<利用者 ID>/` と `exports/<利用者 ID>/` の接頭辞を分け、teardown で削除する。ハーネスのテストで `exports/<利用者 ID>/` にダミーのオブジェクトを置き、teardown で消えることを確かめる。
 - [ ] 待機が条件で書かれ、固定の `sleep` がない。
 - [ ] 待機を含むテストを 10 回連続で実行し、すべて成功する。
 - [ ] Chrome の WebAuthn の仮想認証器、CDP のプッシュとオフラインの操作が、後続の issue から使える関数として用意されている。
