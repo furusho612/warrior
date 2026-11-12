@@ -37,7 +37,7 @@ Service Worker のロジックは Rust で書き、`wasm-bindgen` の `--target 
 Service Worker は、アプリの静的なファイル、wasm、CSS、アイコンをキャッシュする。
 生成された JS は HTTP キャッシュに任せ、Cache API には入れない。
 キャッシュは版ごとに分け、新しい版の Service Worker が有効になったら古いキャッシュを削除する。
-wasm は `install` のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。ローダーはキャッシュにない場合、ネットワークから取得して保存する。
+wasm は `install` のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。ローダーは wasm がキャッシュにない場合、ネットワークから取得して Cache API に保存する。
 キャッシュの対象 (アプリの静的なファイル、wasm、CSS、アイコン) の要求のうち、キャッシュにないものは、ネットワークから取得して Cache API に保存する。生成された JS は対象外とする。
 ネットワークからの取得に失敗しても、キャッシュから起動できるようにする。
 
@@ -82,3 +82,4 @@ iOS の Safari で、ホーム画面に追加していない状態を検出し�
 `frontend/tests/pwa.rs` にブラウザのテストを追加する。
 `backend/warrior/tests/e2e_pwa.rs` に E2E を追加する。
 `backend/pbt/tests/pwa.rs` にキャッシュのキーの性質テストを置く。
+ADR-020 の Decision に、ローダーの wasm の cache miss の経路を追記する。
