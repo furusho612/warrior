@@ -89,4 +89,4 @@ R2 のライフサイクルルールで、書き出しのファイルを 7 日�
 `backend/warrior/tests/csv_export.rs` に結合テストを追加する。
 `backend/pbt/tests/csv.rs` に性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に書き出しのメタデータの表を追加する。
-`wrangler.toml` の R2 のライフサイクルルールに、書き出しの接頭辞の 7 日の削除を追加する。
+`wrangler r2 bucket lifecycle add` で、書き出しの接頭辞の 7 日の削除を設定する。

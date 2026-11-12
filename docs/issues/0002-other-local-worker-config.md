@@ -9,7 +9,8 @@
 ## 目的
 
 ローカルの `wrangler dev` で Worker、D1、R2、Queues、Cron Triggers、Workers AI のバインディングを起動できるようにする。
-staging と production の設定を同じ `wrangler.toml` に置き、環境の取り違えを防ぐ。
+ローカルと production の設定を同じ `wrangler.toml` に置き、環境の取り違えを防ぐ。
+staging は必要になった時点で追加する。
 
 ## 優先度根拠
 
@@ -24,9 +25,10 @@ staging と production の設定を同じ `wrangler.toml` に置き、環境の�
 ## 設計方針
 
 `wrangler.toml` を 1 ファイルとし、トップレベルをローカル専用にする。
-トップレベルの `name` は `warrior-local` とし、`[env.staging]` を `warrior-staging`、`[env.production]` を `warrior` とする。
+トップレベルの `name` は `warrior-local` とし、`[env.production]` を `warrior` とする。
+staging の設定は必要になった時点で追加する。
 リモートの環境へデプロイするときは必ず `--env` を付ける。
-`mise` のデプロイのタスクは、環境の名前を含み、`--env` を付けたコマンドを持つ。
+`mise` のデプロイのタスクは、production の名前を含み、`--env production` を付けたコマンドを持つ。
 
 バインディングは環境ごとに分ける。
 D1 は `DB`、R2 は `BUCKET`、Queues の producer は `JOBS_QUEUE`、Workers AI は `AI` とする。
@@ -42,10 +44,12 @@ Cloudflare の Preview URLs は使わない。
 環境ごとの vars に、Relying Party ID、Origin、Google OAuth の認可 URL、トークン URL、UserInfo の URL、Google のクライアント ID、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値を置く。
 Google のクライアントシークレットと VAPID の秘密鍵は Secret に置く。
 リポジトリには Secret の値を書かない。
-ローカルの `.dev.vars` には staging の資格情報だけを置き、production の資格情報をローカルに置かない。
+ローカルの `.dev.vars` には production の資格情報を置かない。
+ローカルの認証は、0008 のテスト用の OIDC の提供者を使う。
 
-staging と production の D1 の `database_id`、R2 のバケット名、Queues の名前はアカウントに依存する。
+production の D1 の `database_id`、R2 のバケット名、Queues の名前はアカウントに依存する。
 この issue では値の場所と検証のコマンドを用意し、実際の作成と値の設定は 0003 で行う。
+staging の値は、必要になった時点で追加する。
 値が未設定の環境は `wrangler deploy --dry-run` が失敗してよい。
 ローカルの `wrangler dev` は 0003 の値に依存せずに起動できるようにする。
 
@@ -53,7 +57,7 @@ staging と production の D1 の `database_id`、R2 のバケット名、Queues
 
 - [ ] `wrangler dev` がローカルの D1、R2、Queues、Cron Triggers、Workers AI のバインディングを起動し、`GET /api/health` が応答する。これは PRD の要求 ID を持たない基盤の条件である。
 - [ ] トップレベルの `name` が `warrior-local` であり、`--env` を付けない `wrangler deploy` が production を更新しない。
-- [ ] `mise` のデプロイのタスクが環境の名前を必須にし、`--env staging` または `--env production` を付ける。
+- [ ] `mise` のデプロイのタスクが production の名前を必須にし、`--env production` を付ける。staging のタスクは必要になった時点で追加する。
 - [ ] `[assets]` の `run_worker_first` が `["/api/*"]` で、`not_found_handling` が `single-page-application` である。
 - [ ] vars と Secret の一覧が環境ごとに揃い、リポジトリに Secret の値がない。
 - [ ] Preview URLs を使う設定がない。
@@ -63,7 +67,8 @@ staging と production の D1 の `database_id`、R2 のバケット名、Queues
 
 リポジトリのルートに `wrangler.toml` を置く。
 トップレベルに `name = "warrior-local"`、`main`、`compatibility_date`、`[assets]`、`[[d1_databases]]`、`[[r2_buckets]]`、`[[queues.producers]]`、`[[queues.consumers]]`、`[ai]`、`[triggers]`、`[vars]` を置く。
-`[env.staging]` と `[env.production]` に同じキーを置き、値だけを環境ごとに変える。
-`mise.toml` に `dev`、`deploy-staging`、`deploy-production`、`db-migrate-local` のタスクを加える。
+`[env.production]` にトップレベルと同じキーを置き、production の値を書く。
+`mise.toml` に `dev`、`deploy-production`、`db-migrate-local` のタスクを加える。
+staging の設定と `deploy-staging` は、必要になった時点で追加する。
 `.dev.vars.example` に必要なキーの名前だけを書き、`.dev.vars` を `.gitignore` に加える。
 `wrangler.toml` の値の意味と、0003 で設定する値を `docs/` の外に置かない。設定の手順は 0003 の issue に書く。
