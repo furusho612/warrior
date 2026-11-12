@@ -80,4 +80,6 @@ CI の提供者が変わる場合は、同じ `mise run check` を呼ぶ設定�
 `service-worker/src/lib.rs` は 1 つのイベントを受け取る最小の関数を持つ。
 `mise.toml` の `[tasks]` に `setup`、`fmt`、`lint`、`test`、`test-pbt`、`build-frontend`、`build-service-worker`、`build`、`check` を定義する。
 `.github/workflows/ci.yml` は `jdx/mise-action` でツールを入れ、`mise run check` を実行する。
-`CHANGES.md` はまだ作らない。利用者に見える変更を出す issue が最初に作る。
+`CHANGES.md` は、利用者に見える変更を出す issue が `## develop` に追記する。
+最初の利用者向けの変更を出す 0015 が `CHANGES.md` を作り、担当者行は `@Shoichi` とする。
+後続の issue は、利用者に見える変更を出す場合、完了条件に `CHANGES.md` の追記を含める。
