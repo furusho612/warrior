@@ -87,4 +87,4 @@ CI の提供者が変わる場合は、同じ `mise run check` を呼ぶ設定�
 `.github/workflows/ci.yml` は `jdx/mise-action` でツールを入れ、`mise run check` を実行する。
 `CHANGES.md` は、利用者に見える変更を出す issue が `## develop` に追記する。
 最初の利用者向けの変更を出す 0015 が `CHANGES.md` を作り、担当者行は `@Shoichi` とする。
-後続の issue は、利用者に見える変更を出す場合、完了条件に `CHANGES.md` の追記を含める。
+後続の issue は、利用者に見える変更を出す場合、`CHANGES.md` の `## develop` に追記する。
