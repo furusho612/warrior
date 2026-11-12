@@ -63,7 +63,7 @@
 
 `migrations/` の `training_sessions` と `training_exercises` に `memo` を追加する。0021 の表に列を足す。
 `backend/warrior_core/src/memo.rs` に、長さの検証と表示用の無害化を置く。
-`backend/warrior/src/session.rs` と `backend/warrior/src/session_exercise.rs` にメモの保存を追加する。
+`backend/warrior/src/training_session.rs` と `backend/warrior/src/training_session_exercise.rs` にメモの保存を追加する。
 `backend/warrior_core/src/ai/context.rs` にメモを含める処理を追加する。
 `frontend/src/screens/record.rs` にメモの入力を置く。
 `backend/warrior/tests/e2e_memo.rs` に E2E を追加する。

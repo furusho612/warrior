@@ -64,7 +64,7 @@ AI の評価と次回セットの提案は、生成時の記録に基づくた�
 
 ## 解決方法
 
-`backend/warrior/src/session.rs` に、終了したトレーニングの編集、削除、日付指定の追加を置く。
+`backend/warrior/src/training_session.rs` に、終了したトレーニングの編集、削除、日付指定の追加を置く。
 `backend/warrior_core/src/personal_best.rs` に、全ての記録から自己ベストを計算し直す関数を置く。
 `backend/warrior/src/personal_best.rs` に、対象の種目の自己ベストを計算し直す処理を置く。
 `frontend/src/screens/record.rs` に、終了したトレーニングの編集の表示を置く。

@@ -76,7 +76,7 @@
 ## 解決方法
 
 `backend/warrior_core/src/previous.rs` に、前回の選択と総重量の差の計算を置く。
-`backend/warrior/src/session_exercise.rs` に、種目の追加、並べ替え、削除と前回の取得を置く。
+`backend/warrior/src/training_session_exercise.rs` に、種目の追加、並べ替え、削除と前回の取得を置く。
 `frontend/src/screens/record.rs` に種目のレール、追加の操作、前回の記録の表示、コピー、差の表示を置く。
 `frontend/src/screens/library.rs` に種目の選択の画面を置く。
 `backend/warrior/tests/e2e_record_exercise.rs` に E2E を追加する。

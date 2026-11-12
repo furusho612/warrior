@@ -104,7 +104,7 @@ Queue と生成のログには、ジョブの種別、生成の ID、試行回�
 `backend/warrior/src/router.rs` に `GET /api/ai/jobs/:id` を追加する。
 `backend/warrior/tests/fixtures/ai_outputs/` に、画面の確認に使う固定の AI 出力を置く。実モデルの品質は 0069 で確認する。
 `backend/warrior/src/router.rs` と `backend/warrior/src/scheduled.rs` に、生成の行の作成と `pending` の送信を追加する。
-`backend/warrior/src/session.rs` の終了の処理に、生成の行の作成を追加する。
+`backend/warrior/src/training_session.rs` の終了の処理に、生成の行の作成を追加する。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `ai_generation` と `ai_outputs` を追加する。
 `backend/warrior/tests/ai_job.rs` に結合テストを追加する。
 `backend/pbt/tests/ai_job.rs` に状態の性質テストを置く。

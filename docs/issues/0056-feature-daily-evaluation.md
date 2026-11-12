@@ -70,7 +70,7 @@ AI の生成に失敗した場合、または評価できない場合は、サ�
 `backend/warrior_core/src/evaluation.rs` に、日の評価の一意キー、一覧の選択、評価できない場合の判定を置く。
 `backend/warrior/src/evaluation.rs` に、日の評価の取得と一覧を置く。
 `backend/warrior/src/router.rs` に `GET /api/evaluations`、`GET /api/evaluations/:id` を追加する。
-`backend/warrior/src/session.rs` の終了の処理で、日の評価の生成の行を作る。
+`backend/warrior/src/training_session.rs` の終了の処理で、日の評価の生成の行を作る。
 `frontend/src/screens/summary.rs` に評価の表示を置く。
 `frontend/src/screens/analysis.rs` に評価の一覧を置く。
 `frontend/src/text.rs` に評価の構成と医療上の助言ではない旨の文言を追加する。

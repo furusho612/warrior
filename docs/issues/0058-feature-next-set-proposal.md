@@ -72,7 +72,7 @@ AI の生成に失敗した場合、または提案がない場合は、候補�
 `backend/warrior_core/src/proposal.rs` に、提案の型、一意キー、採用と修正の規則、痛みの記述がある場合の扱いを置く。
 `backend/warrior/src/proposal.rs` に、提案の取得、保存、修正を置く。
 `backend/warrior/src/router.rs` に `GET /api/proposals`、`PUT /api/proposals/:id` を追加する。
-`backend/warrior/src/session.rs` の終了の処理で、種目ごとの提案の生成の行を作る。
+`backend/warrior/src/training_session.rs` の終了の処理で、種目ごとの提案の生成の行を作る。
 `frontend/src/screens/record.rs` に提案の候補、採用、修正を置く。
 `frontend/src/screens/exercise.rs` に提案の一覧と修正を置く。
 `frontend/src/text.rs` に提案の理由と安全の案内の文言を追加する。
