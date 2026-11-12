@@ -74,7 +74,7 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 
 `backend/warrior/tests/support/mod.rs` に、`wrangler dev` の起動、health の待機、マイグレーションの適用、テスト用の提供者の起動、利用者の作成、teardown を置く。
 `backend/warrior/tests/e2e_auth_smoke.rs` に、ログインからホームまでの E2E を置く。
-`tools/test-oidc/Cargo.toml` と `tools/test-oidc/src/main.rs` に、テスト用の提供者を置く。HTTP のサーバーは標準ライブラリの `TcpListener` で実装し、本番の依存を増やさない。
+`tools/test-oidc/Cargo.toml` と `tools/test-oidc/src/main.rs` に、テスト用の提供者を置く。ワークスペースに追加し、本番の wasm に含めない。HTTP のサーバーは標準ライブラリの `TcpListener` で実装し、本番の依存を増やさない。
 `frontend/tests/browser.rs` に `wasm-bindgen-test` の入口を置く。
 `mise.toml` に `e2e`、`e2e-safari`、`test-browser` を追加し、`check` から Chrome の E2E とブラウザ API のテストを呼ぶ。
 `.github/workflows/ci.yml` に Linux と macOS のジョブを追加する。

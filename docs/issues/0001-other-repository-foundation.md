@@ -44,8 +44,10 @@ Rust は 1.99.0、`wasm32-unknown-unknown` のターゲット、clippy、rustfmt
 
 `mise` のタスクに、セットアップ、整形、lint、単体テスト、PBT、フロントエンドのビルド、Service Worker のビルド、ビルド、`check` を置く。
 `frontend:build-service-worker` を `frontend:build` の依存に置く。
-`check` は整形、lint、単体テスト、PBT、フロントエンドのビルド、Service Worker のビルド、Fuzzing の型検査を順に実行する。
+`check` は整形、lint、単体テスト、PBT、フロントエンドのビルド、Service Worker のビルドを順に実行する。
+Fuzzing の型検査は 0065 で `check` に加える。
 結合テスト、ブラウザのテスト、E2E、形式手法のタスクは、それぞれの issue で `check` に加える。
+各 issue は、追加したテストを `mise run check` か、CI で実行するタスクに含める。
 
 CI は GitHub Actions を前提にし、Linux の runner で `mise run check` を実行するジョブを置く。
 macOS の runner を使う Safari の E2E は 0008 で加える。
@@ -75,7 +77,8 @@ CI の提供者が変わる場合は、同じ `mise run check` を呼ぶ設定�
 `Cargo.toml` の `[workspace]` に `backend/warrior`、`backend/warrior_core`、`backend/pbt`、`frontend`、`service-worker` を並べる。
 `backend/warrior_core/src/lib.rs` に health 用の定数と、その値を確かめる単体テストを置く。
 `backend/warrior/src/lib.rs` は空の Worker の入口を持つ。
-`backend/pbt/tests/` は空のままにせず、初期の性質テストを 0011 で追加する。
+`backend/pbt/tests/` には、0011 で初期の性質テストを追加する。
+0001 の時点では、クレートのビルドと `mise run check` の完走だけを確かめる。
 `frontend/src/main.rs` は 1 つの経路だけを持つ最小の Dioxus アプリにする。
 `service-worker/src/lib.rs` は 1 つのイベントを受け取る最小の関数を持つ。
 `mise.toml` の `[tasks]` に `setup`、`fmt`、`lint`、`test`、`test-pbt`、`build-frontend`、`build-service-worker`、`build`、`check` を定義する。

@@ -19,12 +19,13 @@
 
 ## 現状
 
-0035 でブラウザ通知、0036 でプッシュ購読と Service Worker の通知表示を実装する。
+0036 でプッシュ購読と Service Worker の通知表示、0037 で Web Push の送信を実装する。
 しかし、レストの終了予定時刻の予約、Queue による遅延、取り消し、再予約、有効期限、遅延の計測がない。
 
 ## 設計方針
 
 セットの完了時に、アプリはサーバーへレストの残り時間を送る。
+0037 の完了後、0038 の前に着手する。
 サーバーは受け取った時刻から終了予定時刻を決め、`rest_push_reservations` の行を作る。
 予約は、予約 ID、利用者 ID、トレーニング ID、端末の ID、版、終了予定時刻、有効かどうか、送信時刻、受信時刻を持つ。
 
@@ -36,7 +37,7 @@
 スキップとトレーニングの終了では、版を進めて古い予約を無効にし、新しい予約を作らない。
 古い版のメッセージが届いても、通知を送らない。
 
-消費側は、予約の行を読み、次の条件を全て満たす場合だけ Web Push を送る。
+消費側は、予約の行を読み、次の条件を全て満たす場合だけ 0037 の Web Push の送信を呼ぶ。
 
 - 予約が有効である。
 - メッセージの版が予約の版と一致する。
@@ -49,8 +50,7 @@
 通知を送ったら、送信時刻を保存する。
 同じメッセージを複数回処理しても、通知は最大 1 回とする。
 
-通知の `Urgency` を `high` にする。
-`TTL` は `max(0, 30 - (現在時刻 - 終了予定時刻))` 秒とする。
+送信の `Urgency` は `high` とし、`TTL` は `max(0, 30 - (現在時刻 - 終了予定時刻))` 秒とする。
 終了予定時刻から 30 秒を過ぎたメッセージは送らない。
 
 通知の宛先は、トレーニングを開始した端末の購読に限る。
@@ -60,10 +60,6 @@
 通信できない状態でセットを完了した場合は、アプリは予約を送らない。
 音と画面表示だけでレストの終了を知らせる。
 接続が戻った後に、過ぎたレストの予約を送らない。
-
-Web Push の送信は、VAPID の ES256 の JWT と aes128gcm の暗号化を自前で実装する。
-`p256`、`sha2`、`hkdf`、`aes-gcm` を使い、汎用の Web Push のクレートは追加しない。
-RFC 8291 のテストベクタで復号して一致することを確かめる。
 
 遅延の計測のため、サーバーは送信時刻を保存する。
 Service Worker は通知を受け取った時刻を `POST /api/push/received` に送り、サーバーは予約 ID と版に紐づけて受信時刻を保存する。
@@ -82,19 +78,15 @@ Cron Triggers で、期限を過ぎた予約と、lease の期限を過ぎた Qu
 - [ ] 終了予定時刻から 30 秒を過ぎたメッセージを送らない。
 - [ ] Queue のメッセージに予約 ID と版だけが入り、記録の本文が入らない。
 - [ ] 予約の作成、延長、短縮、スキップ、終了が、0010 の TLA+ のモデルの遷移と対応する。
-- [ ] Web Push の VAPID の JWT が公開鍵で検証でき、ヘッダと payload が一致する。
-- [ ] aes128gcm が RFC 8291 のテストベクタで復号して一致する。
 - [ ] サーバーが送信時刻を、Service Worker が受信時刻を保存し、`mise run verify-staging` が 10 回の差を集計して 5 秒以内が 9 回以上かを判定する。これは REQ-TMR-012 の受入基準のうち、計測の部分に対応する。採用の判断は 0038 が担う。
 - [ ] ローカルの `wrangler dev` の Queues で、予約の作成、取り消し、再予約、古いメッセージの無視を確かめる。
 - [ ] PBT で、送信の条件が、予約の有効性、版、時刻の範囲、送信済みの 4 つの条件の全てを満たす場合だけ真になることを確かめる。
-- [ ] PBT で、VAPID の JWT と aes128gcm の往復を確かめる。
 - [ ] 例示テストで、終了予定時刻の 1 秒前、ちょうど、30 秒後、31 秒後、古い版、送信済みを確かめる。
 - [ ] E2E で、CDP の `ServiceWorker.deliverPushMessage` を使い、通知の表示と、押したときの画面の移動を確かめる。実際の配信は staging の実機で 0038 が確かめる。
 
 ## 解決方法
 
 `migrations/` に `rest_push_reservations` の表を追加し、`push_subscriptions` に端末の ID を追加する。
-`backend/warrior_core/src/web_push.rs` に、VAPID の JWT と aes128gcm の暗号化を置く。
 `backend/warrior_core/src/rest_push.rs` に、送信の条件と予約の版の規則を置く。
 `backend/warrior/src/push.rs` に、予約の作成、取り消し、再予約、消費側の処理を置く。
 `backend/warrior/src/queue.rs` に、`JOBS_QUEUE` の producer と consumer を置く。
@@ -103,4 +95,5 @@ Cron Triggers で、期限を過ぎた予約と、lease の期限を過ぎた Qu
 `frontend/src/screens/record.rs` のセットの完了とタイマーの操作から予約を呼ぶ。
 `mise.toml` に `verify-staging` を追加する。
 `backend/warrior/tests/rest_push.rs` に結合テストを追加する。
-`backend/pbt/tests/web_push.rs` と `backend/pbt/tests/rest_push.rs` に性質テストを置く。
+`backend/pbt/tests/rest_push.rs` に性質テストを置く。
+`backend/warrior_core/src/web_push.rs` の送信の関数を呼ぶ。
