@@ -5,7 +5,7 @@
 ## Context
 
 手元と CI で同じツールの版と同じコマンドラインを使う必要がある。
-参照する `../../../brewbook` は、Rust、`worker-build`、Node.js、`wrangler`、Dioxus CLI、`wasm-bindgen`、ChromeDriver、k6、JDK の版を `mise.toml` で固定し、ビルド、テスト、デプロイのコマンドラインを `mise` のタスクに置いている。
+参照する `../../../brewbook` は、Rust、`worker-build`、Node.js、`wrangler`、Dioxus CLI、`wasm-bindgen`、ChromeDriver、JDK の版を `mise.toml` で固定し、ビルド、テスト、デプロイのコマンドラインを `mise` のタスクに置いている。
 バックエンドは Rust と `worker-build` で wasm にビルドし、フロントエンドは Dioxus CLI の `dx` でビルドする。
 テストと E2E は Chrome と Safari の WebDriver、PBT は `proptest`、Fuzzing は `cargo-fuzz`、形式手法は TLA+ と TLC を使う。
 TLC の実行には JDK が要る。
@@ -15,6 +15,7 @@ TLC の実行には JDK が要る。
 リポジトリのルートに `mise.toml` を置き、ツールの版とコマンドラインを管理する。
 Rust は 1.99.0、`wasm32-unknown-unknown` のターゲット、clippy と rustfmt を含める。
 `worker-build` は 0.8.6、Node.js は 24.21.0、`wrangler` は 4.135.0、Dioxus CLI は 0.7.10、`wasm-bindgen` はテストランナー用に 0.2.129、ChromeDriver は 157.0.8103.15、JDK は Temurin 25 とする。
+ビルド用の `wasm-bindgen` は Dioxus CLI が取得する版に従う。
 Safari と `safaridriver` は macOS に付属するものを使い、mise では固定しない。
 `cargo-fuzz` は 0.13.2 とし、`cargo:cargo-fuzz` で入れる。
 `ripgrep` は lint の絵文字と禁止語の検査に使い、15.2.0 とする。
