@@ -79,7 +79,7 @@ PBT が見つけた反例は、Example-based test として残す。
 `cargo-fuzz` で、任意のバイト列と任意のイベント列をパーサに与え、パニックとタイムアウトが起きないことを確かめる。
 Fuzzing は「パニックしないこと」だけを担い、性質の検証は PBT に置く。
 
-対象は、WebAuthn の CBOR、COSE、clientDataJSON、attestation object、authenticator data、ID トークンのクレームのパーサ、AI の出力の JSON とテキスト、同期の操作の JSON、CSV のセル、プッシュ通知の payload、Web Push の購読の鍵、base64url、ISO 8601 の日時、UUID、時間の解析、RPE の解析である。
+対象は、WebAuthn の CBOR、COSE、clientDataJSON、attestation object、authenticator data、ID トークンのクレームのパーサ、AI の出力の JSON とテキスト、同期の操作の JSON、CSV のセル、プッシュ通知の payload、Web Push の購読の鍵、Web Push の VAPID JWT と aes128gcm の復号、base64url、ISO 8601 の日時、UUID、時間の解析、RPE の解析である。
 
 corpus はリポジトリに含め、手元の実行で更新する。
 実行は nightly の CI で行い、corpus をジョブのキャッシュに保存する。

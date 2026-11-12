@@ -80,7 +80,7 @@ JWT の署名検証のクレートは追加しない。
 
 `backend/warrior/src/auth/mod.rs`、`oauth.rs`、`session.rs` を追加する。
 `backend/warrior/src/router.rs` に `GET /api/auth/google/start`、`GET /api/auth/google/callback`、`POST /api/auth/logout`、`GET /api/me` を追加する。
-`migrations/` に `users` の Google の `sub`、`auth_sessions`、`oauth_states` の表を追加する。
+`migrations/` に `auth_sessions`、`oauth_states` の表を追加する。`users` の Google の `sub` は 0004 の `google_sub` を使う。
 `backend/warrior_core/src/auth.rs` に `state`、`nonce`、コード検証子、セッションのハッシュの純粋な関数を置く。
 `backend/warrior/tests/e2e_auth.rs` に E2E を追加する。
 `backend/pbt/tests/auth.rs` にセッションのハッシュの性質テストを置く。

@@ -36,11 +36,14 @@ Fuzzing の対象は、認証、同期、AI、CSV、プッシュ、日付、時�
 - CSV のセル。
 - プッシュ通知の payload。
 - Web Push の購読の鍵。
+- Web Push の VAPID JWT と aes128gcm の復号。
 - base64url の文字列。
 - ISO 8601 の日時。
 - UUID v4。
 - `mm:ss` と秒の時間の解析。
 - RPE の値の解析。
+
+数え方は箇条書きの単位とし、WebAuthn の 5 つのパーサは 1 つの対象として数える。
 
 corpus はリポジトリに含め、手元の実行で更新する。
 Fuzzing の実行は nightly の CI で行い、corpus をジョブのキャッシュに保存する。
@@ -55,7 +58,7 @@ Fuzzing は、パニックとタイムアウトが起きないことだけを確
 ## 完了条件
 
 - [ ] `backend/fuzz` が Cargo のワークスペースのメンバーであり、`cargo fuzz build` が成功する。
-- [ ] 上の 12 の対象の Fuzzing のターゲットがある。
+- [ ] 上の 13 の対象の Fuzzing のターゲットがある。
 - [ ] corpus がリポジトリに含まれ、手元の実行で更新できる。
 - [ ] `mise run fuzz` が時間の上限を持ち、Fuzzing を実行する。
 - [ ] PR の CI が Fuzzing の対象の型検査を行い、nightly の CI が Fuzzing を実行する。
@@ -67,7 +70,7 @@ Fuzzing は、パニックとタイムアウトが起きないことだけを確
 
 ## 解決方法
 
-`backend/fuzz/Cargo.toml` と `backend/fuzz/fuzz_targets/` に、12 の対象のターゲットを置く。
+`backend/fuzz/Cargo.toml` と `backend/fuzz/fuzz_targets/` に、13 の対象のターゲットを置く。
 `backend/fuzz/corpus/` に corpus を置く。
 `mise.toml` に `fuzz` タスクを追加し、`check` に Fuzzing の型検査を追加する。
 `.github/workflows/ci.yml` に nightly の Fuzzing のジョブを追加する。

@@ -1,6 +1,6 @@
 # ドロップセットの段と制約を実装する
 
-- Requirements: REQ-SET-003
+- Requirements: REQ-SET-003, REQ-SET-007
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017

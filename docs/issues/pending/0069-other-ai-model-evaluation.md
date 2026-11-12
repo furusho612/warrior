@@ -1,6 +1,6 @@
 # AI モデルの品質を無料枠で評価する
 
-- Requirements: なし (ADR-018 のモデル品質の確認であり、PRD の要求 ID を持たない)
+- Requirements: REQ-AI-009 (モデル品質の確認は ADR-018 の判断であり、ほかの要求 ID を持たない)
 - Priority: Medium
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
