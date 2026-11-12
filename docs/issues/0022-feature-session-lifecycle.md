@@ -69,11 +69,11 @@ AI の評価の表示は 0056 以降で加える。
 
 ## 解決方法
 
-`backend/warrior_core/src/session.rs` に、トレーニングの型とサマリーの計算を置く。
-`backend/warrior/src/session.rs` に `POST /api/trainings`、`POST /api/trainings/:id/finish`、`GET /api/trainings/:id/summary` を置く。
+`backend/warrior_core/src/training_session.rs` に、トレーニングの型とサマリーの計算を置く。
+`backend/warrior/src/training_session.rs` に `POST /api/trainings`、`POST /api/trainings/:id/finish`、`GET /api/trainings/:id/summary` を置く。
 `frontend/src/screens/record.rs` に記録の画面の枠と終了の操作を置く。
 `frontend/src/screens/summary.rs` にサマリーの画面を置く。
 `frontend/src/text.rs` にサマリーの項目の文言を追加する。
-`backend/warrior/tests/e2e_session.rs` に E2E を追加する。
-`backend/warrior_core/src/session.rs` の `#[cfg(test)]` にサマリーの例示テストを置く。
-`backend/pbt/tests/session.rs` にサマリーの性質テストを置く。
+`backend/warrior/tests/e2e_training_session.rs` に E2E を追加する。
+`backend/warrior_core/src/training_session.rs` の `#[cfg(test)]` にサマリーの例示テストを置く。
+`backend/pbt/tests/training_session.rs` にサマリーの性質テストを置く。
