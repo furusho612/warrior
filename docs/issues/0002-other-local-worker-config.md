@@ -41,7 +41,7 @@ Queues は AI の生成とレストの通知の予約を 1 つのキューで扱
 CORS は許可しない。
 Cloudflare の Preview URLs は使わない。
 
-環境ごとの vars に、Relying Party ID、Origin、Google OAuth の認可 URL、トークン URL、UserInfo の URL、Google のクライアント ID、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値を置く。
+環境ごとの vars に、Relying Party ID、Origin、Google OAuth の認可 URL、トークン URL、UserInfo の URL、Google のクライアント ID、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を置く。
 Google のクライアントシークレットと VAPID の秘密鍵は Secret に置く。
 リポジトリには Secret の値を書かない。
 ローカルの `.dev.vars` には production の資格情報を置かない。

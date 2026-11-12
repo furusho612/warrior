@@ -9,6 +9,7 @@
 ## 目的
 
 production の D1、R2、Queues を作成し、Workers AI のバインディングと Cron Triggers を設定し、`wrangler.toml` の値を確定する。
+レート制限の上限値と時間窓も production の vars に置く。
 Google OAuth とパスキーのホスト名を固定し、デプロイできる状態にする。
 staging は必要になった時点で追加する。
 
@@ -38,15 +39,16 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 ## 完了条件
 
-- [ ] production の D1、R2、Queues が作成され、Workers AI のバインディングと Cron Triggers の設定が `[env.production]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision に対応する。
+- [ ] production の D1、R2、Queues が作成され、Workers AI のバインディングと Cron Triggers の設定が `[env.production]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision と Consequences に対応する。
 - [ ] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list DB --remote --env production` に未適用がない。これは ADR-023 の Decision に対応する。
+- [ ] production の vars にある Relying Party ID と Origin が production のホスト名である。これは ADR-023 の Decision に対応する。
 - [ ] production のレート制限の上限値と時間窓が production の vars にある。これは `REQ-NFR-017` の受入基準「上限と時間窓は環境ごとの設定で変えられる」に対応する。
-- [ ] production の R2 にライフサイクルルールが設定されている。これは ADR-023 の Decision に対応する。
-- [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録されている。これは ADR-023 の Decision に対応する。
-- [ ] VAPID の公開鍵と subject が production の vars に、秘密鍵が production の Secret に設定されている。これは ADR-023 の Decision に対応する。
+- [ ] production の R2 にライフサイクルルールが設定されている。これは ADR-023 の Consequences に対応する。
+- [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録されている。これは ADR-023 の Consequences に対応する。
+- [ ] VAPID の公開鍵と subject が production の vars に、Google のクライアントシークレットと VAPID の秘密鍵が production の Secret に設定されている。これは ADR-023 の Decision に対応する。
 - [ ] `wrangler deploy --dry-run --env production` が成功する。これは ADR-023 の Decision に対応する。
 - [ ] ローカルの `.dev.vars` に production の資格情報がない。これは ADR-023 の Decision に対応する。
-- [ ] staging の資源を作っていない。これは ADR-023 の Decision に対応する。
+- [ ] staging の資源を作っていない。これはこの issue の対象範囲に対応する。
 
 ## 解決方法
 
@@ -55,7 +57,7 @@ Cloudflare のダッシュボードまたは `wrangler` のコマンドで produ
 `wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、レート制限の上限値と時間窓を含む production の vars を置く。
 `[env.production.ai]` と `[env.production.triggers]` を production 用に設定する。
 `wrangler d1 migrations apply DB --remote --env production` でマイグレーションを適用する。
-`wrangler secret put --env production` で production の Secret を設定する。
+`wrangler secret put <GOOGLE_CLIENT_SECRET> --env production` と `wrangler secret put <VAPID_PRIVATE_KEY> --env production` で production の Secret を設定する。
 Google Cloud の OAuth の設定で、production のリダイレクト URI を追加する。
 R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKET> <NAME> <PREFIX> --expire-days 7` で設定する。
 作業の結果は issue に追記し、Secret の値は書かない。
