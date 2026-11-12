@@ -1,6 +1,6 @@
 # 利用者ごとと IP ごとのレート制限を実装する
 
-- Requirements: REQ-NFR-009
+- Requirements: REQ-NFR-017
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
@@ -58,7 +58,7 @@ IP は `CF-Connecting-IP` ヘッダから取る。
 
 ## 完了条件
 
-- [ ] 認証の開始とコールバックが IP ごとに数えられ、上限を超えると 429 になる。これは REQ-NFR-009 の受入基準を支える安全性の条件である。
+- [ ] 認証の開始とコールバックが IP ごとに数えられ、上限を超えると 429 になる。これは REQ-NFR-017 の受入基準を支える安全性の条件である。
 - [ ] 認証済みの AI の要求が利用者ごとに数えられ、上限を超えると 429 になる。
 - [ ] プッシュ購読の登録と解除が利用者ごとに数えられ、上限を超えると 429 になる。
 - [ ] 429 の応答に `Retry-After` が付き、次の窓までの秒数を示す。
@@ -72,7 +72,7 @@ IP は `CF-Connecting-IP` ヘッダから取る。
 - [ ] 単体テストで、窓の開始の計算、上限の境界、`Retry-After` の値を確かめる。
 - [ ] 結合テストで、上限の直前と直後、窓の切り替わり、利用者と IP の分離を確かめる。
 - [ ] PBT で、任意の時刻に対して窓の開始が窓の秒数の倍数になり、同じ窓の時刻が同じ開始になることを確かめる。
-- [ ] レート制限の表の行が、アカウントの削除の対象の一覧に含まれる。
+- [ ] 利用者ごとのレート制限の表の行が、アカウントの削除の対象の一覧に含まれる。IP ごとのレート制限の表の行は、利用者に紐づかないため、アカウントの削除の対象に含まれない。
 
 ## 解決方法
 
@@ -83,4 +83,4 @@ IP は `CF-Connecting-IP` ヘッダから取る。
 `backend/warrior/tests/rate_limit.rs` に結合テストを追加する。
 `backend/pbt/tests/rate_limit.rs` に窓の性質テストを置く。
 `wrangler.toml` の vars に上限と窓の秒数を追加する。
-`backend/warrior_core/src/account_deletion.rs` の表の一覧に 2 つの表を追加する。
+`backend/warrior_core/src/account_deletion.rs` の表の一覧に `user_rate_limits` を追加する。`ip_rate_limits` は利用者に紐づかないため、アカウントの削除の対象にしない。

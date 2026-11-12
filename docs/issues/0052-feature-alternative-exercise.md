@@ -70,7 +70,7 @@
 
 `backend/warrior_core/src/alternative.rs` に、候補の選択と並び順を置く。
 `backend/warrior/src/alternative.rs` に、候補の取得、入れ替え、後に回す操作を置く。
-`backend/warrior/src/router.rs` に `GET /api/sessions/:id/exercises/:exercise_id/alternatives`、`POST /api/sessions/:id/exercises/:exercise_id/replace`、`POST /api/sessions/:id/exercises/:exercise_id/defer` を追加する。
+`backend/warrior/src/router.rs` に `GET /api/trainings/:id/exercises/:exercise_id/alternatives`、`POST /api/trainings/:id/exercises/:exercise_id/replace`、`POST /api/trainings/:id/exercises/:exercise_id/defer` を追加する。
 `frontend/src/screens/record.rs` に候補の表示、入れ替え、後に回す操作を置く。
 `frontend/src/storage/library.rs` に種目ライブラリと過去に記録した種目の ID の保存を置く。
 `backend/warrior/tests/e2e_alternative.rs` に E2E を追加する。

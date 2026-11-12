@@ -70,7 +70,7 @@ SQL の組み立ては `backend/warrior_core` に置き、D1 への実行は `ba
 
 `migrations/0001_initial.sql` に `users` の最小の表を作る。
 列は `id`、`google_sub`、`email`、`display_name`、`created_at`、`updated_at` とする。
-認証の列の追加は 0014 で行う。
+認証の列の追加は 0015 で行う。
 `backend/warrior_core/src/ids.rs` に UUID v4 の形式の検証を置く。
 `backend/warrior_core/src/sql.rs` に SQL とバインド値の型、`user_id` の条件を必須にする型を置く。
 `backend/warrior_core/src/cursor.rs` にカーソルの符号化と復号を置く。

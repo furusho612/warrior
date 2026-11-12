@@ -56,6 +56,8 @@ R2 のオブジェクトのキーは生成の ID から決める。
 
 一時的な失敗は `pending` に戻し、再試行する。
 対象は、タイムアウト、5xx、429 とする。
+再試行は最大 3 回とし、間隔を 1 秒、5 秒、30 秒とする。
+3 回を超えた場合は `failed` にする。
 恒久的な失敗は `failed` にし、再試行しない。
 対象は、400、401、403、422、無料枠の超過とする。
 lease の期限を過ぎた `enqueued` の行は、Cron が `pending` に戻す。
@@ -66,6 +68,7 @@ D1 に出力を保存しない。
 AI の生成に失敗した場合、または時間内に応答がない場合も、トレーニングの終了と保存は成功させる。
 利用者は提案なしで記録を続けられる。
 画面に生成の失敗を表示し、記録の操作を止めない。
+画面は `GET /api/ai/jobs/:id` で生成の状態を取得し、`generated` または `failed` になるまで条件を待つ。
 
 Queue と生成のログには、ジョブの種別、生成の ID、試行回数、結果、処理時間、エラーコード、相関 ID を JSON で記録する。
 記録の本文、メモ、AI の入出力、トークン、購読の情報は記録しない。
@@ -76,6 +79,8 @@ Queue と生成のログには、ジョブの種別、生成の ID、試行回�
 - [ ] トレーニングの終了で、日の評価と、記録のある種目ごとの次回セットの提案の `pending` の行が作られる。記録のない種目には提案の行が作られない。これは REQ-AI-018 の受入基準のうち、生成の対象の部分に対応する。
 - [ ] 生成の状態が `pending`、`enqueued`、`generated`、`failed` の間を遷移し、同じメッセージを複数回処理しても出力が重複しない。
 - [ ] 一時的な失敗が `pending` に戻り、恒久的な失敗が `failed` になる。
+- [ ] 一時的な失敗の再試行が最大 3 回で、間隔が 1 秒、5 秒、30 秒であり、3 回を超えると `failed` になる。
+- [ ] `GET /api/ai/jobs/:id` が生成の状態を返し、画面が `generated` または `failed` になるまで状態を取得できる。
 - [ ] lease の期限を過ぎた `enqueued` の行が `pending` に戻る。
 - [ ] R2 に保存できない場合、生成を失敗させ、D1 に出力を保存しない。
 - [ ] R2 のスナップショットが公開されず、アカウントの削除で削除される。
@@ -84,7 +89,7 @@ Queue と生成のログには、ジョブの種別、生成の ID、試行回�
 - [ ] ログに記録の本文、メモ、AI の入出力、トークン、購読の情報が出ない。
 - [ ] モデル名が環境ごとの `AI_MODEL` から読まれ、コードにリテラル値がない。
 - [ ] 単体テストで、状態の遷移、再試行の分類、lease の回復、重複の判定を確かめる。
-- [ ] 結合テストで、`wrangler dev --local` の AI の失敗の経路を確かめる。AI の正常系は 0069 の評価で確かめる。
+- [ ] 結合テストで、`wrangler dev --local` の AI の失敗の経路を確かめる。固定の `ai_outputs` を投入した表示の確認は 0056 以降が担う。
 - [ ] PBT で、状態の遷移が、同じ生成の ID に対して何度処理しても `generated` または `failed` に収束することを確かめる。
 - [ ] 例示テストで、タイムアウト、5xx、429、400、401、403、422、無料枠の超過、R2 の失敗を確かめる。
 
@@ -93,6 +98,8 @@ Queue と生成のログには、ジョブの種別、生成の ID、試行回�
 `migrations/` に `ai_generation` と `ai_outputs` の表を追加する。
 `backend/warrior_core/src/ai_job.rs` に、状態、再試行の分類、lease の期限、一意キーの規則を置く。
 `backend/warrior/src/ai_job.rs` に、Queue への投入、消費側の処理、Workers AI の呼び出し、R2 のスナップショットを置く。
+`backend/warrior/src/router.rs` に `GET /api/ai/jobs/:id` を追加する。
+`backend/warrior/tests/fixtures/ai_outputs/` に、画面の確認に使う固定の AI 出力を置く。実モデルの品質は 0069 で確認する。
 `backend/warrior/src/router.rs` と `backend/warrior/src/scheduled.rs` に、生成の行の作成と `pending` の送信を追加する。
 `backend/warrior/src/session.rs` の終了の処理に、生成の行の作成を追加する。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `ai_generation` と `ai_outputs` を追加する。

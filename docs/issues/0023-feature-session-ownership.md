@@ -70,10 +70,10 @@ API の応答とログには出さない。
 
 ## 解決方法
 
-`migrations/` に `terminal_tokens` の表を追加し、`sessions` に `owner_terminal_id` と `updated_at` を追加する。
+`migrations/` に `terminal_tokens` の表を追加し、`training_sessions` に `owner_terminal_id` と `updated_at` を追加する。
 `backend/warrior/src/ownership.rs` に、端末トークンの発行と照合、編集権の検査、引き継ぎを置く。
 `backend/warrior/src/session.rs` の書き込みの経路に編集権の検査を加える。
-`backend/warrior/src/router.rs` に `POST /api/sessions/:id/takeover` を追加する。
+`backend/warrior/src/router.rs` に `POST /api/trainings/:id/takeover` を追加する。
 `frontend/src/storage/terminal.rs` に端末トークンの扱いを置く。端末トークンは HttpOnly の Cookie であるため、アプリは値を読まず、サーバーの応答だけを使う。
 `frontend/src/screens/record.rs` に、閲覧のみの表示と引き継ぎの確認を置く。
 `backend/warrior/tests/e2e_ownership.rs` に E2E を追加する。

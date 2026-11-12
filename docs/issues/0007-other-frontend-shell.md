@@ -30,13 +30,13 @@ Dioxus のアプリに、画面の経路、共通のレイアウト、下部の�
 /login                  ログイン
 /                       ホーム
 /record                 記録中
-/record/:session_id     記録中
+/record/:training_id     記録中
 /calendar               カレンダー
 /library                種目ライブラリ
 /library/:exercise_id   種目詳細
 /analysis               分析
 /routines               ルーティンとプログラム
-/summary/:session_id    終了サマリー
+/summary/:training_id    終了サマリー
 /mypage                 マイページ
 ```
 

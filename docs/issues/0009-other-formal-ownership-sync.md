@@ -23,11 +23,11 @@ ADR-024 の形式手法のうち、編集権と引き継ぎ、オフライン同
 
 ## 設計方針
 
-`formal/` に `SessionOwnership.tla` と `OfflineSync.tla` を置く。
+`formal/` に `TrainingOwnership.tla` と `OfflineSync.tla` を置く。
 定数は端末 2 台、セッション 1 つ、操作 2 つ、タイマー 2 つなど小さくし、TLC が短時間で終わるようにする。
 状態の種類を増やしすぎず、検査したい不変条件が反例を出せる最小のモデルにする。
 
-`SessionOwnership.tla` は、記録中のトレーニングの編集権、開始した端末、サーバーに保存済みの内容、未同期の変更、引き継ぎ、終了後の同時編集をモデル化する。
+`TrainingOwnership.tla` は、記録中のトレーニングの編集権、開始した端末、サーバーに保存済みの内容、未同期の変更、引き継ぎ、終了後の同時編集をモデル化する。
 不変条件は次のとおりである。
 
 - 記録中のトレーニングを編集できる端末が常に 1 台以下である。
@@ -52,7 +52,7 @@ TLC を CI で実行する。
 
 ## 完了条件
 
-- [ ] `formal/SessionOwnership.tla` の TLC の検査が、上の 6 つの不変条件を満たして終了する。これは REQ-NFR-015 の受入基準「記録中のトレーニングは、開始した端末でだけ編集でき、ほかの端末では閲覧だけができる」「引き継ぎの後は元の端末が編集できない」「終了後の編集は後から保存した内容が残る」に対応する。
+- [ ] `formal/TrainingOwnership.tla` の TLC の検査が、上の 6 つの不変条件を満たして終了する。これは REQ-NFR-015 の受入基準「記録中のトレーニングは、開始した端末でだけ編集でき、ほかの端末では閲覧だけができる」「引き継ぎの後、元の端末は閲覧だけができる」「終了した後の編集はどの端末からでもでき、編集が重なった場合は後から保存した内容が残る」に対応する。
 - [ ] `formal/OfflineSync.tla` の TLC の検査が、上の 4 つの不変条件を満たして終了する。これは REQ-NFR-003、REQ-NFR-004、REQ-NFR-005 の受入基準「通信を切った状態でも入力した内容が失われない」「再読み込みの後も同じ状態から再開できる」「未保存の記録が自動で保存される」を状態遷移の側から支える。
 - [ ] ガードを 1 つ外した仕様で TLC が違反を検出し、その結果を issue に記録する。
 - [ ] `formal/README.md` に、各不変条件と要求 ID の対応、定数、実行のコマンドを書く。
@@ -63,7 +63,7 @@ TLC を CI で実行する。
 
 ## 解決方法
 
-`formal/SessionOwnership.tla`、`formal/OfflineSync.tla`、`formal/README.md` を追加する。
+`formal/TrainingOwnership.tla`、`formal/OfflineSync.tla`、`formal/README.md` を追加する。
 `mise.toml` に `formal` タスクを追加し、`tla2tools.jar` の取得と TLC の実行を書く。
 `.github/workflows/ci.yml` に TLC のジョブを追加する。
 `tools/` に TLA+ の定数と実行の補助を置く場合は、本番のビルドに含めない。

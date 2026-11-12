@@ -61,7 +61,7 @@
 
 ## 解決方法
 
-`migrations/` の `sessions` と `session_exercises` に `memo` を追加する。0021 の表に列を足す。
+`migrations/` の `training_sessions` と `training_exercises` に `memo` を追加する。0021 の表に列を足す。
 `backend/warrior_core/src/memo.rs` に、長さの検証と表示用の無害化を置く。
 `backend/warrior/src/session.rs` と `backend/warrior/src/session_exercise.rs` にメモの保存を追加する。
 `backend/warrior_core/src/ai/context.rs` にメモを含める処理を追加する。

@@ -28,7 +28,7 @@ wasm のビルドでは、OpenSSL や `ring` のように wasm32 でビルドで
 | `wasm-bindgen`、`js-sys`、`wasm-bindgen-futures` | wasm と JavaScript の相互運用 | ブラウザと Workers の API を呼ぶために必要である |
 | `web-sys` | ブラウザの API | fetch、IndexedDB、WebAuthn、Push、Service Worker、DOM を使う。使う API の feature だけを有効にする |
 | `dioxus`、`dioxus-router` | 画面と経路 | フロントエンドのフレームワークとルーターである。状態管理や CSS の汎用クレートは追加しない |
-| `p256` | ES256 の署名の検証と生成 | WebAuthn と Web Push の VAPID に必要である。暗号は自前で実装しない |
+| `p256` | ES256 の署名の検証と生成、P-256 ECDH | WebAuthn と Web Push の VAPID、Web Push の共有鍵の導出に必要である。暗号は自前で実装しない |
 | `sha2` | SHA-256 | WebAuthn、セッションのハッシュ、Web Push に必要である。暗号は自前で実装しない |
 | `hkdf` | HKDF-SHA256 | Web Push の鍵の導出に必要である。暗号は自前で実装しない |
 | `aes-gcm` | AES-128-GCM | Web Push の本文の暗号化に必要である。暗号は自前で実装しない |
@@ -108,7 +108,7 @@ wasm のビルドでは、OpenSSL や `ring` のように wasm32 でビルドで
 `web-sys` の feature、`worker` の feature、`dioxus` の feature は、使うものだけを列挙する。
 `worker` は `d1` と `queue` だけを有効にする。
 `dioxus` は `default-features = false` とし、`web`、`minimal`、`document` だけを有効にする。
-`p256` は `default-features = false` とし、`ecdsa` だけを有効にする。
+`p256` は `default-features = false` とし、`ecdsa` と `ecdh` を有効にする。
 使わなくなった依存は削除する。
 自前で実装した部分が小さな範囲を超えて大きくなった場合は、焦点を絞ったクレートの採用を、別の ADR で検討する。
 

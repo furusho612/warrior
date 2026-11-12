@@ -74,13 +74,13 @@ JWT の署名検証のクレートは追加しない。
 - [ ] `CHANGES.md` を作り、`## develop` に `[ADD]` で Google アカウントのログインの追加を書く。担当者行は `@Shoichi` とする。
 - [ ] テスト用の OIDC の提供者を使う E2E で、ログイン、`/api/me`、ログアウト、再ログインを確かめる。
 - [ ] 単体テストで、`state` の検証、ID トークンの payload の検証、セッションのハッシュ、Cookie の属性を確かめる。
-- [ ] PBT で、任意のセッションの値のハッシュが一意で、元の値に戻せないことを確かめる。暗号の性質は `sha2` のテストベクタでも確かめる。
+- [ ] PBT で、任意のセッションの値のハッシュが決定的で、出力の長さが一定であることを確かめる。暗号の性質は `sha2` のテストベクタで確かめる。
 
 ## 解決方法
 
 `backend/warrior/src/auth/mod.rs`、`oauth.rs`、`session.rs` を追加する。
 `backend/warrior/src/router.rs` に `GET /api/auth/google/start`、`GET /api/auth/google/callback`、`POST /api/auth/logout`、`GET /api/me` を追加する。
-`migrations/` に `users` の Google の `sub`、`sessions`、`oauth_states` の表を追加する。
+`migrations/` に `users` の Google の `sub`、`auth_sessions`、`oauth_states` の表を追加する。
 `backend/warrior_core/src/auth.rs` に `state`、`nonce`、コード検証子、セッションのハッシュの純粋な関数を置く。
 `backend/warrior/tests/e2e_auth.rs` に E2E を追加する。
 `backend/pbt/tests/auth.rs` にセッションのハッシュの性質テストを置く。

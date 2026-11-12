@@ -34,7 +34,7 @@ payload は `aud` にプッシュサービスの origin、`exp` に有効期限�
 JWT は VAPID の秘密鍵で署名し、公開鍵で検証できることを確かめる。
 
 本文は RFC 8291 の aes128gcm で暗号化する。
-p256 の ECDH で共有鍵を作り、HKDF-SHA256 で鍵と nonce を導出し、AES-128-GCM で暗号化する。
+p256 の ECDH で共有鍵を作り、HKDF-SHA256 で鍵と nonce を導出し、AES-128-GCM で暗号化する。`p256` の `ecdh` feature を使う。
 `p256`、`sha2`、`hkdf`、`aes-gcm` を使い、汎用の Web Push のクレートは追加しない。
 
 `Urgency` は `high` とする。

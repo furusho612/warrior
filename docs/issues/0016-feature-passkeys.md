@@ -27,6 +27,8 @@
 パスキーは、認証済みのアカウントに追加するログイン手段とする。
 パスワードは持たない。
 パスキーの登録、追加、削除には、Google アカウントまたは既存のパスキーによる認証を必要とする。
+登録、追加、削除の API は、セッションに加えて、再認証で発行した短命の elevation token を要求する。
+elevation token は Google アカウントまたは既存のパスキーのアサーションで発行し、有効期限を 5 分、使用を 1 回とする。
 
 WebAuthn の登録では、公開鍵のアルゴリズムを ES256 だけ受け付ける。
 `residentKey` は `preferred`、`userVerification` は `required`、`attestation` は `none` を要求する。
@@ -58,6 +60,7 @@ Google アカウントとすべてのパスキーを失った場合、アカウ�
 ## 完了条件
 
 - [ ] 登録したパスキーでログインできる。検出可能な資格情報がない場合も、Google アカウントのメールアドレスの入力と `allowCredentials` でログインできる。これは REQ-NFR-013 の受入基準に対応する。
+- [ ] 再認証なしのパスキーの登録、追加、削除が 403 になる。
 - [ ] 1 つのアカウントに複数のパスキーを登録でき、追加と削除ができる。削除の後に一覧が変わる。これは REQ-NFR-013 と REQ-MYP-006 の受入基準に対応する。
 - [ ] 登録したパスキーを使えない状態でも、Google アカウントでログインして新しいパスキーを登録できる。これは REQ-NFR-014 の受入基準に対応する。
 - [ ] 登録では ES256 だけを受理し、他のアルゴリズムを拒否する。
@@ -67,7 +70,7 @@ Google アカウントとすべてのパスキーを失った場合、アカウ�
 - [ ] パスキーのログインに成功すると、0015 と同じセッションが発行される。
 - [ ] パスキーをすべて失っても Google アカウントでログインできる。Google アカウントとすべてのパスキーを失った場合は復旧できないことを、登録の画面に表示する。
 - [ ] パスキーの一覧に、登録済みのパスキーが表示され、追加と削除の操作の後に一覧が変わる。
-- [ ] テスト用の OIDC の提供者と Chrome の仮想認証器を使う E2E で、登録、ログイン、複数のパスキーの追加と削除、Google からの復旧を確かめる。Safari の E2E はパスキーを対象外とし、0067 で staging を追加した後、実機で確かめる。
+- [ ] テスト用の OIDC の提供者と Chrome の仮想認証器を使う E2E で、登録、ログイン、複数のパスキーの追加と削除、Google からの復旧、再認証なしの操作の拒否を確かめる。Safari の実機確認は 0067 の staging で行う。この issue の完了条件は Chrome の仮想認証器の E2E までとする。
 - [ ] PBT で、base64url、CBOR、COSE のエンコードとデコードが往復することを確かめる。
 - [ ] 例示テストで、W3C WebAuthn Level 3 のテストベクタ、署名カウンタの減少、期限切れのチャレンジ、使用済みのチャレンジを確かめる。
 - [ ] Fuzzing の対象を 0065 で追加する。この issue ではパーサの型検査までを置く。
@@ -77,6 +80,7 @@ Google アカウントとすべてのパスキーを失った場合、アカウ�
 `backend/warrior_core/src/base64url.rs`、`cbor.rs`、`cose.rs`、`webauthn.rs` を追加する。
 `backend/warrior/src/auth/passkey.rs` に登録とログインの経路を置く。
 `backend/warrior/src/router.rs` に `POST /api/auth/passkey/register/start`、`POST /api/auth/passkey/register/finish`、`POST /api/auth/passkey/login/start`、`POST /api/auth/passkey/login/finish`、`GET /api/me/passkeys`、`DELETE /api/me/passkeys/:id` を追加する。
+`backend/warrior/src/auth/reauthenticate.rs` に、Google アカウントまたは既存のパスキーで再認証し、elevation token を発行する経路を置く。
 `migrations/` に `passkeys` の表を追加する。
 `frontend/src/screens/mypage.rs` にパスキーの一覧と追加、削除の操作を置く。画面の仕上げは 0063 で行う。
 `frontend/src/screens/login.rs` に、検出可能な資格情報がない場合のメールアドレスの入力を置く。
