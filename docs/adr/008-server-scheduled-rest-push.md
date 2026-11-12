@@ -38,7 +38,7 @@ Safari は `web.push.apple.com`、Chrome は `fcm.googleapis.com` を許可す�
 それ以外の endpoint は 400 で拒否する。
 
 通知の `Urgency` を `high` にする。
-`TTL` を 30 秒にし、遅れた通知を破棄する。
+`TTL` は `max(0, 30 - (現在時刻 - 終了予定時刻))` 秒とする。
 通知は終了予定時刻から 30 秒以内にだけ送る。
 それを過ぎたメッセージは送らない。
 
