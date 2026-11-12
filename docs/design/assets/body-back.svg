@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="wfig" viewBox="0 0 200 440" role="img" aria-label="人体図（背面）" xmlns:c2pa="http://c2pa.org/manifest">
+<style>
+.wfig-body{fill:var(--fig-body,#272C37)}
+.wfig-tendon{fill:var(--fig-tendon,#3A3F4B)}
+.wfig-m{fill:var(--fig-rest,#565C68)}
+.wfig-f{fill:none;stroke:var(--fig-rest-line,#3C404A);stroke-width:.9}
+.wfig-rim{fill:none;stroke:var(--fig-rim,#14171D);stroke-width:8;opacity:var(--fig-rim-opacity,0.12)}
+.wfig-m[data-unit="pec-upper"]{fill:var(--wfig-pec-upper,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="pec-upper"]{stroke:var(--wfig-pec-upper-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="pec-mid"]{fill:var(--wfig-pec-mid,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="pec-mid"]{stroke:var(--wfig-pec-mid-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="pec-lower"]{fill:var(--wfig-pec-lower,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="pec-lower"]{stroke:var(--wfig-pec-lower-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="lats"]{fill:var(--wfig-lats,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="lats"]{stroke:var(--wfig-lats-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="teres-major"]{fill:var(--wfig-teres-major,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="teres-major"]{stroke:var(--wfig-teres-major-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="trap-upper"]{fill:var(--wfig-trap-upper,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="trap-upper"]{stroke:var(--wfig-trap-upper-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="trap-mid-lower"]{fill:var(--wfig-trap-mid-lower,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="trap-mid-lower"]{stroke:var(--wfig-trap-mid-lower-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="erector-spinae"]{fill:var(--wfig-erector-spinae,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="erector-spinae"]{stroke:var(--wfig-erector-spinae-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="delt-front"]{fill:var(--wfig-delt-front,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="delt-front"]{stroke:var(--wfig-delt-front-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="delt-mid"]{fill:var(--wfig-delt-mid,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="delt-mid"]{stroke:var(--wfig-delt-mid-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="delt-rear"]{fill:var(--wfig-delt-rear,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="delt-rear"]{stroke:var(--wfig-delt-rear-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="biceps"]{fill:var(--wfig-biceps,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="biceps"]{stroke:var(--wfig-biceps-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="forearm"]{fill:var(--wfig-forearm,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="forearm"]{stroke:var(--wfig-forearm-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="triceps"]{fill:var(--wfig-triceps,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="triceps"]{stroke:var(--wfig-triceps-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="quads"]{fill:var(--wfig-quads,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="quads"]{stroke:var(--wfig-quads-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="hamstrings"]{fill:var(--wfig-hamstrings,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="hamstrings"]{stroke:var(--wfig-hamstrings-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="glute-max"]{fill:var(--wfig-glute-max,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="glute-max"]{stroke:var(--wfig-glute-max-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="glute-med"]{fill:var(--wfig-glute-med,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="glute-med"]{stroke:var(--wfig-glute-med-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="adductors"]{fill:var(--wfig-adductors,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="adductors"]{stroke:var(--wfig-adductors-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="gastrocnemius"]{fill:var(--wfig-gastrocnemius,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="gastrocnemius"]{stroke:var(--wfig-gastrocnemius-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="soleus"]{fill:var(--wfig-soleus,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="soleus"]{stroke:var(--wfig-soleus-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="abs-upper"]{fill:var(--wfig-abs-upper,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="abs-upper"]{stroke:var(--wfig-abs-upper-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="abs-lower"]{fill:var(--wfig-abs-lower,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="abs-lower"]{stroke:var(--wfig-abs-lower-line,var(--fig-rest-line,#3C404A))}
+.wfig-m[data-unit="obliques"]{fill:var(--wfig-obliques,var(--fig-rest,#565C68))}
+.wfig-f[data-unit="obliques"]{stroke:var(--wfig-obliques-line,var(--fig-rest-line,#3C404A))}
+.wfig[data-secondary~="pec-upper"]{--wfig-pec-upper:var(--fig-secondary,#8F693E);--wfig-pec-upper-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="pec-mid"]{--wfig-pec-mid:var(--fig-secondary,#8F693E);--wfig-pec-mid-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="pec-lower"]{--wfig-pec-lower:var(--fig-secondary,#8F693E);--wfig-pec-lower-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="lats"]{--wfig-lats:var(--fig-secondary,#8F693E);--wfig-lats-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="teres-major"]{--wfig-teres-major:var(--fig-secondary,#8F693E);--wfig-teres-major-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="trap-upper"]{--wfig-trap-upper:var(--fig-secondary,#8F693E);--wfig-trap-upper-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="trap-mid-lower"]{--wfig-trap-mid-lower:var(--fig-secondary,#8F693E);--wfig-trap-mid-lower-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="erector-spinae"]{--wfig-erector-spinae:var(--fig-secondary,#8F693E);--wfig-erector-spinae-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="delt-front"]{--wfig-delt-front:var(--fig-secondary,#8F693E);--wfig-delt-front-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="delt-mid"]{--wfig-delt-mid:var(--fig-secondary,#8F693E);--wfig-delt-mid-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="delt-rear"]{--wfig-delt-rear:var(--fig-secondary,#8F693E);--wfig-delt-rear-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="biceps"]{--wfig-biceps:var(--fig-secondary,#8F693E);--wfig-biceps-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="forearm"]{--wfig-forearm:var(--fig-secondary,#8F693E);--wfig-forearm-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="triceps"]{--wfig-triceps:var(--fig-secondary,#8F693E);--wfig-triceps-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="quads"]{--wfig-quads:var(--fig-secondary,#8F693E);--wfig-quads-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="hamstrings"]{--wfig-hamstrings:var(--fig-secondary,#8F693E);--wfig-hamstrings-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="glute-max"]{--wfig-glute-max:var(--fig-secondary,#8F693E);--wfig-glute-max-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="glute-med"]{--wfig-glute-med:var(--fig-secondary,#8F693E);--wfig-glute-med-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="adductors"]{--wfig-adductors:var(--fig-secondary,#8F693E);--wfig-adductors-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="gastrocnemius"]{--wfig-gastrocnemius:var(--fig-secondary,#8F693E);--wfig-gastrocnemius-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="soleus"]{--wfig-soleus:var(--fig-secondary,#8F693E);--wfig-soleus-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="abs-upper"]{--wfig-abs-upper:var(--fig-secondary,#8F693E);--wfig-abs-upper-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="abs-lower"]{--wfig-abs-lower:var(--fig-secondary,#8F693E);--wfig-abs-lower-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-secondary~="obliques"]{--wfig-obliques:var(--fig-secondary,#8F693E);--wfig-obliques-line:var(--fig-secondary-line,#5E4831)}
+.wfig[data-primary~="pec-upper"]{--wfig-pec-upper:var(--fig-primary,#F8AE5B);--wfig-pec-upper-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="pec-mid"]{--wfig-pec-mid:var(--fig-primary,#F8AE5B);--wfig-pec-mid-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="pec-lower"]{--wfig-pec-lower:var(--fig-primary,#F8AE5B);--wfig-pec-lower-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="lats"]{--wfig-lats:var(--fig-primary,#F8AE5B);--wfig-lats-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="teres-major"]{--wfig-teres-major:var(--fig-primary,#F8AE5B);--wfig-teres-major-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="trap-upper"]{--wfig-trap-upper:var(--fig-primary,#F8AE5B);--wfig-trap-upper-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="trap-mid-lower"]{--wfig-trap-mid-lower:var(--fig-primary,#F8AE5B);--wfig-trap-mid-lower-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="erector-spinae"]{--wfig-erector-spinae:var(--fig-primary,#F8AE5B);--wfig-erector-spinae-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="delt-front"]{--wfig-delt-front:var(--fig-primary,#F8AE5B);--wfig-delt-front-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="delt-mid"]{--wfig-delt-mid:var(--fig-primary,#F8AE5B);--wfig-delt-mid-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="delt-rear"]{--wfig-delt-rear:var(--fig-primary,#F8AE5B);--wfig-delt-rear-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="biceps"]{--wfig-biceps:var(--fig-primary,#F8AE5B);--wfig-biceps-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="forearm"]{--wfig-forearm:var(--fig-primary,#F8AE5B);--wfig-forearm-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="triceps"]{--wfig-triceps:var(--fig-primary,#F8AE5B);--wfig-triceps-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="quads"]{--wfig-quads:var(--fig-primary,#F8AE5B);--wfig-quads-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="hamstrings"]{--wfig-hamstrings:var(--fig-primary,#F8AE5B);--wfig-hamstrings-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="glute-max"]{--wfig-glute-max:var(--fig-primary,#F8AE5B);--wfig-glute-max-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="glute-med"]{--wfig-glute-med:var(--fig-primary,#F8AE5B);--wfig-glute-med-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="adductors"]{--wfig-adductors:var(--fig-primary,#F8AE5B);--wfig-adductors-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="gastrocnemius"]{--wfig-gastrocnemius:var(--fig-primary,#F8AE5B);--wfig-gastrocnemius-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="soleus"]{--wfig-soleus:var(--fig-primary,#F8AE5B);--wfig-soleus-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="abs-upper"]{--wfig-abs-upper:var(--fig-primary,#F8AE5B);--wfig-abs-upper-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="abs-lower"]{--wfig-abs-lower:var(--fig-primary,#F8AE5B);--wfig-abs-lower-line:var(--fig-primary-line,#916A3F)}
+.wfig[data-primary~="obliques"]{--wfig-obliques:var(--fig-primary,#F8AE5B);--wfig-obliques-line:var(--fig-primary-line,#916A3F)}
+</style>
+<defs>
+<path id="wfig-bb-sil" d="M100.5 4C90 4 82 12.5 82 27C82 39 86 50.5 93 57.5L92 65C91 68.5 88 71 84 73L63 80C54 80 46 88 45 100C44 110 43 120 43 130C42 145 41 158 38 170C34 180 32 190 32 202C32 214 32 224 32 234C28 244 29 260 34 268C39 272 43 264 43 254L42 234C45 222 47 210 48 198C49 188 50 180 51 172C54 160 57 146 58 132C59 126 60 120 62 116C63 124 64 130 64 136C65 148 68 158 69 168C67 178 65 186 65 193C63 200 61 208 60 216C58 232 58 250 61 270C63 286 66 298 68 310C69 316 68 322 66 328C62 338 62 352 65 364C67 378 70 392 72 404C70 412 66 420 66 426C66 432 72 434 78 434L86 434C88 428 86 416 84 404C85 390 87 376 88 362C90 350 90 338 88 326C87 320 87 314 88 308C91 290 94 270 96 250C97 242 99 236 100.5 230"></path>
+<clipPath id="wfig-bb-sc"><use href="#wfig-bb-sil"></use></clipPath>
+<g id="wfig-bf-b">
+<use href="#wfig-bb-sil" class="wfig-body"></use>
+<path id="wfig-b-tu" d="M100.5 54L94 55.5C93 62 91 68 84 73L64 80.5L64.5 85C76 87.5 90 86.5 100.5 84.5Z" class="wfig-m" data-unit="trap-upper"></path>
+<clipPath id="wfig-bc-tu"><use href="#wfig-b-tu"></use></clipPath>
+<g clip-path="url(#wfig-bc-tu)" class="wfig-f" data-unit="trap-upper"><path d="M100.5 60L65 82M100.5 72L65 84M100.5 82L66 85.5"></path></g>
+<path id="wfig-b-tl" d="M100.5 86.5C90 88.5 77 89.5 65.5 87L67 91C73 95 78.5 99 81 103C89 113 96.5 133 100.5 154Z" class="wfig-m" data-unit="trap-mid-lower"></path>
+<clipPath id="wfig-bc-tl"><use href="#wfig-b-tl"></use></clipPath>
+<g clip-path="url(#wfig-bc-tl)" class="wfig-f" data-unit="trap-mid-lower"><path d="M100.5 90L67 89M100.5 102L78 99.5M100.5 118L82 104M100.5 136L86 112M100.5 150L90 124"></path></g>
+<path id="wfig-b-dp" d="M73.5 93.5L64 86.5L62 83.5C56.5 92 52 108 50.5 128C56 122 62 112 66.5 104C69.5 99 72 96 73.5 93.5Z" class="wfig-m" data-unit="delt-rear"></path>
+<clipPath id="wfig-bc-dp"><use href="#wfig-b-dp"></use></clipPath>
+<g clip-path="url(#wfig-bc-dp)" class="wfig-f" data-unit="delt-rear"><path d="M72 94Q62 106 51.4 126.5M66 88.5Q57 103 50.9 125"></path></g>
+<path id="wfig-b-dm" d="M61 82C53 82 46.5 90 45.5 100C44.5 110 46 121 50 128C51.5 108 55.5 92 61 82Z" class="wfig-m" data-unit="delt-mid"></path>
+<clipPath id="wfig-bc-dm"><use href="#wfig-b-dm"></use></clipPath>
+<g clip-path="url(#wfig-bc-dm)" class="wfig-f" data-unit="delt-mid"><path d="M58.5 83.5Q51.5 100 50 126M52.5 86Q47 102 48.8 123"></path></g>
+<path id="wfig-b-is" d="M80.5 104.5C75.5 101.5 71 102 68.5 105.5C67.5 110 69 114 72 117C77 118 82.5 118.5 86.5 120.5C86 114.5 84 109 80.5 104.5Z" class="wfig-m"></path>
+<clipPath id="wfig-bc-is"><use href="#wfig-b-is"></use></clipPath>
+<g clip-path="url(#wfig-bc-is)" class="wfig-f"><path d="M87 120L67.5 106M83 110L68 105.2"></path></g>
+<path id="wfig-b-tm" d="M87.5 122.5C81 120.5 76 120 72.5 119.5C68.5 118.5 64.5 117.5 61.5 117L61 122.5C67 125 75 128.5 83 131.5C86 129.5 87.5 126 87.5 122.5Z" class="wfig-m" data-unit="teres-major"></path>
+<clipPath id="wfig-bc-tm"><use href="#wfig-b-tm"></use></clipPath>
+<g clip-path="url(#wfig-bc-tm)" class="wfig-f" data-unit="teres-major"><path d="M88 124.5L60.5 118.6M85 131.5L60.5 122"></path></g>
+<path id="wfig-b-la" d="M61 124.5C67.5 127.5 76 131 84 133.5L92.5 134.5C96.5 141 98.8 149 99.8 157C93 163 81 177 73 189C69.5 181.5 68.8 173.5 69.5 168.5C68.5 158.5 65 147 64.5 136C64 130 62.8 127 61 124.5Z" class="wfig-m" data-unit="lats"></path>
+<clipPath id="wfig-bc-la"><use href="#wfig-b-la"></use></clipPath>
+<g clip-path="url(#wfig-bc-la)" class="wfig-f" data-unit="lats"><path d="M61 123.5L99 142M61 123.5L100 158M61 123.5L90 168M61 123.5L80 180M61 123.5L72 190"></path></g>
+<path d="M100.5 156.5C94 162.5 82 176.5 74 188.5C79 188 84.5 189 87.5 190.5C92.5 194 97 198.5 100.5 203.5Z" class="wfig-tendon"></path>
+<path id="wfig-b-es" d="M99 158.5C93 166 88.5 176 88.2 186C88.8 194 93.5 200.5 99 204.5Z" class="wfig-m" data-unit="erector-spinae"></path>
+<clipPath id="wfig-bc-es"><use href="#wfig-b-es"></use></clipPath>
+<g clip-path="url(#wfig-bc-es)" class="wfig-f" data-unit="erector-spinae"><path d="M91 156V206M96 156V206"></path></g>
+<path id="wfig-b-ob" d="M69.3 170C68 176 66.5 183 66 190.5L72 189.5C70.5 183.5 69.6 176.5 69.3 170Z" class="wfig-m" data-unit="obliques"></path>
+<clipPath id="wfig-bc-ob"><use href="#wfig-b-ob"></use></clipPath>
+<g clip-path="url(#wfig-bc-ob)" class="wfig-f" data-unit="obliques"><path d="M69 171L68 191"></path></g>
+<path d="M50.2 143L51.6 152L51.2 166.5L47.4 168.5L46.2 164.5L48.8 152Z" class="wfig-tendon"></path>
+<path id="wfig-b-tr" d="M58.3 116C60.5 127 59.6 143 56 155C54.6 159.5 53 163 51.8 165.5L51.4 152C51.2 141 51.3 131 51.8 124C53.8 120.5 56 117.5 58.3 116ZM50.2 130C46.2 126.5 44 131 43.6 138C43 148 43.6 157 45.8 163.5L48.2 152C48.8 144 49.4 136 50.2 130Z" class="wfig-m" data-unit="triceps"></path>
+<clipPath id="wfig-bc-tr"><use href="#wfig-b-tr"></use></clipPath>
+<g clip-path="url(#wfig-bc-tr)" class="wfig-f" data-unit="triceps"><path d="M57.5 113L51.5 167M54 117L51 160M45.5 127L47.4 166"></path></g>
+<path id="wfig-b-fa" d="M39.5 171C35 180 33 191 33 202C33 214 33 224 33 233L41.5 233C44.5 222 46.5 210 47.5 198C48.5 188 49.5 180 50.5 173C47 171.5 43 170.5 39.5 171Z" class="wfig-m" data-unit="forearm"></path>
+<clipPath id="wfig-bc-fa"><use href="#wfig-b-fa"></use></clipPath>
+<g clip-path="url(#wfig-bc-fa)" class="wfig-f" data-unit="forearm"><path d="M40 168L34.5 236M46 168L38 236M52 170L41.5 236"></path></g>
+<path id="wfig-b-gm" d="M66.5 192.5C72.5 189 80 188.5 86.5 190.5C84.5 198.5 78.5 204.5 70.5 208.5C67 210 64 212 62 214.5C62 207 63.5 199 66.5 192.5Z" class="wfig-m" data-unit="glute-med"></path>
+<clipPath id="wfig-bc-gm"><use href="#wfig-b-gm"></use></clipPath>
+<g clip-path="url(#wfig-bc-gm)" class="wfig-f" data-unit="glute-med"><path d="M70 190L62.3 214M80 188L63.5 213.5"></path></g>
+<path id="wfig-b-gx" d="M87.5 192C92 195 96.5 198.5 99.5 202.5L99.5 237C94.5 245 84.5 248.5 76.5 246.5C68.5 244.5 62.5 237.5 61.3 227C61 222 61.3 218.5 62.2 216C70.5 210 81 203.5 87.5 192Z" class="wfig-m" data-unit="glute-max"></path>
+<clipPath id="wfig-bc-gx"><use href="#wfig-b-gx"></use></clipPath>
+<g clip-path="url(#wfig-bc-gx)" class="wfig-f" data-unit="glute-max"><path d="M100 205L62 232.5M100 221L66 245.5M100 237L84 248.5M90 196L60 217.7"></path></g>
+<path id="wfig-b-vl" d="M61.2 228C59.6 244 59.8 264 62.8 284C64.2 293 66.2 301 68.2 308L69.6 301C66.6 285 64.6 263 64.4 244Z" class="wfig-m" data-unit="quads"></path>
+<clipPath id="wfig-bc-vl"><use href="#wfig-b-vl"></use></clipPath>
+<g clip-path="url(#wfig-bc-vl)" class="wfig-f" data-unit="quads"><path d="M62 228L67 306"></path></g>
+<path id="wfig-b-bf" d="M65.5 245.5C70 249.5 75 250.5 79.5 249.5C79.5 269 77.5 290 73.5 308.5L70 305C67.5 290 65.6 267 65.5 245.5Z" class="wfig-m" data-unit="hamstrings"></path>
+<clipPath id="wfig-bc-bf"><use href="#wfig-b-bf"></use></clipPath>
+<g clip-path="url(#wfig-bc-bf)" class="wfig-f" data-unit="hamstrings"><path d="M68 244L71 308M74 247L72.5 308"></path></g>
+<path id="wfig-b-st" d="M81 249.5C85.5 249.5 90 247.5 93.5 244C93.8 259 91.5 283 88.5 304.5L85 308.5C83.5 300 81.8 290 81 280C80.8 269 80.9 259 81 249.5Z" class="wfig-m" data-unit="hamstrings"></path>
+<clipPath id="wfig-bc-st"><use href="#wfig-b-st"></use></clipPath>
+<g clip-path="url(#wfig-bc-st)" class="wfig-f" data-unit="hamstrings"><path d="M84 248L86 308M90 246L87.5 306"></path></g>
+<path id="wfig-b-ad" d="M99 236C97.5 242 96 248 95.6 252C94.5 262 93 276 90.6 290L89.8 296C92 282 94.3 262 94.6 246C96 243 97.8 239.5 99 236Z" class="wfig-m" data-unit="adductors"></path>
+<clipPath id="wfig-bc-ad"><use href="#wfig-b-ad"></use></clipPath>
+<g clip-path="url(#wfig-bc-ad)" class="wfig-f" data-unit="adductors"><path d="M97.5 240L91 292"></path></g>
+<path id="wfig-b-ga" d="M66.5 323C63.2 335 63.2 349 67 361C69.5 365 73 365 75.5 362.5L75.5 325C72.5 320.5 69 320.5 66.5 323ZM77.5 325L77.5 364.5C80.5 368.5 84.5 366.5 86.6 362.5C89.6 350.5 89.6 337 87.6 325C84.6 320.5 80.5 320.5 77.5 325Z" class="wfig-m" data-unit="gastrocnemius"></path>
+<clipPath id="wfig-bc-ga"><use href="#wfig-b-ga"></use></clipPath>
+<g clip-path="url(#wfig-bc-ga)" class="wfig-f" data-unit="gastrocnemius"><path d="M66.5 326L72 364M71 321L74.5 364M82 321L78.6 366M87 326L82 366"></path></g>
+<path d="M74 397L80 397L79.2 409L75 409Z" class="wfig-tendon"></path>
+<path id="wfig-b-so" d="M65.5 364C66.5 376 69.5 388 73.5 397.5L80.5 397.5C83.5 388 85.5 376 86.5 365.5C83.5 369.5 79.5 370.5 76.5 367.5C73.5 369.5 68.5 367.5 65.5 364Z" class="wfig-m" data-unit="soleus"></path>
+<clipPath id="wfig-bc-so"><use href="#wfig-b-so"></use></clipPath>
+<g clip-path="url(#wfig-bc-so)" class="wfig-f" data-unit="soleus"><path d="M69 364L74.5 398M76.5 368V398M84 366L79.5 398"></path></g>
+<use href="#wfig-bb-sil" clip-path="url(#wfig-bb-sc)" class="wfig-rim"></use>
+</g>
+</defs>
+<use href="#wfig-bf-b"></use>
+<use href="#wfig-bf-b" transform="translate(200 0) scale(-1 1)"></use>
+<metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTo2ZGIzMDMzZS1hMGZiLTQ1YjQtOGViYS0zZTA4OTYxNWE2MWQAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaEyYvErrc1nyr3Y/ldcroQIAAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDplZTcyZjUwYS0wNWEwLTRlZDMtOWUxOS03Y2ZiNWVkNzlmYTBscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNobMba5jMXyMSwZ19xrLAH2gAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFgg5QLpWHO0+MnFW/je9Hi5YqAIbLC5zkykoeyPKcILGf+kZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaNh1SjTJgYp7RcsXOLD0OkMAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRMAAAAAAAAAAAAAAAAZGhhc2hYIJrCw50wY2IRRnMA2qeUFwwKCk7lbEQrRRC5thpBKC25ZG5hbWVuanVtYmYgbWFuaWZlc3RqZXhjbHVzaW9uc4GiZXN0YXJ0GU5/Zmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjZkYjMwMzNlLWEwZmItNDViNC04ZWJhLTNlMDg5NjE1YTYxZC9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOjc3ZmViNDI5LWJmMTYtNDkyYy1iMDgwLTRiNTM4N2RmZTYwM3JjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCDlAulYc7T4ycVb+N70eLlioAhssLnOTKSh7I8pwgsZ/6JjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggUzkWhRHr3xXvQdzOrDO/9pvNJxSnI7k4R95jbnitjHiiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFgg4cRIQ2ldIWl1bAArZySd07heeHG99WaAcpujGAmf6Oh0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQHF+h7bKOghyov6Ylh8K+hOYYdTTVX53KxYLWZeKUTr7rI9cLuyCj7uxVlKEu/WhcvNHHmuJaqCOu1K024z3HUM=</c2pa:manifest></metadata></svg>
