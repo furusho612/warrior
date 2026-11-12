@@ -46,6 +46,7 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 - [ ] `mise` の `deploy-staging` が `--env staging` を付けて実行する。
 - [ ] ローカルの `.dev.vars` に staging の資格情報だけがあり、production の資格情報がない。
 - [ ] staging の `AI_MODEL` が production と同じである。
+- [ ] 0006 の HTTPS と暗号化、0016 の Safari のパスキー、0020 の iOS の PWA の wasm の起動を staging で確かめる。
 
 ## 解決方法
 

@@ -30,7 +30,7 @@ backend/warrior           Cloudflare Workers の入口とバインディング
 backend/warrior_core      バインディングに依存しない純粋なロジック
 backend/pbt               proptest による性質テスト
 frontend                  Dioxus の Web アプリ
-service-worker            Service Worker の wasm
+service-worker            Service Worker 自身の wasm
 ```
 
 Fuzzing のクレートは 0065 で追加する。

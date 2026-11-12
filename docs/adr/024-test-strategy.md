@@ -230,7 +230,7 @@ Google の応答が変わった場合は、提供者とテストを同時に更�
 Workers AI の正常系は CI で実行しないため、モデルの変更や品質の低下を CI では検出できない。
 staging の確認と、PRD のプロンプトを使った品質の評価を、モデルを変えるたびに利用者が行う。
 
-Service Worker の wasm は `wasm-bindgen-test` で直接テストしにくい。
+Service Worker 自身の wasm は `wasm-bindgen-test` で直接テストしにくい。
 プッシュの payload の解析とキャッシュのキーの決定を純粋な関数に分け、E2E の CDP の push でイベントの処理を確かめる。
 
 モックを使わないため、外部の失敗の経路は、実物で起こせる失敗を優先する。
