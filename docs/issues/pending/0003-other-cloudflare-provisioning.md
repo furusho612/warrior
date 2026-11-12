@@ -33,7 +33,7 @@ staging は必要になった時点で、ADR-023 の手順に従って 0067 で�
 production の D1 のデータベース、R2 のバケット、Queues を作る。
 R2 のバケットは production 用に 1 つ用意し、`exports/` の接頭辞には CSV の書き出しを 7 日で削除するライフサイクルルールを設定する。
 D1 のマイグレーションを production に適用してからデプロイする。
-Google OAuth のクライアント ID、リダイレクト URI、Google のクライアントシークレット、VAPID の鍵、レート制限の上限値と時間窓を production の vars と Secret に設定する。
+Google OAuth のクライアント ID、リダイレクト URI、Google のクライアントシークレット、AI のモデル名、VAPID の公開鍵と subject と秘密鍵、レート制限の上限値と時間窓を production の vars と Secret に設定する。
 Relying Party ID と Origin は production のホスト名に固定する。
 ホスト名を変えるとパスキーが無効になり、OAuth のリダイレクト URI も変わるため、ホスト名を後から変えない。
 
@@ -43,7 +43,7 @@ Relying Party ID と Origin は production のホスト名に固定する。
 - [ ] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list DB --remote --env production` に未適用がない。これは ADR-023 の Decision に対応する。
 - [ ] production の vars にある Relying Party ID と Origin が production のホスト名である。これは ADR-023 の Decision に対応する。
 - [ ] production のレート制限の上限値と時間窓が production の vars にある。これは `REQ-NFR-017` の受入基準「上限と時間窓は環境ごとの設定で変えられる」に対応する。
-- [ ] production の R2 バケットは 1 つで、`exports/` の接頭辞に、書き出しを 7 日で削除するライフサイクルルールが設定されている。これは ADR-017 の Decision と ADR-023 の Decision と Consequences に対応する。
+- [ ] production の R2 バケットは 1 つで、`exports/` の接頭辞に、書き出しを 7 日で削除するライフサイクルルールが設定され、`wrangler r2 bucket lifecycle list <BUCKET>` が `exports/` の接頭辞の規則だけを返し、`users/` の接頭辞に規則がない。これは ADR-017 の Decision と ADR-023 の Decision と Consequences に対応する。
 - [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録され、production の vars にある Google のクライアント ID とリダイレクト URI が production のホスト名に対応する。これは ADR-023 の Decision と Consequences に対応する。
 - [ ] VAPID の公開鍵と subject が production の vars に、Google のクライアントシークレットと VAPID の秘密鍵が production の Secret に設定されている。これは ADR-023 の Decision に対応する。
 - [ ] `wrangler deploy --dry-run --env production` が成功する。これはデプロイ設定の検証の内部条件である。
@@ -54,7 +54,7 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 Cloudflare のダッシュボードまたは `wrangler` のコマンドで production の資源を作る。
 `wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、返った ID を `wrangler.toml` の `[env.production]` に書く。R2 のバケットは production 用に 1 つだけ作る。
-`wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、Google OAuth のクライアント ID、リダイレクト URI、レート制限の上限値と時間窓を含む production の vars を置く。
+`wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、Google OAuth のクライアント ID、リダイレクト URI、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を含む production の vars を置く。
 `[env.production.ai]` と `[env.production.triggers]` を production 用に設定する。
 `wrangler d1 migrations apply DB --remote --env production` でマイグレーションを適用する。
 `wrangler secret put <GOOGLE_CLIENT_SECRET> --env production` と `wrangler secret put <VAPID_PRIVATE_KEY> --env production` で production の Secret を設定する。
