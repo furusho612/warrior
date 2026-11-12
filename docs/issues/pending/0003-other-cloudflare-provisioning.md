@@ -1,6 +1,6 @@
 # Cloudflare の production の資源を用意する
 
-- Requirements: なし (環境分離は ADR-023 の判断であり、PRD の要求 ID を持たない)
+- Requirements: REQ-NFR-017 (レート制限の環境ごとの設定。環境分離は ADR-023 の判断であり、ほかの要求 ID を持たない)
 - Priority: Medium
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
@@ -8,7 +8,7 @@
 
 ## 目的
 
-production の D1、R2、Queues、Workers AI、Cron Triggers を実際に作成し、`wrangler.toml` の値を確定する。
+production の D1、R2、Queues を作成し、Workers AI のバインディングと Cron Triggers を設定し、`wrangler.toml` の値を確定する。
 Google OAuth とパスキーのホスト名を固定し、デプロイできる状態にする。
 staging は必要になった時点で追加する。
 
@@ -32,28 +32,29 @@ staging は必要になった時点で、ADR-023 の手順に従って 0067 で�
 production の D1 のデータベース、R2 のバケット、Queues を作る。
 R2 には CSV の書き出しを 7 日で削除するライフサイクルルールを設定する。
 D1 のマイグレーションを production に適用してからデプロイする。
-Google OAuth のクライアント ID とリダイレクト URI、VAPID の鍵、レート制限の上限値を production の vars と Secret に設定する。
+Google OAuth のクライアント ID とリダイレクト URI、VAPID の鍵、レート制限の上限値と時間窓を production の vars と Secret に設定する。
 Relying Party ID と Origin は production のホスト名に固定する。
 ホスト名を変えるとパスキーが無効になり、OAuth のリダイレクト URI も変わるため、ホスト名を後から変えない。
 
 ## 完了条件
 
-- [ ] production の D1、R2、Queues、Workers AI、Cron Triggers が作成され、`wrangler.toml` の値が実物と一致する。
-- [ ] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list --remote --env production` に未適用がない。
-- [ ] production の R2 にライフサイクルルールが設定されている。
-- [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録されている。
-- [ ] VAPID の公開鍵と subject が production の vars に、秘密鍵が production の Secret に設定されている。
-- [ ] `wrangler deploy --dry-run --env production` が成功する。
-- [ ] ローカルの `.dev.vars` に production の資格情報がない。
-- [ ] staging の資源を作っていない。
+- [ ] production の D1、R2、Queues が作成され、Workers AI のバインディングと Cron Triggers の設定が `[env.production]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision に対応する。
+- [ ] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list DB --remote --env production` に未適用がない。これは ADR-023 の Decision に対応する。
+- [ ] production のレート制限の上限値と時間窓が production の vars にある。これは `REQ-NFR-017` の受入基準「上限と時間窓は環境ごとの設定で変えられる」に対応する。
+- [ ] production の R2 にライフサイクルルールが設定されている。これは ADR-023 の Decision に対応する。
+- [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録されている。これは ADR-023 の Decision に対応する。
+- [ ] VAPID の公開鍵と subject が production の vars に、秘密鍵が production の Secret に設定されている。これは ADR-023 の Decision に対応する。
+- [ ] `wrangler deploy --dry-run --env production` が成功する。これは ADR-023 の Decision に対応する。
+- [ ] ローカルの `.dev.vars` に production の資格情報がない。これは ADR-023 の Decision に対応する。
+- [ ] staging の資源を作っていない。これは ADR-023 の Decision に対応する。
 
 ## 解決方法
 
 Cloudflare のダッシュボードまたは `wrangler` のコマンドで production の資源を作る。
-`wrangler d1 create`、`wrangler r2 bucket create`、`wrangler queues create` を使い、返った ID を `wrangler.toml` の `[env.production]` に書く。
-`wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、レート制限の上限値と時間窓を置く。
+`wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、返った ID を `wrangler.toml` の `[env.production]` に書く。
+`wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、レート制限の上限値と時間窓を含む production の vars を置く。
 `[env.production.ai]` と `[env.production.triggers]` を production 用に設定する。
-`wrangler d1 migrations apply --remote --env production` でマイグレーションを適用する。
+`wrangler d1 migrations apply DB --remote --env production` でマイグレーションを適用する。
 `wrangler secret put --env production` で production の Secret を設定する。
 Google Cloud の OAuth の設定で、production のリダイレクト URI を追加する。
 R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKET> <NAME> <PREFIX> --expire-days 7` で設定する。
