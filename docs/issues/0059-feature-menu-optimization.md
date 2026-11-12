@@ -25,6 +25,7 @@
 ## 設計方針
 
 メニューの最適化の提案は、週と月の評価があるときに生成する。
+週と月の評価の生成が完了した後に、0055 の生成の行を作り、Queue で生成する。
 入力は、週と月の評価、現在のルーティン、トレーニングの記録、部位別の分析、回復状況、目標重量、種目ライブラリとする。
 提案は、種目の追加と入れ替え、セット数の増減、部位の配分の見直しを含む。
 
@@ -62,6 +63,7 @@
 
 `backend/warrior_core/src/menu_optimization.rs` に、差分の型、承認の適用、種目ライブラリの検証を置く。
 `backend/warrior/src/menu_optimization.rs` に、提案の生成、取得、承認の反映を置く。
+`backend/warrior/src/scheduled.rs` に、週と月の評価の生成の後にメニューの最適化の生成の行を作る処理を追加する。
 `backend/warrior/src/router.rs` に `GET /api/routines/:id/proposals`、`POST /api/routines/:id/proposals/:proposal_id/approve` を追加する。
 `backend/warrior_core/src/ai/output.rs` に、メニューの差分の種目の検証を追加する。
 `frontend/src/screens/routines.rs` に差分の表示と承認、却下を置く。

@@ -61,6 +61,7 @@ JWT の署名検証のクレートは追加しない。
 
 ## 完了条件
 
+- [ ] ログインの画面から Google のログインを開始でき、認証の後にホームへ移動する。
 - [ ] Google アカウントで登録してログインでき、同じアカウントでログインした別の端末から同じ利用者として認証される。これは REQ-NFR-006 の受入基準「Google アカウントで登録してログインできる」「同じアカウントでログインした別の端末からも同じ内容で表示される」のうち、認証の部分を満たす。記録の表示は後続の issue が担う。
 - [ ] セッションの Cookie が HttpOnly、Secure、SameSite=Lax であり、値は 32 バイトの乱数である。
 - [ ] D1 にセッションの値そのものではなく SHA-256 のハッシュだけが保存される。
@@ -83,4 +84,5 @@ JWT の署名検証のクレートは追加しない。
 `backend/warrior_core/src/auth.rs` に `state`、`nonce`、コード検証子、セッションのハッシュの純粋な関数を置く。
 `backend/warrior/tests/e2e_auth.rs` に E2E を追加する。
 `backend/pbt/tests/auth.rs` にセッションのハッシュの性質テストを置く。
+`frontend/src/screens/login.rs` に、Google のログインを開始する画面と、認証のエラーの表示を置く。
 `frontend/src/text.rs` にログイン、ログアウト、認証エラーのキーを追加する。

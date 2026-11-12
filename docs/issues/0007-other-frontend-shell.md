@@ -27,6 +27,7 @@ Dioxus のアプリに、画面の経路、共通のレイアウト、下部の�
 経路は次のとおりとする。
 
 ```text
+/login                  ログイン
 /                       ホーム
 /record                 記録中
 /record/:session_id     記録中
@@ -40,6 +41,7 @@ Dioxus のアプリに、画面の経路、共通のレイアウト、下部の�
 ```
 
 画面の外枠は、上部の 54px を端末の表示領域として空け、下部にタブを置く。
+ログインの画面は、共通の枠と下部のタブを表示しない。
 記録中の画面は下部のタブを隠し、左に幅 60px の種目レール、下にレストタイマーを固定する枠を用意する。
 実際のレールとタイマーの中身は 0022 と 0034 で実装する。
 
@@ -73,7 +75,7 @@ i18n の汎用クレートは追加しない。
 `frontend/src/routes.rs` に経路の台帳を置く。
 `frontend/src/layout.rs` に共通の枠、下部のタブ、記録中の枠を置く。
 `frontend/src/text.rs` に型付きのキーと日本語の表を置く。
-`frontend/src/screens/` に 11 の画面の空の部品を置く。
+`frontend/src/screens/` に 11 の画面とログインの空の部品を置く。
 `frontend/src/theme.rs` にテーマの属性を設定する関数を置く。
 `frontend/tailwind.css` に 44px と 11px の最小値、角の丸めがないことを反映する。
 `frontend/src/routes.rs` と `frontend/src/text.rs` の単体テストを `frontend/src/` の `#[cfg(test)]` に置く。
