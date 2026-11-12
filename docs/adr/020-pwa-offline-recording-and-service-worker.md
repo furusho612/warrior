@@ -22,7 +22,7 @@ Service Worker は、アプリの静的なファイルのキャッシュと、�
 画面の描画、状態管理、API の呼び出し、IndexedDB の操作は、アプリ本体の Rust から行う。
 PWA の manifest は JSON で置く。
 
-ブラウザが要求する登録用の `sw.js` は、生成された JS を `importScripts` で読み込み、wasm を初期化するだけの最小のローダーとする。
+ブラウザが要求する登録用の `sw.js` は、生成された JS を `importScripts` で読み込み、Service Worker 自身の wasm を初期化するだけの最小のローダーとする。
 `importScripts` は Service Worker の fetch を経由せず、ブラウザの HTTP キャッシュを使う。
 生成された JS は版付きの URL で配信し、`Cache-Control` でキャッシュする。
 登録用の `sw.js` は `Cache-Control: no-cache` で配信し、更新を検出できるようにする。
@@ -31,16 +31,16 @@ Service Worker の `install`、`activate`、`fetch`、`push`、`notificationclic
 キャッシュとプッシュの処理には、`web-sys` の API を使う。
 
 Service Worker のクレートを Cargo のワークスペースに置く。
-Service Worker の wasm と JS を、アプリのビルドの前にビルドして配信物に含める。
+Service Worker 自身の wasm と JS を、アプリのビルドの前にビルドして配信物に含める。
 Service Worker 自身の wasm と JS の版を揃え、キャッシュの版に使う。
 登録用の `sw.js` と生成された JS は、ブラウザの HTTP キャッシュに任せる。
-Service Worker 自身の wasm は install のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。wasm がキャッシュにない場合、ローダーはネットワークから取得して Cache API に保存する。
+Service Worker 自身の wasm は install のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。Service Worker 自身の wasm がキャッシュにない場合、ローダーはネットワークから取得して Cache API に保存する。
 ネットワークからの取得に失敗しても、キャッシュから起動できるようにする。
 
 記録中の入力の端末内への保存、IndexedDB のスキーマの移行、送信待ちの列、再読み込み後の復元は ADR-002 に従う。
 この ADR は、Service Worker のキャッシュとプッシュ通知を扱う。
 
-Service Worker は、アプリの静的なファイル、wasm、CSS、アイコンをキャッシュする。
+Service Worker は、アプリの静的なファイル、アプリの wasm、CSS、アイコンをキャッシュする。
 生成された JS は HTTP キャッシュに任せ、Cache API には入れない。
 キャッシュは版ごとに分け、新しい版の Service Worker が有効になったら古いキャッシュを削除する。
 プッシュ通知を受け取ったら、通知を表示する。
@@ -61,7 +61,7 @@ Service Worker の wasm のサイズを計測する。
 キャッシュの対象を増やすと、初回のダウンロードと更新の量が増える。
 
 Service Worker のキャッシュが古いままだと、更新が利用者に届かない。
-wasm と JS の版を揃え、新しい版が有効になったら古いキャッシュを削除する。
+Service Worker 自身の wasm と JS の版を揃え、新しい版が有効になったら古いキャッシュを削除する。
 
 iOS のホーム画面に追加した PWA で、Service Worker の wasm が起動できることを確認する。
 起動できない場合は、通知の受信と表示だけを JavaScript に残す例外を認め、この ADR を改訂する。

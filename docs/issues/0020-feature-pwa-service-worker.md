@@ -25,25 +25,25 @@ PWA の manifest と Service Worker は、レスト通知の受信とアプリ�
 
 PWA の manifest を JSON で `frontend/public/` に置く。
 ADR-001 は、単一の Web アプリを PWA として提供し、Service Worker がプッシュ通知の受信と静的なファイルの配信を担うと決めている。
-ADR-020 は、Service Worker のロジックを Rust で書き、wasm と JS の版を揃えてキャッシュの版に使うと決めている。
+ADR-020 は、Service Worker のロジックを Rust で書き、Service Worker 自身の wasm と JS の版を揃えてキャッシュの版に使うと決めている。
 この issue はこれらの決定に従う。
 `name`、`short_name`、`start_url`、`display`、`background_color`、`theme_color`、アイコンを含める。
 表示は `standalone` とし、ホーム画面から起動した場合はブラウザの画面を隠す。
 
 Service Worker のロジックは Rust で書き、`wasm-bindgen` の `--target no-modules` で wasm にビルドする。
-ブラウザが要求する登録用の `sw.js` は、生成された JS を `importScripts` で読み込み、wasm を初期化するだけの最小のローダーとする。
+ブラウザが要求する登録用の `sw.js` は、生成された JS を `importScripts` で読み込み、Service Worker 自身の wasm を初期化するだけの最小のローダーとする。
 手書きの JavaScript にアプリのロジックを置かない。
 
-Service Worker は、アプリの静的なファイル、wasm、CSS、アイコンをキャッシュする。
+Service Worker は、アプリの静的なファイル、アプリの wasm、CSS、アイコンをキャッシュする。
 生成された JS は HTTP キャッシュに任せ、Cache API には入れない。
 キャッシュは版ごとに分け、新しい版の Service Worker が有効になったら古いキャッシュを削除する。
-Service Worker 自身の wasm は `install` のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。ローダーは wasm がキャッシュにない場合、ネットワークから取得して Cache API に保存する。
+Service Worker 自身の wasm は `install` のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。ローダーは Service Worker 自身の wasm がキャッシュにない場合、ネットワークから取得して Cache API に保存する。
 キャッシュの対象 (アプリの静的なファイル、wasm、CSS、アイコン) の要求のうち、キャッシュにないものは、ネットワークから取得して Cache API に保存する。生成された JS は対象外とする。
 ネットワークからの取得に失敗しても、キャッシュから起動できるようにする。
 
 登録用の `sw.js` は `Cache-Control: no-cache` で配信し、更新を検出できるようにする。
 生成された JS は版付きの URL で配信し、`Cache-Control` でキャッシュする。
-Service Worker の wasm と JS の版を揃え、キャッシュの版に使う。
+Service Worker 自身の wasm と JS の版を揃え、キャッシュの版に使う。
 
 アプリは Service Worker を登録し、新しい版が待機していることを検出したら、再読み込みの操作を画面に出す。
 利用者が操作したときに待機中の Service Worker を有効にし、画面を再読み込みする。
@@ -59,7 +59,7 @@ iOS の Safari で、ホーム画面に追加していない状態を検出し�
 - [ ] 対象のブラウザの最新版で、アプリをホーム画面に追加して起動できる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、PWA としての起動を満たす。
 - [ ] manifest に `name`、`short_name`、`start_url`、`display`、`background_color`、`theme_color`、アイコンがある。
 - [ ] ホーム画面から起動した場合、ブラウザの画面を隠して起動する。
-- [ ] Service Worker が静的なファイル、wasm、CSS、アイコンをキャッシュする。
+- [ ] Service Worker が静的なファイル、アプリの wasm、CSS、アイコンをキャッシュする。
 - [ ] 生成された JS を Cache API に入れず、HTTP キャッシュに任せる。
 - [ ] キャッシュが版ごとに分かれ、新しい版が有効になったら古いキャッシュが削除される。
 - [ ] キャッシュの対象の要求のうち、キャッシュにないものをネットワークから取得し、Cache API に保存する。生成された JS は対象外とする。これはキャッシュの可用性の内部条件であり、`REQ-NFR-001` の受入基準の外側である。
@@ -78,7 +78,7 @@ iOS の Safari で、ホーム画面に追加していない状態を検出し�
 `frontend/public/sw.js` に、生成された JS を読み込む最小のローダーを置く。
 `frontend/src/pwa.rs` に、Service Worker の登録、更新の検出、再読み込み、iOS の追加の案内を置く。
 `frontend/src/text.rs` に、更新とホーム画面への追加の文言を追加する。
-`backend/warrior/src/security.rs` の CSP に、Service Worker の wasm の実行に必要な設定を加える。
+`backend/warrior/src/security.rs` の CSP に、Service Worker 自身の wasm の実行に必要な設定を加える。
 `frontend/tests/pwa.rs` にブラウザのテストを追加する。
 `backend/warrior/tests/e2e_pwa.rs` に E2E を追加する。
 `backend/pbt/tests/pwa.rs` にキャッシュのキーの性質テストを置く。
