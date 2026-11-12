@@ -9,7 +9,7 @@
 ## 目的
 
 staging を追加する必要が生じたときに、ADR-023 の手順で staging の D1、R2、Queues、Workers AI、Cron Triggers を用意する。
-実機の確認、AI の品質評価、E2E を production から分離して行えるようにする。
+実機の確認 (iPhone の Safari のパスキー、iOS の PWA の wasm、HTTPS と暗号化)、AI の品質評価、E2E を production から分離して行えるようにする。
 
 ## 優先度根拠
 
@@ -33,6 +33,7 @@ D1 のマイグレーションを staging に適用してからデプロイす�
 ローカルの `.dev.vars` には staging の資格情報を置き、production の資格情報を置かない。
 
 ホスト名を変えるとパスキーが無効になり、OAuth のリダイレクト URI も変わるため、ホスト名を後から変えない。
+staging で 0006 の HTTPS と暗号化、0016 の Safari のパスキー、0020 の iOS の Service Worker 自身の wasm の起動を確認する。
 staging を追加した後は、production と同じ `AI_MODEL` を staging に置く。
 
 ## 完了条件
@@ -46,7 +47,7 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 - [ ] `mise` の `deploy-staging` が `--env staging` を付けて実行する。
 - [ ] ローカルの `.dev.vars` に staging の資格情報だけがあり、production の資格情報がない。
 - [ ] staging の `AI_MODEL` が production と同じである。
-- [ ] 0006 の HTTPS と暗号化、0016 の Safari のパスキー、0020 の iOS の PWA の wasm の起動を staging で確かめる。
+- [ ] 0006 の HTTPS と実環境の暗号化 (REQ-NFR-009 の受入基準「すべての通信が暗号化された経路で行われる」)、0016 の Safari のパスキー (REQ-NFR-013 の受入基準「登録、追加、削除の前に、Google アカウントまたは既存のパスキーによる再認証を求め、失敗した場合は操作を実行しない」)、0020 の iOS の Service Worker 自身の wasm の起動 (REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」と ADR-020:66) を staging で確かめる。
 
 ## 解決方法
 
@@ -58,15 +59,16 @@ R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKE
 `mise.toml` に `deploy-staging` を追加する。
 `.dev.vars.example` と `.dev.vars` に staging の資格情報の名前を追加する。
 作業の結果は issue に追記し、Secret の値は書かない。
+利用者が staging で iPhone の Safari のパスキーの経路、iOS の PWA の Service Worker 自身の wasm の起動、HTTPS と暗号化を確認し、結果を issue に追記する。
 
 ## 止める理由
 
 今は production を先に用意するため、staging を作らない。
-実機の確認、AI の品質評価、E2E のどこで staging が必要になるかは、その作業の着手時に決まる。
+iPhone の Safari のパスキー、iOS の PWA の wasm、HTTPS の確認、AI の品質評価、E2E のどこで staging が必要になるかは、その作業の着手時に決まる。
 エージェントは実環境へ接続しない。
 
 ## 再開条件
 
-利用者が staging を必要とする作業を始める。
+利用者が staging を必要とする作業 (iPhone の Safari のパスキー、iOS の PWA の wasm、HTTPS の確認を含む) を始める。
 0003 の production の資源ができている。
 利用者が staging の資源を作る権限と、Google OAuth と VAPID の staging 用の資格情報を用意する。
