@@ -260,7 +260,7 @@ Nov 12, 2026 · @Shoichi
 | REQ-PRG-003 | 設定した目的、トレーニング経験、週あたりの日数に合うプログラムを推奨として表示する。 |
 | REQ-PRG-004 | プログラムを選ぶと、日ごとのルーティンが自分のルーティンとして取り込まれ、編集できる。 |
 | REQ-PRG-005 | 進行中のプログラムがある場合、次に行う日のメニューをホームに表示する。 |
-| REQ-PRG-017 | プログラムの内容は、付録の出典にもとづいて組む。週あたりの日数は、初心者が 2 〜 3 日、中級者が 3 〜 4 日、上級者が 4 〜 5 日を目安とする。初心者の回数は 8 〜 12 回を基本とする。部位ごとの週あたりセット数、レスト時間、重量の上げ方は、付録の研究の要約に従う。週あたりの日数と初心者の回数は、付録の研究の要約の範囲外の目安とする。 |
+| REQ-PRG-017 | プログラムの内容は、付録の出典と、週あたりの日数と初心者の回数に関する範囲外の目安にもとづいて組む。部位ごとの週あたりセット数、レスト時間、重量の上げ方は、付録の研究の要約に従う。 |
 | REQ-PRG-019 | プログラムに期間は設けない。1 週間分のメニューを、利用者がやめるまで繰り返す。プログラムは、いつでもやめるか、別のものに切り替えられる。 |
 | REQ-PRG-020 | メニューは曜日に割り当てず、順番で進める。休んだ日があっても飛ばさず、次に行う日のメニューを順に表示する。 |
 
@@ -347,6 +347,7 @@ Nov 12, 2026 · @Shoichi
 ## 種目ライブラリ
 
 代表的な種目をマスターとして用意し、やり方の確認と記録時の種目選択の両方に使う。
+種目ライブラリの一覧は、部位区分、使用器具、種目名の五十音順の昇順で並べる。
 
 | ID | 要件 |
 | --- | --- |
@@ -374,7 +375,7 @@ Nov 12, 2026 · @Shoichi
 | REQ-LIB-004 | 各種目に、重量と回数、自重と回数(加重は任意)、時間の 3 つの記録方式のいずれかと、左右別に行うかどうかの値がある。記録画面には、種目の記録方式に応じた入力欄が表示される。 |
 | REQ-LIB-005 | 独自の種目を追加すると、種目ライブラリの一覧に現れる。名称、部位区分、記録方式のいずれかが空のままでは保存できない。追加した種目を編集でき、削除すると一覧から消える。 |
 | REQ-LIB-006 | 種目をお気に入りに登録できる。お気に入りだけの一覧には、登録した種目だけが並び、お気に入りから外すとその一覧から消える。 |
-| REQ-LIB-007 | 部位区分、使用器具、お気に入り、名称の検索のそれぞれの条件で、種目の一覧を絞り込める。 |
+| REQ-LIB-007 | 部位区分、使用器具、お気に入り、名称の検索のそれぞれの条件で、種目の一覧を絞り込める。絞り込んだ一覧も、部位区分、使用器具、種目名の五十音順の昇順で並ぶ。 |
 | REQ-LIB-008 | 種目の詳細から、その種目の過去の履歴とグラフの画面を開ける。表示する内容は「分析」の「種目別の履歴」の要件に従う。 |
 | REQ-LIB-009 | 記録に使われている種目を編集しても、過去の記録に表示される種目名、部位区分、重量と回数は変わらない。種目を削除しても、その種目を使った過去の記録は残り、開いて読める。 |
 | REQ-LIB-010 | 同じ器具と同じ動作で角度や軌道が違う種目は、別の種目として一覧に並ぶ。それぞれの種目は、角度や軌道に対応する部位を主働筋に持つ。 |
@@ -577,7 +578,7 @@ AI が使う情報は、目的、身体情報、トレーニング経験、週�
 | --- | --- |
 | REQ-AI-013 | AI の評価と提案の画面に、医療上の助言ではない旨が表示される。 |
 | REQ-AI-014 | AI の応答を待っている間も、セットの入力と完了ができる。応答が得られない場合も、提案が表示されないまま記録を続けて終了できる。 |
-| REQ-AI-015 | 評価または提案の画面のボタンから、作り直しを依頼できる。作り直した提案は、重量、セット数、時間の少なくとも 1 つを依頼前より小さくする。評価は、依頼前の出力の断定を少なくとも 1 つ弱めるか削除する。同じ出力を返した場合は不合格とする。 |
+| REQ-AI-015 | 評価または提案の画面のボタンから、作り直しを依頼できる。作り直した提案は、重量、セット数、時間の少なくとも 1 つを依頼前より小さくする。評価は、依頼前の出力の断定を少なくとも 1 つ弱めるか削除する。同じ出力を返した場合は不合格とする。依頼前の提案が重量、セット数、時間の最小値に達している場合は、これ以上控えめにできない旨を表示し、その場合は合格とする。ここで最小値は、重量 0 kg、セット数 1、時間 1 秒とする。 |
 | REQ-AI-016 | メモに痛み、けが、体調不良のいずれかの記述があると、重量や量を増やす提案が表示されない。代わりに負荷を下げるか休むことを勧め、記述が続く場合は医師などの専門家への相談を案内する。 |
 | REQ-AI-017 | 補助筋として使った種目があるとき、量の過不足の判断には、そのセットを 0.5 として加えた参考値を使う。参考値は AI にだけ渡り、画面のセット数には現れない。画面のセット数と判断が食い違う場合、評価または提案にその理由が書かれる。 |
 | REQ-AI-018 | トレーニングを終了すると、記録のある種目ごとに次回セットの提案が保存される。保存した提案は、次回のその種目の記録を始めるまで、いつでも開いて修正できる。記録のない種目には提案が作られない。 |
@@ -1016,32 +1017,70 @@ AI の評価と提案の質は、渡す前提知識で決まる。
 
 ### 出典
 
-1. Schoenfeld, Ogborn, Krieger (2017)。週あたりのセット数と筋肥大のメタ解析。[PubMed](https://pubmed.ncbi.nlm.nih.gov/27433992/)
-2. Pelland ほか (2024)。週あたりの量と頻度のメタ回帰。[解説記事](https://sci-sport.com/en/muscle-hypertrophy-strength-and-volume-how-does-the-relationship-evolve-272/)
-3. Schoenfeld ほか (2017)。低重量と高重量の比較のメタ解析。[PubMed](https://pubmed.ncbi.nlm.nih.gov/28834797/)
-4. Lopez ほか (2021)。重量と筋肥大、筋力のネットワークメタ解析。doi: 10.1249/MSS.0000000000002585
-5. Robinson ほか (2024)。限界への近さと筋肥大、筋力のメタ回帰。[発表資料](https://www.eurekalert.org/news-releases/1053119)
-6. Singer ほか (2024)。セット間のレストと筋肥大のメタ解析。[PubMed](https://pubmed.ncbi.nlm.nih.gov/39205815/)
-7. American College of Sports Medicine (2009)。負荷の進め方に関する公式見解。[PubMed](https://pubmed.ncbi.nlm.nih.gov/19204579/)
-8. Plotkin ほか (2022)。重量を上げる方法と回数を増やす方法の比較。[PeerJ](https://peerj.com/articles/14142)
-9. Morton ほか (2018)。たんぱく質の摂取と筋力トレーニングのメタ解析。[PubMed](https://pubmed.ncbi.nlm.nih.gov/28698222/)
-10. Garthe ほか (2011)、Helms ほか (2014)。減量の速さと除脂肪量。[PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC4033492)
-11. 筋力の伸びの目安。[解説記事](https://www.barbellmedicine.com/blog/novice-intermediate-advanced-strength-training/)
+1. Schoenfeld, Ogborn, Krieger (2017)。
+   週あたりのセット数と筋肥大のメタ解析。
+   [PubMed](https://pubmed.ncbi.nlm.nih.gov/27433992/)
+2. Pelland ほか (2024)。
+   週あたりの量と頻度のメタ回帰。
+   [解説記事](https://sci-sport.com/en/muscle-hypertrophy-strength-and-volume-how-does-the-relationship-evolve-272/)
+3. Schoenfeld ほか (2017)。
+   低重量と高重量の比較のメタ解析。
+   [PubMed](https://pubmed.ncbi.nlm.nih.gov/28834797/)
+4. Lopez ほか (2021)。
+   重量と筋肥大、筋力のネットワークメタ解析。
+   doi: 10.1249/MSS.0000000000002585
+5. Robinson ほか (2024)。
+   限界への近さと筋肥大、筋力のメタ回帰。
+   [発表資料](https://www.eurekalert.org/news-releases/1053119)
+6. Singer ほか (2024)。
+   セット間のレストと筋肥大のメタ解析。
+   [PubMed](https://pubmed.ncbi.nlm.nih.gov/39205815/)
+7. American College of Sports Medicine (2009)。
+   負荷の進め方に関する公式見解。
+   [PubMed](https://pubmed.ncbi.nlm.nih.gov/19204579/)
+8. Plotkin ほか (2022)。
+   重量を上げる方法と回数を増やす方法の比較。
+   [PeerJ](https://peerj.com/articles/14142)
+9. Morton ほか (2018)。
+   たんぱく質の摂取と筋力トレーニングのメタ解析。
+   [PubMed](https://pubmed.ncbi.nlm.nih.gov/28698222/)
+10. Garthe ほか (2011)、Helms ほか (2014)。
+    減量の速さと除脂肪量。
+    [PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC4033492)
+11. 筋力の伸びの目安。
+    [解説記事](https://www.barbellmedicine.com/blog/novice-intermediate-advanced-strength-training/)
 
 ### カロリー計算の出典
 
-1. Frankenfield ほか (2005)。基礎代謝の推定式を比較した系統的レビュー。[論文情報](https://pure.psu.edu/en/publications/comparison-of-predictive-equations-for-resting-metabolic-rate-in-/)
-2. FAO/WHO/UNU (2001)。身体活動レベルの区分。[FAO](https://www.fao.org/4/Y4249e/y4249e0j.htm)
-3. Slater ほか (2019)。筋肥大とエネルギーの上乗せに関する総説。[Frontiers in Nutrition](https://www.frontiersin.org/journals/nutrition/articles/10.3389/fnut.2019.00131/full)
+1. Frankenfield ほか (2005)。
+   基礎代謝の推定式を比較した系統的レビュー。
+   [論文情報](https://pure.psu.edu/en/publications/comparison-of-predictive-equations-for-resting-metabolic-rate-in-/)
+2. FAO/WHO/UNU (2001)。
+   身体活動レベルの区分。
+   [FAO](https://www.fao.org/4/Y4249e/y4249e0j.htm)
+3. Slater ほか (2019)。
+   筋肥大とエネルギーの上乗せに関する総説。
+   [Frontiers in Nutrition](https://www.frontiersin.org/journals/nutrition/articles/10.3389/fnut.2019.00131/full)
 
 ### 推定 1RM の出典
 
-1. LeSuer ほか (1997)。7 つの推定式を、ベンチプレス、スクワット、デッドリフトで検証した研究。結果を紹介している論文: [Journal of Sports Science and Medicine](https://www.jssm.org/jssm-08-567.xml-Fulltext)
-2. 推定式の由来と検証研究を整理した論文。[arXiv](https://arxiv.org/pdf/2603.17495)
+1. LeSuer ほか (1997)。
+   7 つの推定式を、ベンチプレス、スクワット、デッドリフトで検証した研究。
+   結果を紹介している論文: [Journal of Sports Science and Medicine](https://www.jssm.org/jssm-08-567.xml-Fulltext)
+2. 推定式の由来と検証研究を整理した論文。
+   [arXiv](https://arxiv.org/pdf/2603.17495)
 
 ### グリップの出典
 
-1. Lusk ほか (2010)。ラットプルダウンの手幅と前腕の向きによる筋活動の比較。[PubMed](https://pubmed.ncbi.nlm.nih.gov/20543740/)
-2. Andersen ほか (2014)。ラットプルダウンの手幅による筋力と筋活動の比較。Journal of Strength and Conditioning Research 28(4)
-3. Buonsenso ほか (2025)。ラットプルダウンの握りと前腕の向きによる背中の筋活動。[MDPI](https://www.mdpi.com/3493898)
-4. Padovan ほか (2025)。シーテッドロウの狭い手幅と広い手幅の筋活動の比較。[論文情報](https://air.unimi.it/handle/2434/1189176)
+1. Lusk ほか (2010)。
+   ラットプルダウンの手幅と前腕の向きによる筋活動の比較。
+   [PubMed](https://pubmed.ncbi.nlm.nih.gov/20543740/)
+2. Andersen ほか (2014)。
+   ラットプルダウンの手幅による筋力と筋活動の比較。
+   Journal of Strength and Conditioning Research 28(4)
+3. Buonsenso ほか (2025)。
+   ラットプルダウンの握りと前腕の向きによる背中の筋活動。
+   [MDPI](https://www.mdpi.com/3493898)
+4. Padovan ほか (2025)。
+   シーテッドロウの狭い手幅と広い手幅の筋活動の比較。
+   [論文情報](https://air.unimi.it/handle/2434/1189176)

@@ -17,11 +17,11 @@
 
 | 層 | 確かめるもの | 置き場 | 主な道具 |
 | --- | --- | --- | --- |
-| 単体 | PBT で表せない固定のシナリオ、エラーパス、境界値 | `backend/warrior_core/tests/test_*.rs`、`frontend/tests/test_*.rs` | `cargo test` |
-| PBT | 純粋なロジックの不変条件、ラウンドトリップ、単調性 | `backend/pbt/tests/prop_*.rs`、`frontend/pbt/tests/prop_*.rs` | `proptest` |
-| Fuzzing | 任意の入力に対するパーサのクラッシュ耐性 | `backend/warrior_core/fuzz/fuzz_targets/*.rs` | `cargo-fuzz` |
-| 形式手法 | 状態機械の不変条件 | `formal/*.tla`、`formal/*.cfg` | TLA+、TLC |
-| E2E | 実物を組み合わせた振る舞い、画面、ブラウザの API | `backend/warrior/tests/wrangler_*.rs`、`frontend/tests/test_*_web.rs` | `wrangler dev`、ChromeDriver、safaridriver、`wasm-bindgen-test` |
+| 単体 | PBT で表せない固定のシナリオ、エラーパス、境界値 | 各クレートの `tests/` | `cargo test` |
+| PBT | 純粋なロジックの不変条件、ラウンドトリップ、単調性 | PBT のクレートの `tests/` | `proptest` |
+| Fuzzing | 任意の入力に対するパーサのクラッシュ耐性 | Fuzzing のクレートの `fuzz_targets/` | `cargo-fuzz` |
+| 形式手法 | 状態機械の不変条件 | `formal/` | TLA+、TLC |
+| E2E | 実物を組み合わせた振る舞い、画面、ブラウザの API | Worker の結合テスト、フロントエンドのブラウザテスト | `wrangler dev`、ChromeDriver、safaridriver、`wasm-bindgen-test` |
 
 ### 単体テスト
 
@@ -169,6 +169,8 @@ E2E の経路は次のとおりである。
 - ライトとダークの表示、44px と 11px の最小値、角丸と影のない面、スマートフォンと PC の幅。
 
 AI の作り直しが同じ出力を返した場合は不合格とする。
+AI の作り直しでは、依頼前後の提案を比較し、重量、セット数、時間の少なくとも 1 つが厳密に小さくなったことと、断定が 1 つ削除または弱められたことを確かめる。
+AI-015 の最小値の提案では、「これ以上控えめにできない」と表示されることを確かめる。
 同じ端末でログアウトし、再ログインして、記録中のトレーニングを再開できることを確かめる。
 
 Queue の消費の重複、再試行、取り消し、アカウント削除後の扱いを、`wrangler dev` の結合テストで検証する。
@@ -188,18 +190,13 @@ E2E のテストは、実行ごとに一意な利用者を作り、D1 のデー�
 
 ### 配置と命名
 
-テストのファイル名は、検証する対象の名詞か動詞句にし、対応するソースのファイルと対応づける。
+テストのファイルの置き場と命名は、実装の issue で決める。
+テスト名には、検証する対象の名詞か動詞句を使う。
 マイルストーンの番号、ユースケースの番号、issue の番号をテスト名に使わない。
-`e2e_` の接頭辞だけの名前を使わない。
-
-`wrangler dev` を起動するテストは、`wrangler_` の接頭辞を付けた別のテストのファイルに置く。
-`mise` の `backend:test` はネイティブのテストを実行し、`backend:test-integration` が `wrangler_` のテストを実行する。
-どちらも `mise run check` に含める。
 
 ### 要求 ID との対応
 
 テストは、守る要求 ID をテスト名か module doc に書く。
-PRD の要求 ID は節の中で昇順に並べ、節をまたぐ順序は節の順序に従う。
 テスト名では要求 ID を小文字に正規化し、module doc には PRD の表記で書く。
 要求 ID を持たないテストは、その理由を module doc に書く。
 issue の `Requirements` に挙げた受入基準ごとに、少なくとも 1 つのテストを対応させる。
