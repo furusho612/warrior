@@ -1,6 +1,6 @@
 # staging の資源を必要になった時点で用意する
 
-- Requirements: なし (ADR-023 の staging 環境であり、PRD の要求 ID を持たない)
+- Requirements: REQ-NFR-001, REQ-NFR-009, REQ-NFR-013 (staging の用意は ADR-023)
 - Priority: Low
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
@@ -9,7 +9,7 @@
 ## 目的
 
 staging を追加する必要が生じたときに、ADR-023 の手順で staging の D1、R2、Queues、Workers AI、Cron Triggers を用意する。
-実機の確認 (iPhone の Safari のパスキー、iOS の PWA の wasm、HTTPS と暗号化)、AI の品質評価、E2E を production から分離して行えるようにする。
+実機の確認 (iPhone の Safari のパスキー、iOS の PWA の Service Worker 自身の wasm、HTTPS と暗号化)、AI の品質評価、E2E を production から分離して行えるようにする。
 
 ## 優先度根拠
 
@@ -47,7 +47,9 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 - [ ] `mise` の `deploy-staging` が `--env staging` を付けて実行する。
 - [ ] ローカルの `.dev.vars` に staging の資格情報だけがあり、production の資格情報がない。
 - [ ] staging の `AI_MODEL` が production と同じである。
-- [ ] 0006 の HTTPS と実環境の暗号化 (REQ-NFR-009 の受入基準「すべての通信が暗号化された経路で行われる」)、0016 の Safari のパスキー (REQ-NFR-013 の受入基準「登録、追加、削除の前に、Google アカウントまたは既存のパスキーによる再認証を求め、失敗した場合は操作を実行しない」)、0020 の iOS の Service Worker 自身の wasm の起動 (REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」と ADR-020:66) を staging で確かめる。
+- [ ] 0006 の HTTPS と実環境の暗号化 (REQ-NFR-009 の受入基準「すべての通信が暗号化された経路で行われる」) を staging で確かめる。
+- [ ] 0016 の Safari のパスキー (REQ-NFR-013 の受入基準「ログインの後にマイページからパスキーを登録でき、登録の後はパスキー認証でログインできる」) を staging で確かめる。
+- [ ] 0020 の iOS の Service Worker 自身の wasm の起動 (ADR-020 の Consequences の「iOS のホーム画面に追加した PWA で、Service Worker 自身の wasm が起動できることを確認する」) を staging で確かめる。これは内部条件であり、REQ-NFR-001 の受入基準の外側である。
 
 ## 解決方法
 
@@ -64,11 +66,11 @@ R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKE
 ## 止める理由
 
 今は production を先に用意するため、staging を作らない。
-iPhone の Safari のパスキー、iOS の PWA の wasm、HTTPS の確認、AI の品質評価、E2E のどこで staging が必要になるかは、その作業の着手時に決まる。
+iPhone の Safari のパスキー、iOS の PWA の Service Worker 自身の wasm、HTTPS の確認、AI の品質評価、E2E のうち、どの作業を先に始めるかは、その着手時に決まる。
 エージェントは実環境へ接続しない。
 
 ## 再開条件
 
-利用者が staging を必要とする作業 (iPhone の Safari のパスキー、iOS の PWA の wasm、HTTPS の確認を含む) を始める。
+利用者が staging を必要とする作業 (iPhone の Safari のパスキー、iOS の PWA の Service Worker 自身の wasm、HTTPS の確認を含む) を始める。
 0003 の production の資源ができている。
 利用者が staging の資源を作る権限と、Google OAuth と VAPID の staging 用の資格情報を用意する。
