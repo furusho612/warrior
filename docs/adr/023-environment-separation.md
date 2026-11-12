@@ -13,7 +13,7 @@
 ## Decision
 
 環境をローカル、staging、production の 3 つに分ける。
-リモートの D1、R2、Queues、Workers AI のバインディングは環境ごとに分ける。
+リモートの D1、R2、Queues、Workers AI、Cron Triggers のバインディングは環境ごとに分ける。
 
 `wrangler.toml` は 1 ファイルとし、トップレベルをローカル専用にする。
 トップレベルの Worker の名前は `warrior-local` とし、`[env.staging]` を `warrior-staging`、`[env.production]` を `warrior` とする。
@@ -38,7 +38,7 @@ Preview URLs は D1 と R2 を本番と分離せず、URL が毎回変わるた�
 ## Consequences
 
 staging の初回の設定が必要になる。
-D1 と R2 と Queues の作成、`database_id` の設定、Secret の設定、Google OAuth のリダイレクト URI の追加、R2 のライフサイクルルールの適用を行う。
+D1、R2、Queues、Workers AI、Cron Triggers の作成、`database_id` の設定、Secret の設定、Google OAuth のリダイレクト URI の追加、R2 のライフサイクルルールの適用を行う。
 
 ホスト名を変えると、登録済みのパスキーが無効になり、Google OAuth のリダイレクト URI も変わる。
 ホスト名を固定する。
@@ -47,7 +47,7 @@ D1 と R2 と Queues の作成、`database_id` の設定、Secret の設定、Go
 一方で、ローカルの名前でリモートに Worker を作らないように、デプロイのタスクは環境の名前を必須にする。
 
 環境ごとに無料枠を消費する。
-staging と production の D1、R2、Queues、Workers AI の利用量を分けて確認する。
+staging と production の D1、R2、Queues、Workers AI、Cron Triggers の利用量を分けて確認する。
 
 環境を増やすときは、本 ADR を改訂し、`wrangler.toml`、`mise` のタスク、デプロイの手順を合わせて更新する。
 

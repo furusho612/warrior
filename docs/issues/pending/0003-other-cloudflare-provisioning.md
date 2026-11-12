@@ -39,7 +39,7 @@ Relying Party ID と Origin は production のホスト名に固定する。
 ## 完了条件
 
 - [ ] production の D1、R2、Queues が作成され、`wrangler.toml` の値が実物と一致する。
-- [ ] production の D1 にマイグレーションを適用できる。
+- [ ] production の D1 にマイグレーションが適用され、適用済みの版が production と同じである。
 - [ ] production の R2 にライフサイクルルールが設定されている。
 - [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録されている。
 - [ ] VAPID の公開鍵と subject が production の vars に、秘密鍵が production の Secret に設定されている。
