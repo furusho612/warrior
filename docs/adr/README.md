@@ -3,6 +3,9 @@
 設計判断の一覧。
 Status が Accepted になった ADR を実装の前提にする。
 
+`../../../brewbook` を参照する ADR は、著者の環境の隣接リポジトリを指す。
+参照は `brewbook` の commit `f7e936c8fe344ff0d0ab28c6659f7fcbe5e2e06d` の時点である。
+
 | ID | 判断 | Status |
 | --- | --- | --- |
 | [ADR-001](001-web-app-as-pwa.md) | Web アプリをインストール可能な PWA として提供する | Accepted |

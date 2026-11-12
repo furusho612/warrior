@@ -41,7 +41,7 @@ staging の初回の設定が必要になる。
 D1 と R2 と Queues の作成、`database_id` の設定、Secret の設定、Google OAuth のリダイレクト URI の追加、R2 のライフサイクルルールの適用を行う。
 
 ホスト名を変えると、登録済みのパスキーが無効になり、Google OAuth のリダイレクト URI も変わる。
-公開前に最終のホスト名を決める。
+ホスト名を固定する。
 
 トップレベルの Worker の名前を `warrior-local` にしているため、`--env` を付け忘れた `wrangler deploy` は本番を更新しない。
 一方で、ローカルの名前でリモートに Worker を作らないように、デプロイのタスクは環境の名前を必須にする。
@@ -49,7 +49,7 @@ D1 と R2 と Queues の作成、`database_id` の設定、Secret の設定、Go
 環境ごとに無料枠を消費する。
 staging と production の D1、R2、Queues、Workers AI の利用量を分けて確認する。
 
-環境を増やすときは、本 ADR を改訂し、`wrangler.toml`、`mise` のタスク、README の手順を合わせて更新する。
+環境を増やすときは、本 ADR を改訂し、`wrangler.toml`、`mise` のタスク、デプロイの手順を合わせて更新する。
 
 ## References
 

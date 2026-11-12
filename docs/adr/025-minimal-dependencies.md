@@ -98,7 +98,7 @@ wasm のビルドでは、OpenSSL や `ring` のように wasm32 でビルドで
 
 テスト専用のクレートは、開発の依存に限って追加する。
 本番の wasm に含めない。
-対象は、`proptest`、`libfuzzer-sys`、`wasm-bindgen-test`、`thirtyfour`、`reqwest`、`tokio`、`libc` である。
+対象は、`proptest`、`libfuzzer-sys`、`wasm-bindgen-test`、`thirtyfour` である。
 テストのために本番のコードへ分岐を追加しない。
 テスト専用のサービスは別のプロセスに置く。
 
@@ -141,4 +141,4 @@ WebAuthn の検証は、仕様の該当節を引用したコメントと、公�
 - `../../../brewbook/backend/brew_book_core/src/cose.rs`
 - `../../../brewbook/backend/brew_book_core/src/webauthn.rs`
 - `docs/prd/warrior.md` の「非機能要件」
-- プロジェクトの `AGENTS.md` の「原則」
+- `~/.pi/agent/AGENTS.md` の「原則」
