@@ -23,15 +23,16 @@ Service Worker は、アプリの静的なファイルのキャッシュと、�
 PWA の manifest は JSON で置く。
 
 ブラウザが要求する登録用の `sw.js` は、生成された JS を `importScripts` で読み込み、wasm を初期化するだけの最小のローダーとする。
+`importScripts` は Service Worker の fetch を経由せず、ブラウザの HTTP キャッシュを使う。
+生成された JS は版付きの URL で配信し、`Cache-Control` でキャッシュする。
 手書きの JavaScript にアプリのロジックを置かない。
 Service Worker の `install`、`activate`、`fetch`、`push`、`notificationclick` のイベントは、Rust で処理する。
 キャッシュとプッシュの処理には、`web-sys` の API を使う。
 
 Service Worker のクレートを Cargo のワークスペースに置く。
-`frontend:build-service-worker` のタスクで wasm と JS をビルドし、`frontend/public/service-worker/` に出力する。
-このタスクを `dx build` の前に実行する。
+Service Worker の wasm と JS を、アプリのビルドの前にビルドして配信物に含める。
 Service Worker の wasm と JS の版を揃え、キャッシュの版に使う。
-Service Worker のローダーの JS は、ブラウザのスクリプトキャッシュに任せる。
+登録用の `sw.js` と生成された JS は、ブラウザの HTTP キャッシュに任せる。
 wasm は install のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。
 ネットワークからの取得に失敗しても、キャッシュから起動できるようにする。
 
@@ -39,6 +40,7 @@ wasm は install のときに Cache API に保存し、ローダーは起動時�
 この ADR は、Service Worker のキャッシュとプッシュ通知を扱う。
 
 Service Worker は、アプリの静的なファイル、wasm、CSS、アイコンをキャッシュする。
+生成された JS は HTTP キャッシュに任せ、Cache API には入れない。
 キャッシュは版ごとに分け、新しい版の Service Worker が有効になったら古いキャッシュを削除する。
 プッシュ通知を受け取ったら、通知を表示する。
 通知を押したら、アプリの画面を開くか、既に開いている画面にフォーカスする。
@@ -60,7 +62,7 @@ Service Worker の wasm のサイズを計測する。
 Service Worker のキャッシュが古いままだと、更新が利用者に届かない。
 wasm と JS の版を揃え、新しい版が有効になったら古いキャッシュを削除する。
 
-iOS のホーム画面に追加した PWA で、Service Worker の wasm が起動できることを試作で確認する。
+iOS のホーム画面に追加した PWA で、Service Worker の wasm が起動できることを確認する。
 起動できない場合は、通知の受信と表示だけを JavaScript に残す例外を認め、この ADR を改訂する。
 Service Worker の wasm が起動できない場合に備えて、通知の表示のフォールバックを用意する。
 

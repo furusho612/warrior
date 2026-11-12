@@ -12,12 +12,11 @@ Cloudflare Workers の Rust は `wasm32-unknown-unknown` にビルドし、JavaS
 ## Decision
 
 バックエンドは Rust で書き、`worker` クレート 0.8.6 と `worker-build` で `wasm32-unknown-unknown` 向けにビルドする。
-HTTP のルーティングは `worker` クレートの `Router` を使い、axum などの Web フレームワークを追加しない。
+HTTP のルーティングは `worker` クレートの `Router` を使う。
 D1 は `d1` feature、R2 は `Bucket`、Workers AI は `Ai`、Queues は `queue` feature、Cron Triggers は `event(scheduled)` で扱う。
 JSON のシリアライズは serde と serde_json を使う。
 
-Cargo のワークスペースを置き、Worker のクレート、バインディングに依存しない純粋なロジックのクレート、PBT のクレート、Fuzzing のクレートに分ける。
-純粋なロジックには、入力の検証、SQL の組み立て、推定 1RM とカロリーの計算、WebAuthn の検証、AI のプロンプトの組み立てと出力の検証を含める。
+Cargo のワークスペースを置き、Worker のクレートと、バインディングに依存しない純粋なロジックのクレートに分ける。
 
 Workers Logs と Workers Traces を有効にする。
 リクエストごとに、経路名、メソッド、状態コード、処理時間、エラーコードを JSON で記録する。
@@ -32,7 +31,6 @@ Rust の標準的な非同期ランタイムである tokio は使えない。
 移植性より依存の少なさを優先する。
 
 ネイティブのデータベースドライバや OpenSSL に依存するクレートは使えない。
-WebAuthn と Web Push の暗号は、wasm で動く純 Rust のクレートで実装する。
 
 wasm に依存しない純粋なロジックは、ネイティブのターゲットで単体テスト、PBT、Fuzzing に掛ける。
 バインディングに触る部分は、`wrangler dev` に対する結合テストで検証する。
