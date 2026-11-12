@@ -10,7 +10,7 @@
 
 ローカルの `wrangler dev` で Worker、D1、R2、Queues、Cron Triggers、Workers AI のバインディングを起動できるようにする。
 ローカルと production の設定を同じ `wrangler.toml` に置き、環境の取り違えを防ぐ。
-staging は必要になった時点で追加する。
+staging は必要になった時点で 0067 で追加する。
 
 ## 優先度根拠
 
@@ -26,7 +26,7 @@ staging は必要になった時点で追加する。
 
 `wrangler.toml` を 1 ファイルとし、トップレベルをローカル専用にする。
 トップレベルの `name` は `warrior-local` とし、`[env.production]` を `warrior` とする。
-staging の設定は必要になった時点で追加する。
+staging の設定は必要になった時点で 0067 で追加する。
 リモートの環境へデプロイするときは必ず `--env` を付ける。
 `mise` のデプロイのタスクは、production の名前を含み、`--env production` を付けたコマンドを持つ。
 
@@ -49,7 +49,7 @@ Google のクライアントシークレットと VAPID の秘密鍵は Secret �
 
 production の D1 の `database_id`、R2 のバケット名、Queues の名前はアカウントに依存する。
 この issue では値の場所と検証のコマンドを用意し、実際の作成と値の設定は 0003 で行う。
-staging の値は、必要になった時点で追加する。
+staging の値は、必要になった時点で 0067 で追加する。
 値が未設定の環境は `wrangler deploy --dry-run` が失敗してよい。
 ローカルの `wrangler dev` は 0003 の値に依存せずに起動できるようにする。
 
@@ -69,6 +69,6 @@ staging の値は、必要になった時点で追加する。
 トップレベルに `name = "warrior-local"`、`main`、`compatibility_date`、`[assets]`、`[[d1_databases]]`、`[[r2_buckets]]`、`[[queues.producers]]`、`[[queues.consumers]]`、`[ai]`、`[triggers]`、`[vars]` を置く。
 `[env.production]` にトップレベルと同じキーを置き、production の値を書く。
 `mise.toml` に `dev`、`deploy-production`、`db-migrate-local` のタスクを加える。
-staging の設定と `deploy-staging` は、必要になった時点で追加する。
+staging の設定と `deploy-staging` は、必要になった時点で 0067 で追加する。
 `.dev.vars.example` に必要なキーの名前だけを書き、`.dev.vars` を `.gitignore` に加える。
 `wrangler.toml` の値の意味と、0003 で設定する値を `docs/` の外に置かない。設定の手順は 0003 の issue に書く。

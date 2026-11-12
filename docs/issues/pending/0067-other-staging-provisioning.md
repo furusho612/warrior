@@ -1,0 +1,71 @@
+# staging の資源を必要になった時点で用意する
+
+- Requirements: なし (ADR-023 の staging 環境であり、PRD の要求 ID を持たない)
+- Priority: Low
+- Created: 2026-11-12
+- Model: deepseek-v4.1-flash:1017
+- Branch: feature/other-staging-provisioning
+
+## 目的
+
+staging を追加する必要が生じたときに、ADR-023 の手順で staging の D1、R2、Queues、Workers AI、Cron Triggers を用意する。
+実機の確認、AI の品質評価、E2E を production から分離して行えるようにする。
+
+## 優先度根拠
+
+production を先に用意するため、staging は今は作らない。
+実機の確認や AI の品質評価で staging が必要になったときに着手する。
+
+## 現状
+
+0002 と 0003 はローカルと production だけを用意する。
+staging の設定と資源はない。
+
+## 設計方針
+
+ADR-023 の staging の定義に従う。
+`[env.staging]` を `warrior-staging` とし、D1、R2、Queues、Workers AI、Cron Triggers を production と分ける。
+Relying Party ID と Origin は staging のホスト名に固定する。
+Google OAuth のクライアント ID とリダイレクト URI、VAPID の鍵、レート制限の上限値を staging の vars と Secret に設定する。
+R2 には CSV の書き出しを 7 日で削除するライフサイクルルールを設定する。
+D1 のマイグレーションを staging に適用してからデプロイする。
+`mise` に `deploy-staging` を追加する。
+ローカルの `.dev.vars` には staging の資格情報を置き、production の資格情報を置かない。
+
+ホスト名を変えるとパスキーが無効になり、OAuth のリダイレクト URI も変わるため、ホスト名を後から変えない。
+staging を追加した後は、production と同じ `AI_MODEL` を staging に置く。
+
+## 完了条件
+
+- [ ] staging の D1、R2、Queues が作成され、`wrangler.toml` の `[env.staging]` の値が実物と一致する。
+- [ ] staging の D1 にマイグレーションを適用できる。
+- [ ] staging の R2 にライフサイクルルールが設定されている。
+- [ ] Google OAuth のクライアントとリダイレクト URI が staging のホスト名に登録されている。
+- [ ] VAPID の公開鍵と subject が staging の vars に、秘密鍵が staging の Secret に設定されている。
+- [ ] `wrangler deploy --dry-run --env staging` が成功する。
+- [ ] `mise` の `deploy-staging` が `--env staging` を付けて実行する。
+- [ ] ローカルの `.dev.vars` に staging の資格情報だけがあり、production の資格情報がない。
+- [ ] staging の `AI_MODEL` が production と同じである。
+
+## 解決方法
+
+Cloudflare のダッシュボードまたは `wrangler` のコマンドで staging の資源を作る。
+`wrangler d1 create`、`wrangler r2 bucket create`、`wrangler queues create` を使い、返った ID を `wrangler.toml` の `[env.staging]` に書く。
+`wrangler secret put --env staging` で staging の Secret を設定する。
+Google Cloud の OAuth の設定で、staging のリダイレクト URI を追加する。
+R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKET> <NAME> <PREFIX> --expire-days 7` で設定する。
+`mise.toml` に `deploy-staging` を追加する。
+`.dev.vars.example` と `.dev.vars` に staging の資格情報の名前を追加する。
+作業の結果は issue に追記し、Secret の値は書かない。
+
+## 止める理由
+
+今は production を先に用意するため、staging を作らない。
+実機の確認、AI の品質評価、E2E のどこで staging が必要になるかは、その作業の着手時に決まる。
+エージェントは実環境へ接続しない。
+
+## 再開条件
+
+利用者が staging を必要とする作業を始める。
+0003 の production の資源ができている。
+利用者が staging の資源を作る権限と、Google OAuth と VAPID の staging 用の資格情報を用意する。

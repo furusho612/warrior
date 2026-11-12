@@ -27,7 +27,7 @@ staging の設定は必要になった時点で追加する。
 ## 設計方針
 
 ADR-023 はローカル、staging、production の 3 環境を定めるが、この issue では production を先に用意する。
-staging は必要になった時点で、ADR-023 の手順に従って追加する issue を起票する。
+staging は必要になった時点で、ADR-023 の手順に従って 0067 で追加する。
 
 production の D1 のデータベース、R2 のバケット、Queues を作る。
 R2 には CSV の書き出しを 7 日で削除するライフサイクルルールを設定する。
@@ -66,4 +66,4 @@ staging はこの issue の対象外である。
 
 利用者が Cloudflare のアカウントとサブドメインを用意し、production の資源を作る権限を渡す。
 Google OAuth のクライアントと VAPID の鍵を用意する。
-staging が必要になった時点で、別の issue を起票する。
+staging が必要になった時点で、0067 を着手する。
