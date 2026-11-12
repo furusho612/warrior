@@ -39,9 +39,9 @@ ID トークンの署名はダミーとし、サーバーは payload の `aud`�
 本物の Google のアカウントには接続しない。
 テスト専用の提供者と、その URL を指す vars は本番のビルドに含めない。
 
-E2E は実行ごとに一意な利用者を作り、D1 の行と R2 の `users/<利用者 ID>/` の接頭辞を分ける。
+E2E は実行ごとに一意な利用者を作り、D1 の行と R2 の `users/<利用者 ID>/` と `exports/<利用者 ID>/` の接頭辞を分ける。
 テストが作った資源は teardown で削除する。
-D1 は `wrangler d1 execute DB --local --command "<削除する SQL>"` で削除し、R2 はローカルの保存先のテスト用の接頭辞だけを削除する。
+D1 は `wrangler d1 execute DB --local --command "<削除する SQL>"` で削除し、R2 はローカルの保存先の `users/<利用者 ID>/` と `exports/<利用者 ID>/` の接頭辞だけを削除する。
 削除の対象はテストが作った資源に限る。
 
 待つのは条件であり、時間ではない。
@@ -63,7 +63,7 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 - [ ] テスト用の OIDC の提供者が `/authorize`、`/token`、`/userinfo`、`/test/user` を持ち、Google の応答と同じ形を返す。
 - [ ] 本物の Google のアカウントと外部のサービスに接続しない。
 - [ ] テスト専用の提供者と、その URL を指す vars が本番のビルドに含まれない。
-- [ ] E2E の実行ごとに一意な利用者を作り、D1 の行と R2 の接頭辞を分け、teardown で削除する。
+- [ ] E2E の実行ごとに一意な利用者を作り、D1 の行と R2 の `users/<利用者 ID>/` と `exports/<利用者 ID>/` の接頭辞を分け、teardown で削除する。
 - [ ] 待機が条件で書かれ、固定の `sleep` がない。
 - [ ] 待機を含むテストを 10 回連続で実行し、すべて成功する。
 - [ ] Chrome の WebAuthn の仮想認証器、CDP のプッシュとオフラインの操作が、後続の issue から使える関数として用意されている。

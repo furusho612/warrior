@@ -1,6 +1,6 @@
 # ローカル用の Worker 設定と環境ごとのバインディングを用意する
 
-- Requirements: なし (環境分離は ADR-023 の判断であり、PRD の要求 ID を持たない)
+- Requirements: なし (環境分離は ADR-023 の判断であり、PRD の要求 ID を持たない。設定のキーを用意するだけで、上限の判定は 0018 が実装する)
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
@@ -41,7 +41,7 @@ Queues は AI の生成とレストの通知の予約を 1 つのキューで扱
 CORS は許可しない。
 Cloudflare の Preview URLs は使わない。
 
-環境ごとの vars に、Relying Party ID、Origin、Google OAuth の認可 URL、トークン URL、UserInfo の URL、Google のクライアント ID、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を置く。
+環境ごとの vars に、Relying Party ID、Origin、Google OAuth の認可 URL、トークン URL、UserInfo の URL、Google のクライアント ID、Google OAuth のリダイレクト URI、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を置く。
 Google のクライアントシークレットと VAPID の秘密鍵は Secret に置く。
 リポジトリには Secret の値を書かない。
 ローカルの `.dev.vars` には production の資格情報を置かない。
