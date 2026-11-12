@@ -25,6 +25,7 @@ PWA の manifest は JSON で置く。
 ブラウザが要求する登録用の `sw.js` は、生成された JS を `importScripts` で読み込み、wasm を初期化するだけの最小のローダーとする。
 `importScripts` は Service Worker の fetch を経由せず、ブラウザの HTTP キャッシュを使う。
 生成された JS は版付きの URL で配信し、`Cache-Control` でキャッシュする。
+登録用の `sw.js` は `Cache-Control: no-cache` で配信し、更新を検出できるようにする。
 手書きの JavaScript にアプリのロジックを置かない。
 Service Worker の `install`、`activate`、`fetch`、`push`、`notificationclick` のイベントは、Rust で処理する。
 キャッシュとプッシュの処理には、`web-sys` の API を使う。

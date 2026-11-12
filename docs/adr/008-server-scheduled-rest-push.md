@@ -39,6 +39,8 @@ Safari は `web.push.apple.com`、Chrome は `fcm.googleapis.com` を許可す�
 
 通知の `Urgency` を `high` にする。
 `TTL` を 30 秒にし、遅れた通知を破棄する。
+通知は終了予定時刻から 30 秒以内にだけ送る。
+それを過ぎたメッセージは送らない。
 
 TMR-012 の合格基準を確かめるときは、サーバーが送信時刻を記録し、Service Worker が受信時刻を API に送る。
 `mise run verify-staging` は 10 回の遅れを集計し、5 秒以内が 9 回以上かを判定する。
