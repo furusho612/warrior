@@ -54,6 +54,8 @@ macOS の runner を使う Safari の E2E は 0008 で加える。
 CI の提供者が変わる場合は、同じ `mise run check` を呼ぶ設定に置き換える。
 
 本番のビルドに含めるクレートは ADR-025 の表に限る。
+`worker` は `d1` と `queue`、`dioxus` は `default-features = false` で `web`、`minimal`、`document`、`p256` は `default-features = false` で `ecdsa` だけを有効にする。
+`web-sys` は使う API の feature だけを列挙する。
 直接の依存を追加するときは、`cargo tree --edges normal` と `cargo tree --target wasm32-unknown-unknown` の差分を確認する。
 この確認は自動テストにせず、レビューの観点にする。
 
