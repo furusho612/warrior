@@ -82,7 +82,7 @@ Google アカウントとすべてのパスキーを失った場合、アカウ�
 `backend/warrior/src/router.rs` に `POST /api/auth/passkey/register/start`、`POST /api/auth/passkey/register/finish`、`POST /api/auth/passkey/login/start`、`POST /api/auth/passkey/login/finish`、`GET /api/me/passkeys`、`DELETE /api/me/passkeys/:id` を追加する。
 `backend/warrior/src/auth/reauthenticate.rs` に、Google アカウントまたは既存のパスキーで再認証し、elevation token を発行する経路を置く。
 `migrations/` に `passkeys` の表を追加する。
-`frontend/src/screens/account.rs` にパスキーの一覧と追加、削除の操作を置く。画面の仕上げは 0063 で行う。
+`frontend/src/screens/account.rs` にパスキーの一覧と登録、追加、削除の操作を置く。画面の仕上げは 0063 で行う。
 `frontend/src/screens/login.rs` に、検出可能な資格情報がない場合のメールアドレスの入力を置く。
 `backend/warrior/tests/e2e_passkey.rs` に E2E を追加する。
 `backend/pbt/tests/webauthn.rs` に往復の性質テストを置く。
