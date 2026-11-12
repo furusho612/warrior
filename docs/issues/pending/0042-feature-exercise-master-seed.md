@@ -4,7 +4,7 @@
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
-- Branch: feature/pending-exercise-master-seed
+- Branch: feature/feature-exercise-master-seed
 
 ## 目的
 

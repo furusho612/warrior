@@ -4,7 +4,7 @@
 - Priority: Medium
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
-- Branch: feature/pending-ai-model-selection
+- Branch: feature/other-ai-model-selection
 
 ## 目的
 
