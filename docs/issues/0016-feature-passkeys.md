@@ -44,11 +44,11 @@ base64url、CBOR、COSE、WebAuthn の検証は、`../../../brewbook` の `base6
 1 つのアカウントに複数のパスキーを登録できる。
 パスキーの一覧は、マイページのアカウントの画面で表示する。
 
-パスキーのログインは、検出可能な資格情報を使う。
-`allowCredentials` を空にして `navigator.credentials.get` を呼ぶ。
-認証器が検出可能な資格情報を保存しない場合、そのパスキーではログインできない。
-その場合も Google アカウントでログインし、新しいパスキーを登録できる。
-この制約を、パスキーの登録時に画面で示す。
+パスキーのログインは、検出可能な資格情報がある場合は、`allowCredentials` を空にして `navigator.credentials.get` を呼ぶ。
+認証器が検出可能な資格情報を保存しない場合は、利用者が Google アカウントのメールアドレスを入力し、サーバーがその利用者のパスキーの ID を `allowCredentials` に渡す。
+この経路により、登録したパスキーでログインできる。
+メールアドレスの入力は、パスキーのログインの画面で行う。
+メールアドレスの入力の経路でも、チャレンジ、`userVerification`、署名カウンタの検証は同じ規則を使う。
 
 ログインに成功した後は、0015 と同じセッションを発行する。
 パスキーをすべて失っても、Google アカウントが使えればログインして登録し直せる。
@@ -57,7 +57,7 @@ Google アカウントとすべてのパスキーを失った場合、アカウ�
 
 ## 完了条件
 
-- [ ] ログインの後にマイページからパスキーを登録でき、登録の後はパスキー認証でログインできる。これは REQ-NFR-013 の受入基準に対応する。
+- [ ] 登録したパスキーでログインできる。検出可能な資格情報がない場合も、Google アカウントのメールアドレスの入力と `allowCredentials` でログインできる。これは REQ-NFR-013 の受入基準に対応する。
 - [ ] 1 つのアカウントに複数のパスキーを登録でき、追加と削除ができる。削除の後に一覧が変わる。これは REQ-NFR-013 と REQ-MYP-006 の受入基準に対応する。
 - [ ] 登録したパスキーを使えない状態でも、Google アカウントでログインして新しいパスキーを登録できる。これは REQ-NFR-014 の受入基準に対応する。
 - [ ] 登録では ES256 だけを受理し、他のアルゴリズムを拒否する。
@@ -79,5 +79,6 @@ Google アカウントとすべてのパスキーを失った場合、アカウ�
 `backend/warrior/src/router.rs` に `POST /api/auth/passkey/register/start`、`POST /api/auth/passkey/register/finish`、`POST /api/auth/passkey/login/start`、`POST /api/auth/passkey/login/finish`、`GET /api/me/passkeys`、`DELETE /api/me/passkeys/:id` を追加する。
 `migrations/` に `passkeys` の表を追加する。
 `frontend/src/screens/mypage.rs` にパスキーの一覧と追加、削除の操作を置く。画面の仕上げは 0063 で行う。
+`frontend/src/screens/login.rs` に、検出可能な資格情報がない場合のメールアドレスの入力を置く。
 `backend/warrior/tests/e2e_passkey.rs` に E2E を追加する。
 `backend/pbt/tests/webauthn.rs` に往復の性質テストを置く。
