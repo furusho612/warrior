@@ -43,7 +43,7 @@ Node.js は `wrangler` のインストールにだけ使い、アプリのコー
 Dioxus CLI は Tailwind CLI、esbuild、`wasm-bindgen`、`wasm-opt` を自身の固定した版で取得する。
 これらの版は Dioxus CLI の版が決めるため、mise では個別に固定しない。
 `wasm-bindgen-test` のランナーは、`frontend/Cargo.lock` の `wasm-bindgen` と版を揃える。
-Safari のブラウザテストは `safaridriver` を起動して実行する。
+Safari のブラウザのテストは `safaridriver` を起動して実行する。
 
 ツールの版を更新するときは、`mise.toml` の変更をコミットし、`mise run check` が通ることを確認してからマージする。
 
