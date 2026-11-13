@@ -61,7 +61,7 @@ API は、認証済みの利用者の範囲だけを読み書きする。
 
 D1 は、利用者に属するデータ、マスター、一時的なジョブの状態を持つ。
 利用者に属するデータは、利用者 ID で範囲を分ける。
-種目、プログラム、筋肉の単位などのマスターは、利用者に属さない。
+種目、あらかじめ用意したプログラム、筋肉の単位などのマスターは、利用者に属さない。
 トレーニングの記録は、入力の順序を保つ表として持つ。
 記録は、種目マスターの変更の影響を受けないように、表示に必要な値をスナップショットとして持つ。
 
@@ -89,7 +89,7 @@ AI のスナップショットはアカウントの削除まで保持する。
 
 ## AI
 
-AI の提案は、トレーニングの終了時に生成する。
+AI の提案は、トレーニングの終了時と、日次・週月の評価で生成する。
 入力は、トレーニングの記録、メモ、目標、身体情報のうち、ADR-010 が定める範囲に限る。
 入力と出力のスナップショットは R2 に保存し、D1 にはメタデータだけを置く。
 AI の出力は、スキーマの検証を通ったものだけを画面に出す。
@@ -98,8 +98,8 @@ AI の出力は、スキーマの検証を通ったものだけを画面に出�
 
 ## 非同期処理
 
-Queues は、AI の生成ジョブ、レスト終了のプッシュ通知の予約、期限切れの処理に使う。
-Cron Triggers は、期限を過ぎた予約の回復、古いジョブの整理、ライフサイクルでは扱えない期限切れの確認に使う。
+Queues は、AI の生成ジョブと、レスト終了のプッシュ通知の予約に使う。
+Cron Triggers は、週と月の評価の生成、期限切れのセッションとチャレンジの削除、lease の回復、R2 の一時ファイルの確認に使う。
 ジョブは、状態と再試行の回数を持ち、同じ入力の再実行で状態が壊れないようにする。
 プッシュ通知の予約は、レストの終了予定時刻を絶対時刻で持ち、延長、短縮、中止に追従する。
 
@@ -113,7 +113,7 @@ staging は、実機の確認、AI の品質評価、プッシュ通知の計測
 
 ## テストと観測
 
-テストは、単体テスト、PBT、結合テスト、ブラウザのテスト、E2E、Fuzzing、形式手法に分ける。
+テストは、単体テスト、PBT、結合テスト、ブラウザのテスト、E2E の 5 層に分ける。Fuzzing と形式手法は、別の検査として行う。
 ブラウザの API に依存する部品は Chrome と Safari の実ブラウザで確かめる。
 E2E は実物の Worker、D1、R2、Queues、ブラウザを組み合わせる。
 Safari の E2E は macOS のジョブで実行し、Chrome の E2E は Linux のジョブで実行する。
@@ -124,27 +124,29 @@ AI の入力と出力の保存、削除、再試行の結果は、利用者の�
 
 ## 参照
 
-- `../prd/warrior.md`
-- `../adr/001-web-app-as-pwa.md`
-- `../adr/002-local-first-session-recording.md`
-- `../adr/003-session-ownership-by-start-device.md`
-- `../adr/004-ordered-training-record-structure.md`
-- `../adr/005-japan-time-date-boundaries.md`
-- `../adr/006-record-snapshots-independent-of-master.md`
-- `../adr/007-rest-timer-absolute-end-time.md`
-- `../adr/008-server-scheduled-rest-push.md`
-- `../adr/009-ai-proposals-generated-at-session-end.md`
-- `../adr/010-ai-context-data-boundary.md`
-- `../adr/013-google-account-with-passkeys.md`
-- `../adr/014-backend-rust-workers-rs.md`
-- `../adr/015-d1-as-primary-store.md`
-- `../adr/016-dioxus-tailwind-same-origin.md`
-- `../adr/017-r2-for-ai-snapshots-and-exports.md`
-- `../adr/018-workers-ai-with-validation.md`
-- `../adr/019-google-oauth-and-passkeys.md`
-- `../adr/020-pwa-offline-recording-and-service-worker.md`
-- `../adr/021-queues-and-cron-for-jobs.md`
-- `../adr/022-mise-toolchain.md`
-- `../adr/023-environment-separation.md`
-- `../adr/024-test-strategy.md`
-- `../adr/025-minimal-dependencies.md`
+- `docs/prd/warrior.md`
+- `docs/adr/001-web-app-as-pwa.md`
+- `docs/adr/002-local-first-session-recording.md`
+- `docs/adr/003-session-ownership-by-start-device.md`
+- `docs/adr/004-ordered-training-record-structure.md`
+- `docs/adr/005-japan-time-date-boundaries.md`
+- `docs/adr/006-record-snapshots-independent-of-master.md`
+- `docs/adr/007-rest-timer-absolute-end-time.md`
+- `docs/adr/008-server-scheduled-rest-push.md`
+- `docs/adr/009-ai-proposals-generated-at-session-end.md`
+- `docs/adr/010-ai-context-data-boundary.md`
+- `docs/adr/011-design-tokens-as-source-of-truth.md`
+- `docs/adr/012-inline-svg-body-figure.md`
+- `docs/adr/013-google-account-with-passkeys.md`
+- `docs/adr/014-backend-rust-workers-rs.md`
+- `docs/adr/015-d1-as-primary-store.md`
+- `docs/adr/016-dioxus-tailwind-same-origin.md`
+- `docs/adr/017-r2-for-ai-snapshots-and-exports.md`
+- `docs/adr/018-workers-ai-with-validation.md`
+- `docs/adr/019-google-oauth-and-passkeys.md`
+- `docs/adr/020-pwa-offline-recording-and-service-worker.md`
+- `docs/adr/021-queues-and-cron-for-jobs.md`
+- `docs/adr/022-mise-toolchain.md`
+- `docs/adr/023-environment-separation.md`
+- `docs/adr/024-test-strategy.md`
+- `docs/adr/025-minimal-dependencies.md`

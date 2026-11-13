@@ -1,6 +1,6 @@
 # staging の資源を必要になった時点で用意する
 
-- Requirements: REQ-NFR-001, REQ-NFR-003, REQ-NFR-004, REQ-NFR-009, REQ-NFR-013, REQ-NFR-014, REQ-NFR-017 (staging の用意は ADR-023)
+- Requirements: REQ-NFR-001, REQ-NFR-003, REQ-NFR-004, REQ-NFR-005, REQ-NFR-009, REQ-NFR-013, REQ-NFR-014, REQ-NFR-017 (staging の用意は ADR-023)
 - Priority: Low
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
@@ -34,7 +34,7 @@ D1 のマイグレーションを staging に適用してからデプロイす�
 ローカルの `.dev.vars` には staging の資格情報を置き、production の資格情報を置かない。
 
 ホスト名を変えるとパスキーが無効になり、OAuth のリダイレクト URI も変わるため、ホスト名を後から変えない。
-staging で 0006 の HTTPS と暗号化、0016 の Safari と Android の Chrome のパスキー、0020 の iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、iPhone と Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録を確認する。
+staging で 0006 の HTTPS と暗号化、0016 の Safari と Android の Chrome のパスキー、0020 の iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、iPhone の Safari と Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録を確認する。
 staging を追加した後は、production と同じ `AI_MODEL` を staging に置く。
 
 ## 完了条件
@@ -56,9 +56,9 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 - [ ] Android の Chrome のパスキーを staging で確かめる。Android での登録、ログイン、複数パスキーの追加と削除、Google からの復旧、再認証なしの拒否を確かめる。これは `REQ-NFR-013` と `REQ-NFR-014` の受入基準に対応する。
 - [ ] 0020 の iOS の Service Worker 自身の wasm の起動 (ADR-020 の Consequences の「iOS のホーム画面に追加した PWA で、Service Worker 自身の wasm が起動できることを確認する」) を staging で確かめる。これは内部条件であり、REQ-NFR-001 の受入基準の外側である。
 - [ ] 0020 の iOS の PWA の起動と、読み込んだ後に通信を切っても画面の表示を続けられることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、iOS の PWA を満たす。
-- [ ] Android の Chrome ですべての画面を操作できることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、Android の Chrome を満たす。PC の Chrome と Safari のすべての画面は 0007 以降の E2E で確認する。
+- [ ] Android の Chrome ですべての画面を操作できることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、Android の Chrome を満たす。PC の Chrome と Safari の画面は 0007 の経路の台帳の E2E で確認し、各機能の操作はその機能の E2E と staging で確認する。
 - [ ] iPhone の Safari ですべての画面を操作できることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、iPhone の Safari を満たす。
-- [ ] iOS の Safari、PC の Safari、Android の Chrome で、通信を切って記録を続け、復帰後に同期できることを staging で確かめる。これは `REQ-NFR-003` と `REQ-NFR-004` の受入基準に対応する。
+- [ ] iOS の Safari、PC の Safari、Android の Chrome で、通信を切って記録を続け、通信を戻して再読み込みし、復帰後の同期と未保存の表示を確かめる。これは `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005` の受入基準に対応する。
 
 ## 解決方法
 
