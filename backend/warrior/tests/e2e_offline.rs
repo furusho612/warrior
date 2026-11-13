@@ -11,6 +11,8 @@ use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
 
 const MEMO: &str = "オフラインのメモ";
+const DELAYED_MEMO: &str = "遅延のメモ";
+const DELAYED_SECOND_MEMO: &str = "、さらに遅延";
 const OTHER_USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4501";
 
 #[tokio::test]
@@ -33,6 +35,7 @@ async fn chrome_records_offline_discards_a_failed_create_and_syncs_after_reconne
 
     discard_failed_create_scenario(&driver, &server).await;
     offline_memo_scenario(&driver, &server).await;
+    delayed_memo_scenario(&driver, &server).await;
 
     driver.quit().await.expect("the browser must close");
 }
@@ -139,7 +142,63 @@ async fn offline_memo_scenario(driver: &WebDriver, server: &DevServer) {
     browser::wait_for_attribute(driver, "[data-sync-status]", "data-sync-status", "saved").await;
 }
 
+async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
+    let training_id = browser::attribute(driver, "[data-session-id]", "data-session-id").await;
+    assert!(!training_id.is_empty());
+    let base = browser::value(driver, "textarea[data-memo]").await;
+    assert_eq!(base, MEMO);
+
+    set_network(driver, true, 5000).await;
+    let textarea = driver
+        .find(By::Css("textarea[data-memo]"))
+        .await
+        .expect("the memo must exist");
+    textarea.click().await.expect("the memo must be focusable");
+    textarea
+        .send_keys(DELAYED_MEMO)
+        .await
+        .expect("the first delayed memo must be typed");
+    let first = format!("{base}{DELAYED_MEMO}");
+    browser::wait_for_attribute(
+        driver,
+        "[data-persisted-memo]",
+        "data-persisted-memo",
+        &first,
+    )
+    .await;
+    wait_for_transient_update(driver).await;
+
+    set_network(driver, false, 5000).await;
+    let textarea = driver
+        .find(By::Css("textarea[data-memo]"))
+        .await
+        .expect("the memo must still exist");
+    textarea.click().await.expect("the memo must be focusable");
+    textarea
+        .send_keys(DELAYED_SECOND_MEMO)
+        .await
+        .expect("the second delayed memo must be typed");
+    let expected = format!("{first}{DELAYED_SECOND_MEMO}");
+    browser::wait_for_value(driver, "textarea[data-memo]", &expected).await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-persisted-memo]",
+        "data-persisted-memo",
+        &expected,
+    )
+    .await;
+    wait_for_update_count(driver, 2).await;
+
+    set_network(driver, false, 0).await;
+    wait_for_d1_memo(server, &training_id, &expected).await;
+    browser::wait_for_value(driver, "textarea[data-memo]", &expected).await;
+}
+
 async fn offline(driver: &WebDriver, offline: bool) {
+    set_network(driver, offline, 0).await;
+}
+
+async fn set_network(driver: &WebDriver, offline: bool, latency: u64) {
     driver
         .cdp()
         .send_raw("Network.enable", json!({}))
@@ -151,7 +210,7 @@ async fn offline(driver: &WebDriver, offline: bool) {
             "Network.emulateNetworkConditions",
             json!({
                 "offline": offline,
-                "latency": 0,
+                "latency": latency,
                 "downloadThroughput": if offline { 0 } else { -1 },
                 "uploadThroughput": if offline { 0 } else { -1 }
             }),
@@ -186,6 +245,45 @@ async fn wait_for_blocked_update(driver: &WebDriver, create_state: &str) {
     }
 }
 
+async fn wait_for_transient_update(driver: &WebDriver) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let entries = outbox_entries(driver).await;
+        let transient = entries.iter().any(|entry| {
+            entry["kind"] == "training_session_update"
+                && entry["state"] == "pending"
+                && entry["attempts"].as_u64().unwrap_or(0) >= 1
+        });
+        if transient {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the update did not fail transiently: {entries:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+async fn wait_for_update_count(driver: &WebDriver, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let entries = outbox_entries(driver).await;
+        let count = entries
+            .iter()
+            .filter(|entry| entry["kind"] == "training_session_update")
+            .count();
+        if count == expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the update count did not become {expected}: {entries:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 async fn wait_for_empty_local_records(driver: &WebDriver) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
@@ -212,11 +310,13 @@ request.onsuccess = () => {
   const transaction = database.transaction('outbox', 'readonly');
   const all = transaction.objectStore('outbox').getAll();
   all.onsuccess = () => {
-    const rows = all.result.map((entry) => ({
+    let rows = all.result.map((entry) => ({
       id: entry.operation.operation_id,
       kind: entry.operation.kind,
       state: entry.state,
       parent: entry.operation.parent_operation_id,
+      attempts: entry.attempts,
+      attempted: entry.attempted,
       memo: entry.operation.payload.memo
     }));
     database.close();
