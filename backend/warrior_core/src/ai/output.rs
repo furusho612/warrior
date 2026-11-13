@@ -171,11 +171,17 @@ impl AiOutput {
         let mut output = output;
 
         if let Some(evaluation) = output.evaluation.take() {
-            output.evaluation = Some(validate_evaluation(
-                evaluation,
-                &known_numbers,
-                requires_reference,
-            )?);
+            let evaluation = validate_evaluation(evaluation, &known_numbers, requires_reference)?;
+            if evaluation.good.is_empty()
+                || evaluation.improvements.is_empty()
+                || evaluation.next_actions.is_empty()
+            {
+                if !requires_reference {
+                    return Err(OutputError::NoDisplayableContent);
+                }
+            } else {
+                output.evaluation = Some(evaluation);
+            }
         }
 
         if output.proposals.len() > MAX_ITEMS {
@@ -183,7 +189,7 @@ impl AiOutput {
         }
         output
             .proposals
-            .retain(|proposal| valid_proposal(proposal, &known_numbers, requires_reference));
+            .retain(|proposal| valid_proposal(proposal, requires_reference));
         if output.menu_changes.len() > MAX_ITEMS {
             return Err(OutputError::TooManyMenuChanges);
         }
@@ -236,15 +242,6 @@ fn validate_evaluation(
     evaluation
         .next_actions
         .retain(|item| valid_evaluation_item(item, known_numbers, requires_reference));
-    if evaluation.good.is_empty()
-        || evaluation.improvements.is_empty()
-        || evaluation.next_actions.is_empty()
-    {
-        if requires_reference {
-            return Ok(evaluation);
-        }
-        return Err(OutputError::NoDisplayableContent);
-    }
     Ok(evaluation)
 }
 
@@ -273,12 +270,7 @@ fn valid_text(text: &str) -> bool {
     !trimmed.is_empty() && trimmed.chars().count() <= MAX_TEXT_CHARS
 }
 
-fn valid_proposal(
-    proposal: &SetProposal,
-    known_numbers: &std::collections::HashSet<String>,
-    requires_reference: bool,
-) -> bool {
-    let _ = known_numbers;
+fn valid_proposal(proposal: &SetProposal, requires_reference: bool) -> bool {
     if proposal.exercise_id.trim().is_empty()
         || !valid_text(&proposal.reason)
         || !(1..=20).contains(&proposal.sets)
@@ -506,6 +498,22 @@ mod tests {
             ..AiOutput::default()
         };
         assert!(AiOutput::validate(output, &context).is_ok());
+    }
+
+    #[test]
+    fn an_evaluation_without_reasons_is_dropped_when_proposals_explain_the_reference() {
+        let mut context = context();
+        context.assisted_set_reference[0].sets_with_assisted = 12.0;
+        let mut proposal = proposal("前回 70 kg から増やす");
+        proposal.reference_reason = Some("補助筋を含めると 12 セットになる".to_owned());
+        let output = AiOutput {
+            evaluation: Some(evaluation()),
+            proposals: vec![proposal],
+            ..AiOutput::default()
+        };
+        let result = AiOutput::validate(output, &context).unwrap();
+        assert_eq!(result.evaluation, None);
+        assert_eq!(result.proposals.len(), 1);
     }
 
     #[test]
