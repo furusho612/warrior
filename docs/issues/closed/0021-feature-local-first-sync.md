@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-003, REQ-NFR-004, REQ-NFR-005, REQ-NFR-007, REQ-NFR-010
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-local-first-sync
 
@@ -100,3 +101,15 @@ IndexedDB の保存の対象は、トレーニング、トレーニングの種�
 `backend/warrior/tests/e2e_safari_indexeddb.rs` に Safari の E2E を追加する。
 `backend/pbt/tests/sync.rs` に状態遷移の性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に利用者に属する表を追加する。
+
+## 結果
+
+端末内の保存と送信待ちの列、同期の API、記録画面の開始とメモの保存、再読み込みの復元、`clear_account` を実装した。
+`migrations/0006_training_sessions.sql` にトレーニング、種目、セット、段、スーパーセット、組、適用済みの操作の表を追加した。
+`POST /api/sync/operations` で操作を適用し、同じ操作 ID の再送を冪等にした。
+IndexedDB の版 2、送信待ちの列の pending / sending / blocked / failed、送信を試みた印、受理済みのメモと順序、保存の単一ループを実装した。
+Dioxus の runtime の外から `spawn` していた online の購読を `wasm_bindgen_futures::spawn_local` に変えた。記録画面は IndexedDB を 200ms 間隔で読み、同期の状態を表示する。
+Safari の E2E を追加し、`mise run e2e-safari` と CI の safari ジョブに入れた。ローカルの Safari は remote automation を有効にできず未実行で、CI で確認する。
+セットの入力 UI と Safari のセット復元は 0025 が担う。この issue の Safari の E2E はメモの復元を確かめる。
+
+ローカル D1 (`wrangler dev`) の batch の原子性について、トレーニングを直接 seed して trigger で 2 文目を失敗させると 1 文目がロールバックされた。一方、create を API で適用した後に update を失敗させると、500 の直後の `applied_operations` の件数は 0 だが、同じ操作 ID の再送が `already_applied` になり、1 文目が永続化された。実装は `db.batch` を 1 回呼び、操作の適用と操作 ID の保存を同じ batch に渡している。batch の原子性はプロバイダの契約に依存するため、結合テストは同時に 2 本の同じ操作を送り、適用が 1 回だけになることを確かめる。trigger に依存するテストは、ローカル D1 の挙動を写すため残さない。本番と staging の D1 でも同じ確認を行う。
