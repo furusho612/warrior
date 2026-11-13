@@ -94,6 +94,15 @@ pub enum GripStyle {
 impl GripStyle {
     /// 3 種類。
     pub const ALL: [Self; 3] = [Self::Pronated, Self::Supinated, Self::Parallel];
+
+    /// DB と比較のキーに載せる値。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pronated => "pronated",
+            Self::Supinated => "supinated",
+            Self::Parallel => "parallel",
+        }
+    }
 }
 
 /// 手幅。
@@ -108,6 +117,15 @@ pub enum GripWidth {
 impl GripWidth {
     /// 3 種類。
     pub const ALL: [Self; 3] = [Self::Wide, Self::Medium, Self::Narrow];
+
+    /// DB と比較のキーに載せる値。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Wide => "wide",
+            Self::Medium => "medium",
+            Self::Narrow => "narrow",
+        }
+    }
 }
 
 /// アタッチメント。
@@ -190,6 +208,20 @@ pub enum GripSelection {
 }
 
 impl GripSelection {
+    /// 自己ベストと前回の比較に使う (グリップ、アタッチメント) のキー。
+    pub fn comparison_key(self) -> (Option<String>, Option<String>) {
+        match self {
+            Self::None => (None, None),
+            Self::Grip { style, width } => {
+                (Some(format!("{}_{}", style.as_str(), width.as_str())), None)
+            }
+            Self::Attachment { attachment, style } => (
+                style.map(|style| style.as_str().to_owned()),
+                Some(attachment.as_str().to_owned()),
+            ),
+        }
+    }
+
     /// 種目のグリップの種類に合うかを検証する。
     pub fn validate_for(self, mode: GripMode) -> Result<(), ExerciseError> {
         match (mode, self) {
@@ -616,6 +648,35 @@ mod tests {
         assert_eq!(
             value.validate(),
             Err(ExerciseError::UnexpectedAttachmentStyle)
+        );
+    }
+
+    #[test]
+    fn the_grip_comparison_key_separates_every_selection() {
+        assert_eq!(GripSelection::None.comparison_key(), (None, None));
+        assert_eq!(
+            GripSelection::Grip {
+                style: GripStyle::Pronated,
+                width: GripWidth::Medium,
+            }
+            .comparison_key(),
+            (Some("pronated_medium".to_owned()), None)
+        );
+        assert_eq!(
+            GripSelection::Attachment {
+                attachment: super::Attachment::WideBar,
+                style: Some(GripStyle::Supinated),
+            }
+            .comparison_key(),
+            (Some("supinated".to_owned()), Some("wide_bar".to_owned()))
+        );
+        assert_eq!(
+            GripSelection::Attachment {
+                attachment: super::Attachment::ParallelGrip,
+                style: None,
+            }
+            .comparison_key(),
+            (None, Some("parallel_grip".to_owned()))
         );
     }
 

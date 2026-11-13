@@ -65,12 +65,12 @@ impl fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 /// 破棄した操作の結果。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DiscardOutcome {
     /// 作成の破棄で、トレーニングと配下の行を削除した。
     SessionDeleted,
     /// 更新の破棄で、メモをサーバーが受理した値に戻した。
-    MemoReverted(SessionRecord),
+    MemoReverted(Box<SessionRecord>),
     /// 操作だけを削除した。
     OperationsRemoved,
 }
@@ -190,7 +190,7 @@ impl Storage {
             .map(|value| serde_json::from_value::<SessionRecord>(value.clone()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| StorageError::Serialize(error.to_string()))?;
-        sessions.retain(|session| session.started_at.is_some());
+        sessions.retain(|session| session.started_at.is_some() && session.finished_at.is_none());
         sessions.sort_by(|left, right| {
             left.started_at
                 .cmp(&right.started_at)
@@ -346,6 +346,38 @@ impl Storage {
             indexeddb::add(&outbox_store, &indexeddb::to_js(&entry)?).await
         };
         if let Err(error) = write {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// 終了したトレーニングのサマリーを端末内へ保存する。
+    ///
+    /// サマリーはサーバーが計算して保存した値であり、送信待ちの列には入れない。
+    pub async fn save_session_summary(&self, session: &SessionRecord) -> Result<(), StorageError> {
+        if session.finished_at.is_none() {
+            return Err(StorageError::InvalidOperation(
+                "the session is not finished".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::TrainingSessions.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sessions = transaction.store(Store::TrainingSessions.name())?;
+        let Some(existing) = indexeddb::get(&sessions, &JsValue::from_str(&session.id)).await?
+        else {
+            return Err(StorageError::InvalidOperation(
+                "the session does not exist".to_owned(),
+            ));
+        };
+        let existing: SessionRecord = indexeddb::from_js(&existing)?;
+        let mut session_to_store = session.clone();
+        session_to_store.confirmed_memo = existing.confirmed_memo;
+        session_to_store.confirmed_sequence = existing.confirmed_sequence;
+        if let Err(error) = indexeddb::put(&sessions, &indexeddb::to_js(&session_to_store)?).await {
             return abort(transaction, error).await;
         }
         transaction.finish().await
@@ -832,5 +864,5 @@ async fn revert_session_memo(
     let mut session: SessionRecord = indexeddb::from_js(&value)?;
     session.memo = session.confirmed_memo.clone();
     indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
-    Ok(DiscardOutcome::MemoReverted(session))
+    Ok(DiscardOutcome::MemoReverted(Box::new(session)))
 }

@@ -1,4 +1,7 @@
-//! 記録の開始と、記録中のトレーニングのメモの端末内への保存。
+//! 記録の開始、記録中のメモの端末内への保存、トレーニングの終了。
+//!
+//! セット表、種目レール、レストタイマー、セット詳細の枠を置く。セットの入力と
+//! レストタイマーの中身は後続の画面が入れる。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -11,11 +14,13 @@ use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
     SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
+use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::routes::{navigate, Route};
 use crate::storage::{self, DiscardOutcome, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
+use crate::training_session as training_api;
 
 #[component]
 pub fn RecordScreen() -> Element {
@@ -44,7 +49,7 @@ pub fn RecordScreen() -> Element {
                 "data-start-record": "true",
                 disabled: starting(),
                 onclick: move |_| {
-                    spawn(start_session(error, starting));
+                    spawn(start_empty_session(starting, error));
                 },
                 "{text(Key::RecordStart)}"
             }
@@ -53,7 +58,7 @@ pub fn RecordScreen() -> Element {
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
                     onclick: move |_| {
-                        spawn(start_session(error, starting));
+                        spawn(start_empty_session(starting, error));
                     },
                     "{text(Key::RecordRetry)}"
                 }
@@ -62,7 +67,10 @@ pub fn RecordScreen() -> Element {
     }
 }
 
-async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<bool>) {
+pub(crate) async fn start_empty_session(
+    mut starting: Signal<bool>,
+    mut error: Signal<Option<String>>,
+) {
     starting.set(true);
     let result = create_session().await;
     starting.set(false);
@@ -73,7 +81,7 @@ async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<b
                 training_id: session.id,
             });
         }
-        Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
+        Err(_) => error.set(Some(text(Key::RecordStartFailed).to_owned())),
     }
 }
 
@@ -164,6 +172,9 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-persisted-memo": "{persisted}",
             RecordHeader { signals, state_signals }
             MemoEditor { signals, state_signals }
+            RecordFinish { signals }
+            SetTable {}
+            SetDrawer {}
             RecordLoadError {
                 training_id: training_id.clone(),
                 signals,
@@ -176,6 +187,145 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 state_signals,
             }
         }
+    }
+}
+
+#[component]
+fn SetTable() -> Element {
+    rsx! {
+        div { class: "flex flex-col gap-1",
+            h2 { class: "text-sm font-bold", "{text(Key::RecordSets)}" }
+            div {
+                class: "h-[222px] overflow-y-auto border border-line bg-surface",
+                "data-set-table": "true",
+                "data-set-rows": "5",
+                "data-set-row-height": "44",
+                for index in 0..5 {
+                    div {
+                        class: "h-11 border-b border-line",
+                        "data-set-row": "true",
+                        "data-set-row-index": "{index}",
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SetDrawer() -> Element {
+    rsx! {
+        aside {
+            class: "hidden border border-line bg-surface p-3",
+            "data-set-drawer": "true",
+            h2 { class: "text-sm font-bold", "{text(Key::RecordSetDetail)}" }
+            p { class: "text-[11px] text-text-sub", "{text(Key::RecordSetDetailEmpty)}" }
+        }
+    }
+}
+
+#[component]
+fn RecordFinish(signals: RecordSignals) -> Element {
+    let finishing = use_signal(|| false);
+    let error = use_signal(|| Option::<String>::None);
+    let enabled = (signals.session)().is_some();
+    let busy = finishing();
+
+    rsx! {
+        button {
+            class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+            "data-finish": "true",
+            disabled: busy || !enabled,
+            onclick: move |_| {
+                spawn(finish_training(signals, finishing, error));
+            },
+            if busy {
+                "{text(Key::RecordFinishing)}"
+            } else {
+                "{text(Key::RecordFinish)}"
+            }
+        }
+        if let Some(message) = error() {
+            p { class: "text-[13px] text-primary", "{message}" }
+            button {
+                class: "min-h-11 border border-line px-3 text-[13px]",
+                onclick: move |_| {
+                    spawn(finish_training(signals, finishing, error));
+                },
+                "{text(Key::RecordRetry)}"
+            }
+        }
+    }
+}
+
+async fn finish_training(
+    mut signals: RecordSignals,
+    mut finishing: Signal<bool>,
+    mut error: Signal<Option<String>>,
+) {
+    let Some(record) = (signals.session)() else {
+        return;
+    };
+    finishing.set(true);
+    error.set(None);
+    // 送信待ちが残ったまま終了すると、サーバーの記録とサマリーが食い違う。
+    sync::flush().await;
+    match finish_blocker(&record.id).await {
+        Ok(Some(FinishBlocker::Pending)) => {
+            finishing.set(false);
+            error.set(Some(text(Key::RecordPendingOperations).to_owned()));
+            return;
+        }
+        Ok(Some(FinishBlocker::Failed)) => {
+            finishing.set(false);
+            error.set(Some(text(Key::RecordFailedOperationsRemain).to_owned()));
+            return;
+        }
+        Ok(None) => {}
+        Err(_) => {
+            finishing.set(false);
+            error.set(Some(text(Key::RecordFinishFailed).to_owned()));
+            return;
+        }
+    }
+    let result = training_api::finish(&record.id).await;
+    finishing.set(false);
+    let summary = match result {
+        Ok(summary) => summary,
+        Err(_) => {
+            error.set(Some(text(Key::RecordFinishFailed).to_owned()));
+            return;
+        }
+    };
+    let completed = completed_session(record, now_iso(), summary);
+    let saved = match storage::current().await {
+        Ok(storage) => storage.save_session_summary(&completed).await,
+        Err(error) => Err(error),
+    };
+    match saved {
+        Ok(()) => {
+            error.set(None);
+            signals.session.set(Some(completed.clone()));
+            navigate(&format!("/summary/{}", completed.id));
+        }
+        Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
+    }
+}
+
+fn completed_session(
+    record: SessionRecord,
+    finished_at: String,
+    summary: TrainingSessionSummary,
+) -> SessionRecord {
+    SessionRecord {
+        finished_at: Some(finished_at.clone()),
+        duration_seconds: Some(summary.duration_seconds),
+        total_weight_kg: Some(summary.total_weight_kg),
+        exercise_count: Some(summary.exercise_count),
+        set_count: Some(summary.set_count),
+        personal_bests: summary.personal_bests,
+        updated_at: finished_at,
+        ..record
     }
 }
 
@@ -362,7 +512,7 @@ fn FailedOperations(
                                                 signals
                                                     .memo_revision
                                                     .set((signals.memo_revision)() + 1);
-                                                signals.session.set(Some(updated));
+                                                signals.session.set(Some(*updated));
                                                 refresh_state(&training_id, state_signals).await;
                                             }
                                             _ => {}
@@ -498,6 +648,35 @@ async fn save_loop(mut signals: RecordSignals, mut state: SaveState) {
     state.in_flight.set(false);
 }
 
+/// 終了を止める送信待ちの種別。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinishBlocker {
+    /// 送信中の操作が残っている。
+    Pending,
+    /// 恒久的に失敗した操作が残っている。
+    Failed,
+}
+
+async fn finish_blocker(training_id: &str) -> Result<Option<FinishBlocker>, StorageError> {
+    let storage = storage::current().await?;
+    let entries = storage.outbox_entries().await?;
+    Ok(blocker(&entries, training_id))
+}
+
+fn blocker(entries: &[OutboxEntry], training_id: &str) -> Option<FinishBlocker> {
+    let mut blocker = None;
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.operation.training_id == training_id)
+    {
+        if entry.state == OutboxState::Failed {
+            return Some(FinishBlocker::Failed);
+        }
+        blocker = Some(FinishBlocker::Pending);
+    }
+    blocker
+}
+
 async fn create_session() -> Result<SessionRecord, StorageError> {
     let now = now_iso();
     let date = datetime::japan_date_from_utc(&now)
@@ -510,6 +689,16 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
         memo: String::new(),
         confirmed_memo: String::new(),
         confirmed_sequence: 0,
+        source_kind: SessionSource::Empty,
+        routine_id: None,
+        program_day_id: None,
+        custom_program_day_id: None,
+        finished_at: None,
+        duration_seconds: None,
+        total_weight_kg: None,
+        exercise_count: None,
+        set_count: None,
+        personal_bests: Vec::new(),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -521,6 +710,10 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
             .clone()
             .expect("a created session has a start time"),
         memo: String::new(),
+        source_kind: SessionSource::Empty,
+        routine_id: None,
+        program_day_id: None,
+        custom_program_day_id: None,
     };
     let operation = Operation {
         operation_id: new_uuid()?,
@@ -611,4 +804,52 @@ fn new_uuid() -> Result<String, StorageError> {
 fn now_iso() -> String {
     let seconds = (js_sys::Date::now() / 1000.0) as i64;
     datetime::format_utc(seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    use warrior_core::sync::{Operation, OperationKind, OutboxEntry, OutboxState};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::{blocker, FinishBlocker};
+
+    #[wasm_bindgen_test]
+    fn blocker_separates_pending_and_failed_operations() {
+        assert_eq!(blocker(&[], "training-1"), None);
+        assert_eq!(
+            blocker(&[entry("training-1", OutboxState::Pending)], "training-1"),
+            Some(FinishBlocker::Pending)
+        );
+        assert_eq!(
+            blocker(&[entry("training-2", OutboxState::Failed)], "training-1"),
+            None
+        );
+        assert_eq!(
+            blocker(
+                &[
+                    entry("training-1", OutboxState::Pending),
+                    entry("training-1", OutboxState::Failed),
+                ],
+                "training-1"
+            ),
+            Some(FinishBlocker::Failed),
+            "a failed operation must take precedence over a pending operation"
+        );
+    }
+
+    fn entry(training_id: &str, state: OutboxState) -> OutboxEntry {
+        OutboxEntry {
+            operation: Operation {
+                operation_id: format!("operation-{training_id}-{state:?}"),
+                training_id: training_id.to_owned(),
+                sequence: 1,
+                kind: OperationKind::TrainingSessionUpdate,
+                parent_operation_id: None,
+                payload: serde_json::json!({}),
+            },
+            state,
+            attempts: 0,
+            attempted: false,
+        }
+    }
 }

@@ -17,6 +17,7 @@ pub mod rate_limit;
 pub mod set_calc;
 pub mod sql;
 pub mod sync;
+pub mod training_session;
 pub mod webauthn;
 
 /// ヘルスチェックが返す状態の値。

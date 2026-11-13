@@ -30,13 +30,16 @@ pub use record::{RecordScreen, RecordSessionScreen};
 pub use routines::RoutinesScreen;
 pub use summary::SummaryScreen;
 
-/// 画面の共通の枠。題と説明を表示する。
+/// 画面の共通の枠。題と説明と、任意の操作を表示する。
 #[component]
-pub fn ScreenFrame(title: String, description: String) -> Element {
+pub fn ScreenFrame(title: String, description: String, action: Option<Element>) -> Element {
     rsx! {
         section { class: "flex min-h-full flex-col gap-3 p-5",
             h1 { class: "text-lg font-bold", "{title}" }
             p { class: "text-[13px] leading-5 text-text-sub", "{description}" }
+            if let Some(action) = action {
+                {action}
+            }
         }
     }
 }
