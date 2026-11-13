@@ -72,6 +72,20 @@ depends = ["frontend:build-service-worker"]
 description = "Worker と Frontend をビルドする"
 depends = ["backend:build", "frontend:build"]
 
+[tasks.dev]
+description = "ローカル開発の画面と API を同じオリジンから配信する"
+depends = ["backend:build", "frontend:build"]
+run = "wrangler dev --local"
+
+[tasks.deploy-production]
+description = "production の Worker をデプロイする"
+depends = ["backend:build", "frontend:build"]
+run = "wrangler deploy --env production"
+
+[tasks.db-migrate-local]
+description = "ローカルの D1 にマイグレーションを適用する"
+run = "wrangler d1 migrations apply DB --local"
+
 [tasks.check]
 description = "静的検査と全ての自動テスト、ビルドを実行する (CI と手元の共通の入口)"
 depends = ["fmt", "lint", "test", "test-pbt", "backend:build", "frontend:build"]

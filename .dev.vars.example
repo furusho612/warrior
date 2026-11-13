@@ -1,0 +1,4 @@
+# ローカルの Secret のキーだけを持つ。値は .dev.vars に置き、リポジトリに含めない。
+# ローカルの認証はテスト用の OIDC の提供者を使うため、Google の値は置かない。
+GOOGLE_CLIENT_SECRET=
+VAPID_PRIVATE_KEY=
