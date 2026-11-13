@@ -73,6 +73,7 @@
 ## 解決方法
 
 `migrations/` に `personal_bests` の表を追加する。
+0022 が `training_sessions.personal_bests` にセッションのベストを保存し、更新分を過去と比較している。0029 はこの保存値と比較を使って `personal_bests` の表と一覧を作り、保存先を二重にしない。
 `backend/warrior_core/src/personal_best.rs` に、候補の作成と比較、更新した自己ベストの判定を置く。
 `backend/warrior/src/set.rs` のセットの完了の処理に自己ベストの判定を加える。
 `backend/warrior/src/personal_best.rs` に D1 の読み書きを置く。

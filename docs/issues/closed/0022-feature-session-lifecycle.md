@@ -3,6 +3,7 @@
 - Requirements: REQ-REC-001, REQ-REC-005, REQ-NFR-002
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-session-lifecycle
 
@@ -80,3 +81,13 @@ AI の評価の表示は 0056 以降で加える。
 `backend/warrior/tests/e2e_training_session.rs` に E2E を追加する。
 `backend/warrior_core/src/training_session.rs` の `#[cfg(test)]` にサマリーの例示テストを置く。
 `backend/pbt/tests/training_session.rs` にサマリーの性質テストを置く。
+
+## 結果
+
+空の状態からの開始、記録画面の枠、終了、サマリーを実装した。開始は 0021 の端末内の作成と `POST /api/sync/operations` の create を使い、`POST /api/trainings` は置かない。
+`migrations/0007_training_summary.sql` に開始元、終了時刻、サマリーの列を追加した。
+`POST /api/trainings/:id/finish` が所要時間、総重量、種目数、セット数、自己ベストを計算して保存し、`GET /api/trainings/:id/summary` が保存値を返す。
+自己ベストはセッションのベストを `training_sessions.personal_bests` に保存し、過去の終了済みトレーニングの同じキーの最大値と比較して、更新した項目だけを応答に含める。キーは種目、記録方式、左右別、グリップ、アタッチメントの組で、比較キーは `warrior_core::exercise::GripSelection::comparison_key` に置いた。0031 はこの表現を拡張する。
+自己ベストの種目別総重量は、その種目の全セットのストリクト総重量の合計を使う。ウォームアップは対象外、時間の種目は最長時間だけを使う。
+種目とセットの入力 UI、記録画面の drawer の開閉、端末内のサマリーのフォールバックは 0024/0025/0029 が担う。E2E は種目とセットを D1 に seed して終了とサマリーを確かめる。
+Safari の E2E は Chrome でしか使えない CDP の経路を除いて追加し、`mise run e2e-safari` と CI に入れた。ローカルの Safari は起動できず、CI で確認する。

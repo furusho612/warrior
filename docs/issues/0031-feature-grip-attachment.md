@@ -66,6 +66,7 @@
 
 `migrations/` の `sets` にグリップの選択の列を追加する。値は種別と、握り方、手幅、アタッチメント、順手か逆手かを持つ。
 `backend/warrior_core/src/grip.rs` に、選択の型、選択肢の検証、比較のキーの作成を置く。
+比較のキーは 0022 が `backend/warrior_core/src/exercise.rs` の `GripSelection::comparison_key` に置いた。0031 はこの表現を `grip.rs` へ移すか拡張し、`sets.grip` の JSON の形と揃える。
 `backend/warrior/src/set.rs` にグリップの保存を追加する。
 `backend/warrior/src/history.rs` に、グリップとアタッチメントの絞り込みのクエリを置く。
 `frontend/src/screens/record.rs` にグリップの選択を置く。
