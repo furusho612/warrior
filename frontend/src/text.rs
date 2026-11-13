@@ -41,6 +41,7 @@ text_keys! {
     PasskeyRegistered => "パスキーを登録しました。",
     PasskeyDeleted => "パスキーを削除しました。",
     PasskeyFailed => "パスキーの操作に失敗しました。",
+    PasskeyReauthenticated => "再認証しました。",
     PasskeyRecovery => "Google アカウントとすべてのパスキーを失うと、アカウントは復旧できません。",
     PasskeyLoginTitle => "パスキーでログイン",
     PasskeyEmailLabel => "Google アカウントのメールアドレス",

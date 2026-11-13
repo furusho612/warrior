@@ -183,7 +183,10 @@ async fn remove(
 async fn reauthenticate(mut message: Signal<String>, mut needs_reauth: Signal<bool>) {
     match passkey::call("reauthenticate", "").await {
         Ok(result_json) => match serde_json::from_str::<ApiResult>(&result_json) {
-            Ok(result) if result.status == 200 => needs_reauth.set(false),
+            Ok(result) if result.status == 200 => {
+                needs_reauth.set(false);
+                message.set(text(Key::PasskeyReauthenticated).to_owned());
+            }
             _ => {
                 needs_reauth.set(true);
                 message.set(text(Key::PasskeyFailed).to_owned());

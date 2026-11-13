@@ -53,7 +53,7 @@ run = [
 [tasks."test-integration"]
 description = "wrangler dev を起動する結合テストを実行する"
 depends = ["backend:build", "frontend:build", "test-oidc:build"]
-run = "cargo test -p warrior --test wrangler_http_foundation --test wrangler_jst_storage --test wrangler_auth --test wrangler_passkey_state --test account_deletion_tables --test wrangler_account_deletion"
+run = "cargo test -p warrior --test wrangler_http_foundation --test wrangler_jst_storage --test wrangler_auth --test wrangler_passkey_state --test account_deletion_tables --test wrangler_account_deletion --test rate_limit --test scheduled_cleanup -- --test-threads=1"
 
 [tasks."test-oidc:build"]
 description = "テスト専用の OIDC の提供者をビルドする"
