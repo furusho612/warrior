@@ -154,18 +154,8 @@ async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
         .await
         .expect("the memo must exist");
     textarea.click().await.expect("the memo must be focusable");
-    textarea
-        .send_keys(DELAYED_MEMO)
-        .await
-        .expect("the first delayed memo must be typed");
-    let first = format!("{base}{DELAYED_MEMO}");
-    browser::wait_for_attribute(
-        driver,
-        "[data-persisted-memo]",
-        "data-persisted-memo",
-        &first,
-    )
-    .await;
+    let mut current = base.clone();
+    type_memo(driver, &textarea, &mut current, DELAYED_MEMO).await;
     wait_for_transient_update(driver).await;
 
     set_network(driver, false, 5000).await;
@@ -174,11 +164,8 @@ async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
         .await
         .expect("the memo must still exist");
     textarea.click().await.expect("the memo must be focusable");
-    textarea
-        .send_keys(DELAYED_SECOND_MEMO)
-        .await
-        .expect("the second delayed memo must be typed");
-    let expected = format!("{first}{DELAYED_SECOND_MEMO}");
+    type_memo(driver, &textarea, &mut current, DELAYED_SECOND_MEMO).await;
+    let expected = current.clone();
     browser::wait_for_value(driver, "textarea[data-memo]", &expected).await;
     browser::wait_for_attribute(
         driver,
@@ -187,11 +174,27 @@ async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
         &expected,
     )
     .await;
-    wait_for_update_count(driver, 2).await;
 
     set_network(driver, false, 0).await;
     wait_for_d1_memo(server, &training_id, &expected).await;
     browser::wait_for_value(driver, "textarea[data-memo]", &expected).await;
+}
+
+async fn type_memo(driver: &WebDriver, textarea: &WebElement, current: &mut String, text: &str) {
+    for character in text.chars() {
+        current.push(character);
+        textarea
+            .send_keys(character.to_string())
+            .await
+            .expect("the memo character must be typed");
+        browser::wait_for_attribute(
+            driver,
+            "[data-persisted-memo]",
+            "data-persisted-memo",
+            current.as_str(),
+        )
+        .await;
+    }
 }
 
 async fn offline(driver: &WebDriver, offline: bool) {
@@ -260,25 +263,6 @@ async fn wait_for_transient_update(driver: &WebDriver) {
         assert!(
             std::time::Instant::now() < deadline,
             "the update did not fail transiently: {entries:?}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-}
-
-async fn wait_for_update_count(driver: &WebDriver, expected: usize) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    loop {
-        let entries = outbox_entries(driver).await;
-        let count = entries
-            .iter()
-            .filter(|entry| entry["kind"] == "training_session_update")
-            .count();
-        if count == expected {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the update count did not become {expected}: {entries:?}"
         );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }

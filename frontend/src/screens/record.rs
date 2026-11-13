@@ -87,6 +87,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let session = use_signal(|| Option::<SessionRecord>::None);
     let memo = use_signal(String::new);
     let persisted_memo = use_signal(String::new);
+    let memo_revision = use_signal(|| 0u64);
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let route_id = training_id.clone();
@@ -116,7 +117,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 "{status_text}"
             }
             if session().is_some() {
-                MemoEditor { session, memo, persisted_memo, save_error }
+                MemoEditor { session, memo, persisted_memo, memo_revision, save_error }
             } else if let Some(message) = load_error() {
                 p { class: "text-[13px] text-primary", "{message}" }
                 button {
@@ -141,6 +142,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                     session,
                     memo,
                     persisted_memo,
+                    memo_revision,
                 }
             }
         }
@@ -162,6 +164,7 @@ fn MemoEditor(
     session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     persisted_memo: Signal<String>,
+    memo_revision: Signal<u64>,
     save_error: Signal<Option<String>>,
 ) -> Element {
     let mut memo = memo;
@@ -177,50 +180,54 @@ fn MemoEditor(
     let retry_state = state.clone();
 
     rsx! {
-        label { class: "text-[13px] font-bold", r#for: "record-memo", "{text(Key::RecordMemoLabel)}" }
-        textarea {
-            id: "record-memo",
-            class: "min-h-24 border border-line bg-surface p-3 text-[13px] leading-5",
-            "data-memo": "true",
-            value: "{memo}",
-            placeholder: "{text(Key::RecordMemoPlaceholder)}",
-            oninput: move |event| {
-                memo.set(event.value());
-                input_state.dirty.set(true);
-                if input_state.in_flight.replace(true) {
-                    return;
-                }
-                spawn(save_loop(
-                    session,
-                    memo,
-                    persisted_memo,
-                    input_state.clone(),
-                    save_error,
-                ));
-            },
-        }
-        if (state.saving)() {
-            p { class: "text-[13px] text-text-sub", "{text(Key::RecordSaving)}" }
-        }
-        if let Some(message) = save_error() {
-            p { class: "text-[13px] text-primary", "{message}" }
-            button {
-                class: "min-h-11 border border-line px-3 text-[13px]",
-                onclick: move |_| {
-                    if retry_state.in_flight.get() {
+        div {
+            key: "{memo_revision}",
+            class: "flex flex-col gap-3",
+            label { class: "text-[13px] font-bold", r#for: "record-memo", "{text(Key::RecordMemoLabel)}" }
+            textarea {
+                id: "record-memo",
+                class: "min-h-24 border border-line bg-surface p-3 text-[13px] leading-5",
+                "data-memo": "true",
+                initial_value: "{memo}",
+                placeholder: "{text(Key::RecordMemoPlaceholder)}",
+                oninput: move |event| {
+                    memo.set(event.value());
+                    input_state.dirty.set(true);
+                    if input_state.in_flight.replace(true) {
                         return;
                     }
-                    retry_state.in_flight.set(true);
-                    retry_state.dirty.set(true);
                     spawn(save_loop(
                         session,
                         memo,
                         persisted_memo,
-                        retry_state.clone(),
+                        input_state.clone(),
                         save_error,
                     ));
                 },
-                "{text(Key::RecordRetry)}"
+            }
+            if (state.saving)() {
+                p { class: "text-[13px] text-text-sub", "{text(Key::RecordSaving)}" }
+            }
+            if let Some(message) = save_error() {
+                p { class: "text-[13px] text-primary", "{message}" }
+                button {
+                    class: "min-h-11 border border-line px-3 text-[13px]",
+                    onclick: move |_| {
+                        if retry_state.in_flight.get() {
+                            return;
+                        }
+                        retry_state.in_flight.set(true);
+                        retry_state.dirty.set(true);
+                        spawn(save_loop(
+                            session,
+                            memo,
+                            persisted_memo,
+                            retry_state.clone(),
+                            save_error,
+                        ));
+                    },
+                    "{text(Key::RecordRetry)}"
+                }
             }
         }
     }
@@ -232,10 +239,12 @@ fn FailedOperations(
     session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     persisted_memo: Signal<String>,
+    memo_revision: Signal<u64>,
 ) -> Element {
     let mut session = session;
     let mut memo = memo;
     let mut persisted_memo = persisted_memo;
+    let mut memo_revision = memo_revision;
 
     rsx! {
         div { class: "flex flex-col gap-2 border border-line bg-surface p-3",
@@ -277,6 +286,7 @@ fn FailedOperations(
                                                     &updated.confirmed_memo,
                                                     updated.confirmed_sequence,
                                                 );
+                                                memo_revision.set(memo_revision() + 1);
                                                 session.set(Some(updated));
                                             }
                                             _ => {}
