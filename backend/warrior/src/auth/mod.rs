@@ -1,6 +1,7 @@
 //! Google OAuth とセッションの HTTP の処理。
 
 pub mod oauth;
+pub mod passkey;
 pub mod session;
 
 use worker::{Date, Env, Request, Response, Result};

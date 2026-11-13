@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-013, REQ-NFR-014, REQ-MYP-006
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-passkeys
 
@@ -86,3 +87,12 @@ Google アカウントとすべてのパスキーを失った場合、アカウ�
 `frontend/src/screens/login.rs` に、検出可能な資格情報がない場合のメールアドレスの入力を置く。
 `backend/warrior/tests/e2e_passkey.rs` に E2E を追加する。
 `backend/pbt/tests/webauthn.rs` に往復の性質テストを置く。
+
+## 結果
+
+WebAuthn の CBOR、COSE、ES256 の検証を `warrior_core` に移植し、ES256 と attestation none だけを受け付けるようにした。
+チャレンジと再認証の短命トークンは D1 に保存し、5 分で失効する。登録、追加、削除はセッションに加えて再認証を要求する。
+Google アカウントと既存のパスキーの両方で再認証でき、パスキーの一覧、追加、削除、メールアドレスを指定したログインと discoverable なログインを実装した。
+Chrome の仮想認証器の E2E で、2 つのパスキーの登録、両方のログイン経路、再認証なしの 403、削除、すべて失った後の Google からの再登録を確認した。
+W3C WebAuthn Level 3 の 16.4 の登録ベクタ、期限切れチャレンジ、署名カウンタの減少を単体・結合テストで確認した。
+Safari の実機確認は 0067、Fuzzing は 0065 で行う。

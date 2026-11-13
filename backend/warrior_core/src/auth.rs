@@ -12,8 +12,14 @@ use crate::base64url;
 pub const OAUTH_STATE_TTL_SECONDS: i64 = 5 * 60;
 /// セッションの有効期限 (秒)。
 pub const SESSION_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
+/// WebAuthn のチャレンジと再認証の有効期限 (秒)。
+pub const WEBAUTHN_CHALLENGE_TTL_SECONDS: i64 = 5 * 60;
+/// 再認証の短命トークンの有効期限 (秒)。
+pub const ELEVATION_TTL_SECONDS: i64 = 5 * 60;
 /// セッションの Cookie の名前。
 pub const SESSION_COOKIE: &str = "warrior_session";
+/// 再認証の短命トークンの Cookie の名前。
+pub const ELEVATION_COOKIE: &str = "warrior_elevation";
 /// OAuth の state の Cookie の名前。
 pub const OAUTH_STATE_COOKIE: &str = "warrior_oauth_state";
 
@@ -207,6 +213,30 @@ pub fn oauth_state_cookie(state: &str) -> String {
 /// OAuth の state を消す Cookie。
 pub fn clear_oauth_state_cookie() -> String {
     format!("{OAUTH_STATE_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
+}
+
+/// 再認証の短命トークンの Cookie。
+pub fn elevation_cookie(token: &str) -> String {
+    format!(
+        "{ELEVATION_COOKIE}={token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ELEVATION_TTL_SECONDS}"
+    )
+}
+
+/// 再認証の短命トークンを消す Cookie。
+pub fn clear_elevation_cookie() -> String {
+    format!("{ELEVATION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
+}
+
+/// パスキーの名前を検証し、前後の空白を除いた名前を返す。
+pub fn validate_passkey_name(name: &str) -> Result<String, &'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("the passkey name is empty");
+    }
+    if name.chars().count() > 50 {
+        return Err("the passkey name is longer than 50 characters");
+    }
+    Ok(name.to_owned())
 }
 
 /// 認証中の利用者と資源の利用者が一致するか。

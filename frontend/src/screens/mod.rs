@@ -4,6 +4,7 @@
 
 use dioxus::prelude::*;
 
+pub mod account;
 pub mod analysis;
 pub mod calendar;
 pub mod exercise;
@@ -16,6 +17,7 @@ pub mod record;
 pub mod routines;
 pub mod summary;
 
+pub use account::AccountScreen;
 pub use analysis::AnalysisScreen;
 pub use calendar::CalendarScreen;
 pub use exercise::ExerciseScreen;

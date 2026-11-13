@@ -75,6 +75,17 @@ impl DevServer {
         http_request(self.port, method, path, headers, None).expect("HTTP request")
     }
 
+    /// 本文を指定してリクエストを送る。
+    pub fn request_with_body(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> HttpResponse {
+        http_request(self.port, method, path, headers, Some(body)).expect("HTTP request")
+    }
+
     /// `wrangler dev` の出力を読む。
     pub fn log_lines(&self) -> Vec<String> {
         fs::read_to_string(&self.log_path)
