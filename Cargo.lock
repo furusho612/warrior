@@ -2947,12 +2947,17 @@ dependencies = [
  "serde",
  "serde_json",
  "warrior_core",
+ "wasm-bindgen",
  "worker",
 ]
 
 [[package]]
 name = "warrior_core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "warrior_frontend"

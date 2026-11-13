@@ -4,6 +4,8 @@
 
 use worker::{event, Context, Env, Request, Response, Result};
 
+pub mod db;
+
 /// Worker が受け取る HTTP の要求を処理する。
 #[event(fetch)]
 pub async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
