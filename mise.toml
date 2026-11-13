@@ -42,9 +42,14 @@ run = [
 ]
 
 [tasks.test]
-description = "全ての自動テストを実行する"
+description = "wrangler dev を起動するテスト以外の自動テストを実行する"
 depends = ["tokens"]
-run = "cargo test --workspace"
+run = "cargo test --workspace -- --skip wrangler_"
+
+[tasks."test-integration"]
+description = "wrangler dev を起動する結合テストを実行する"
+depends = ["backend:build", "frontend:build"]
+run = "cargo test -p warrior --test wrangler_http_foundation"
 
 [tasks."test-pbt"]
 description = "性質テストを実行する"
@@ -103,4 +108,4 @@ run = "wrangler d1 migrations apply DB --local"
 
 [tasks.check]
 description = "静的検査と全ての自動テスト、ビルドを実行する (CI と手元の共通の入口)"
-depends = ["tokens", "fmt", "lint", "test", "test-pbt", "backend:build", "frontend:build"]
+depends = ["tokens", "fmt", "lint", "test", "test-pbt", "test-integration", "backend:build", "frontend:build"]
