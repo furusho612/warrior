@@ -66,5 +66,5 @@ fn wrangler_oidc_provider_returns_google_shaped_responses() {
 
     let unauthorized = provider.request("GET", "/userinfo", &[], None);
     assert_eq!(unauthorized.status, 401);
-    assert_eq!(provider.origin(), "http://127.0.0.1:8789");
+    assert_eq!(provider.origin(), "http://localhost:8789");
 }

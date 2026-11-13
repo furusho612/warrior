@@ -3,6 +3,7 @@
 //! SQL の組み立ては `warrior_core` が持ち、このモジュールはバインド値の変換と実行だけを行う。
 //! 複数の文をまとめて書き込むときは `batch` を使う (ADR-015)。
 
+use serde::de::DeserializeOwned;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use wasm_bindgen::JsValue;
 use worker::d1::{D1Database, D1PreparedStatement, D1Result};
@@ -22,6 +23,11 @@ impl Db {
     /// 1 つの文を実行する。
     pub async fn run(&self, statement: &SqlStatement) -> Result<D1Result> {
         self.prepare(statement)?.run().await
+    }
+
+    /// 1 つの文を実行し、最初の行を返す。
+    pub async fn first<T: DeserializeOwned>(&self, statement: &SqlStatement) -> Result<Option<T>> {
+        self.prepare(statement)?.first(None).await
     }
 
     /// 1 つの文を実行し、すべての行を返す。

@@ -67,7 +67,7 @@ impl DevServer {
 
     /// サーバーのオリジン。
     pub fn origin(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
+        format!("http://localhost:{}", self.port)
     }
 
     /// ヘッダを指定してリクエストを送る。
@@ -287,7 +287,7 @@ impl TestOidc {
 
     /// 提供者のオリジン。
     pub fn origin(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
+        format!("http://localhost:{}", self.port)
     }
 
     /// 提供者へリクエストを送る。

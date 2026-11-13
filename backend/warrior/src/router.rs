@@ -5,22 +5,40 @@
 use warrior_core::{HEALTH_PATH, HEALTH_STATUS};
 use worker::{Request, Response, Result, RouteContext, Router};
 
+use crate::auth::{oauth, session};
+
 /// ヘルスチェックの経路の名前。
 pub const HEALTH_ROUTE_NAME: &str = "health";
+/// Google OAuth を開始する経路の名前。
+pub const GOOGLE_START_ROUTE_NAME: &str = "auth_google_start";
+/// Google OAuth のコールバックの経路の名前。
+pub const GOOGLE_CALLBACK_ROUTE_NAME: &str = "auth_google_callback";
+/// ログアウトの経路の名前。
+pub const LOGOUT_ROUTE_NAME: &str = "auth_logout";
+/// 現在の利用者を返す経路の名前。
+pub const ME_ROUTE_NAME: &str = "me";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
 /// `/api/*` の Router を組み立てる。
 pub fn build_router() -> Router<'static, ()> {
-    Router::new().get_async(HEALTH_PATH, health)
+    Router::new()
+        .get_async(HEALTH_PATH, health)
+        .get_async("/api/auth/google/start", oauth::start)
+        .get_async("/api/auth/google/callback", oauth::callback)
+        .post_async("/api/auth/logout", session::logout)
+        .get_async("/api/me", session::me)
 }
 
 /// 経路のパスからログに載せる名前を決める。
 pub fn route_name(path: &str) -> &'static str {
-    if path == HEALTH_PATH {
-        HEALTH_ROUTE_NAME
-    } else {
-        NOT_FOUND_ROUTE_NAME
+    match path {
+        HEALTH_PATH => HEALTH_ROUTE_NAME,
+        "/api/auth/google/start" => GOOGLE_START_ROUTE_NAME,
+        "/api/auth/google/callback" => GOOGLE_CALLBACK_ROUTE_NAME,
+        "/api/auth/logout" => LOGOUT_ROUTE_NAME,
+        "/api/me" => ME_ROUTE_NAME,
+        _ => NOT_FOUND_ROUTE_NAME,
     }
 }
 
@@ -30,11 +48,28 @@ async fn health(_request: Request, _context: RouteContext<()>) -> Result<Respons
 
 #[cfg(test)]
 mod tests {
-    use super::{route_name, HEALTH_ROUTE_NAME, NOT_FOUND_ROUTE_NAME};
+    use super::{
+        route_name, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME,
+        LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME,
+    };
 
     #[test]
     fn names_the_health_route() {
         assert_eq!(route_name("/api/health"), HEALTH_ROUTE_NAME);
+    }
+
+    #[test]
+    fn names_the_auth_routes() {
+        assert_eq!(
+            route_name("/api/auth/google/start"),
+            GOOGLE_START_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/auth/google/callback"),
+            GOOGLE_CALLBACK_ROUTE_NAME
+        );
+        assert_eq!(route_name("/api/auth/logout"), LOGOUT_ROUTE_NAME);
+        assert_eq!(route_name("/api/me"), ME_ROUTE_NAME);
     }
 
     #[test]

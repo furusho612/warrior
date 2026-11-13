@@ -52,8 +52,8 @@ run = [
 
 [tasks."test-integration"]
 description = "wrangler dev を起動する結合テストを実行する"
-depends = ["backend:build", "frontend:build"]
-run = "cargo test -p warrior --test wrangler_http_foundation --test wrangler_jst_storage"
+depends = ["backend:build", "frontend:build", "test-oidc:build"]
+run = "cargo test -p warrior --test wrangler_http_foundation --test wrangler_jst_storage --test wrangler_auth"
 
 [tasks."test-oidc:build"]
 description = "テスト専用の OIDC の提供者をビルドする"
@@ -62,7 +62,7 @@ run = "cargo build -p warrior_test_oidc"
 [tasks.e2e]
 description = "Chrome の E2E と、資源の teardown のテストを実行する"
 depends = ["backend:build", "frontend:build", "test-oidc:build"]
-run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke"
+run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke --test e2e_auth"
 
 [tasks."e2e-safari"]
 description = "Safari の E2E のスモークを実行する"
@@ -70,7 +70,7 @@ depends = ["backend:build", "frontend:build", "test-oidc:build"]
 run = """
 set -e
 export WARRIOR_E2E_BROWSER=safari
-cargo test -p warrior --test e2e_harness_smoke --test wrangler_frontend_smoke
+cargo test -p warrior --test e2e_harness_smoke --test wrangler_frontend_smoke --test e2e_auth
 """
 
 [tasks."test-browser"]
@@ -181,4 +181,9 @@ java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir forma
 
 [tasks.check]
 description = "静的検査と全ての自動テスト、ビルドを実行する (CI と手元の共通の入口)"
-depends = ["tokens", "fmt", "lint", "test", "test-pbt", "test-integration", "test-browser", "e2e", "formal", "backend:build", "frontend:build"]
+depends = ["tokens", "fmt", "lint", "test", "test-pbt", "test-browser", "formal", "backend:build", "frontend:build"]
+run = """
+set -e
+mise run test-integration
+mise run e2e
+"""

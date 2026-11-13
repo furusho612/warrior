@@ -5,6 +5,25 @@
 /// UUID の文字列表記の長さ (ハイフンを含む 36 文字)。
 pub const UUID_V4_TEXT_LEN: usize = 36;
 
+/// 16 バイトの乱数から UUID v4 の文字列を作る。
+pub fn uuid_v4_from_bytes(bytes: [u8; 16]) -> String {
+    let mut bytes = bytes;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
 /// UUID v4 の形式を満たすかを判定する。
 ///
 /// 小文字の 16 進、8-4-4-4-12 の区切り、バージョン 4、RFC 4122 の variant を要求する。
@@ -25,9 +44,16 @@ pub fn is_valid_uuid_v4(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_uuid_v4;
+    use super::{is_valid_uuid_v4, uuid_v4_from_bytes};
 
     const VALID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+    #[test]
+    fn generates_a_valid_uuid_v4() {
+        let text = uuid_v4_from_bytes([0u8; 16]);
+        assert!(is_valid_uuid_v4(&text));
+        assert_eq!(text.len(), 36);
+    }
 
     #[test]
     fn accepts_lowercase_version_4_uuid() {

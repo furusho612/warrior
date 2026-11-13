@@ -20,6 +20,7 @@ async fn wrangler_frontend_smoke_opens_every_route_and_the_record_shell() {
 
     for (path, expected) in [
         ("/login", "/login"),
+        ("/login/error", "/login"),
         ("/", "/"),
         ("/record", "/record"),
         ("/record/abc", "/record/:training_id"),

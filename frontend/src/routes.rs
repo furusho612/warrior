@@ -27,8 +27,9 @@ const fn route(pattern: &'static str) -> AppRoute {
 }
 
 /// 画面の経路の台帳。
-pub const APP_ROUTES: [AppRoute; 11] = [
+pub const APP_ROUTES: [AppRoute; 12] = [
     route("/login"),
+    route("/login/error"),
     route("/"),
     route("/record"),
     route("/record/:training_id"),
@@ -47,6 +48,9 @@ pub enum Route {
     /// ログイン。共通の枠と下部のタブを出さない。
     #[route("/login", LoginScreen)]
     Login {},
+    /// ログインの誤り。共通の枠と下部のタブを出さない。
+    #[route("/login/error", LoginScreen)]
+    LoginError {},
     #[layout(AppShell)]
     /// ホーム。
     #[route("/", HomeScreen)]
@@ -87,6 +91,7 @@ pub enum Route {
 pub fn screen_key(route: &Route) -> Key {
     match route {
         Route::Login {} => Key::LoginTitle,
+        Route::LoginError {} => Key::LoginTitle,
         Route::Home {} => Key::HomeTitle,
         Route::Record {} | Route::RecordSession { .. } => Key::RecordTitle,
         Route::Calendar {} => Key::CalendarTitle,
@@ -104,6 +109,7 @@ pub fn screen_key(route: &Route) -> Key {
 pub fn route_name(route: &Route) -> &'static str {
     match route {
         Route::Login {} => "/login",
+        Route::LoginError {} => "/login/error",
         Route::Home {} => "/",
         Route::Record {} => "/record",
         Route::RecordSession { .. } => "/record/:training_id",
@@ -185,9 +191,10 @@ mod tests {
     use crate::text::{text, Key};
 
     #[test]
-    fn the_ledger_has_the_eleven_routes() {
+    fn the_ledger_has_the_twelve_routes() {
         let patterns = [
             "/login",
+            "/login/error",
             "/",
             "/record",
             "/record/:training_id",

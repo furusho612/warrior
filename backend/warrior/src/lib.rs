@@ -5,9 +5,11 @@
 
 use worker::{console_error, event, Context, Date, Env, Request, Response, Result};
 
+pub mod auth;
 pub mod db;
 pub mod error;
 pub mod log;
+pub mod random;
 pub mod router;
 pub mod security;
 

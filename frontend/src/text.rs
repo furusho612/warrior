@@ -28,6 +28,8 @@ text_keys! {
     LoginTitle => "ログイン",
     LoginDescription => "Google アカウントでログインすると、記録を複数の端末から見られます。",
     LoginButton => "Google でログイン",
+    LoginError => "ログインできませんでした。もう一度お試しください。",
+    LogoutButton => "ログアウト",
     NavHome => "ホーム",
     NavCalendar => "カレンダー",
     NavLibrary => "種目",
