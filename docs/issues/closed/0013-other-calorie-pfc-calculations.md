@@ -3,6 +3,7 @@
 - Requirements: REQ-PRG-006, REQ-PRG-008, REQ-PRG-009, REQ-PRG-012, REQ-PRG-013, REQ-PRG-015, REQ-PRG-016, REQ-PRG-018
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-calorie-pfc-calculations
 
@@ -86,3 +87,7 @@ PFC は次のとおりとする。
 `backend/pbt/tests/nutrition.rs` に性質テストを置く。
 `backend/warrior_core/src/nutrition.rs` の `#[cfg(test)]` に境界の例示テストを置く。
 保存と画面は 0043 と 0054 で実装する。
+
+## 結果
+
+目標カロリー、PFC、BMR 下限、PFC 調整を単体・PBT で確認した。

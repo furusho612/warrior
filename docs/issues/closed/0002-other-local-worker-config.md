@@ -3,6 +3,7 @@
 - Requirements: なし (環境分離は ADR-023 の判断であり、PRD の要求 ID を持たない。設定のキーを用意するだけで、上限の判定は 0018 が実装する)
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-local-worker-config
 
@@ -72,3 +73,7 @@ staging の値は、必要になった時点で 0067 で追加する。
 staging の設定と `deploy-staging` は、必要になった時点で 0067 で追加する。
 `.dev.vars.example` に必要なキーの名前だけを書き、`.dev.vars` を `.gitignore` に加える。
 `wrangler.toml` の値の意味と、0003 で設定する値を `docs/` の外に置かない。設定の手順は 0003 の issue に書く。
+
+## 結果
+
+`wrangler dev --local` と `wrangler deploy --dry-run --env production` を確認した。production の値は 0003 で設定する。

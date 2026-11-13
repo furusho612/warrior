@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-001, REQ-NFR-002, REQ-NFR-011
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-frontend-shell
 
@@ -80,3 +81,7 @@ i18n の汎用クレートは追加しない。
 `frontend/tailwind.css` に 44px と 11px の最小値、角の丸めがないことを反映する。
 `frontend/src/routes.rs` と `frontend/src/text.rs` の単体テストを `frontend/src/` の `#[cfg(test)]` に置く。
 ブラウザの E2E は 0008 の基盤で `backend/warrior/tests/` に置く。
+
+## 結果
+
+全 11 経路、タブ、記録枠、390px と 1280px の最小値・横スクロールを Chrome E2E で確認した。Safari は safaridriver の有効化が必要なためローカル未検証で、CI の macOS ジョブで実行する。

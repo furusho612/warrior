@@ -3,6 +3,7 @@
 - Requirements: なし (テスト基盤は ADR-024 の判断であり、PRD の要求 ID を持たない)
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-e2e-harness
 
@@ -80,3 +81,7 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 `frontend/tests/browser.rs` に `wasm-bindgen-test` の入口を置く。`test-browser` と `test-browser-safari` は `frontend/tests/*.rs` を実行する。
 `mise.toml` に `e2e`、`e2e-safari`、`test-browser`、`test-browser-safari` を追加し、`check` から Chrome の E2E と `test-browser` を呼び、macOS のジョブから `e2e-safari` と `test-browser-safari` を呼ぶ。`test-browser` と `test-browser-safari` は `frontend/tests/*.rs` を実行する。`e2e` は `backend/warrior/tests/e2e_*.rs` を実行し、`e2e-safari` は 0007、0015、0020、0021 が追加する Safari の E2E だけを実行する。`e2e_push.rs` は Chrome の CDP を使うため Safari では実行しない。
 `.github/workflows/ci.yml` に Linux と macOS のジョブを追加し、macOS のジョブが `sudo safaridriver --enable` を実行した後に `mise run e2e-safari` と `mise run test-browser-safari` を呼ぶ。
+
+## 結果
+
+Chrome E2E、wasm-bindgen-test、OIDC 提供者、teardown を確認した。Safari はローカル未検証で CI の macOS ジョブで実行する。

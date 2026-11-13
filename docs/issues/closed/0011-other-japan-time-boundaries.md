@@ -3,6 +3,7 @@
 - Requirements: なし (ADR-005 の共通基盤であり、各機能の要求は利用側の issue が実装する)
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-japan-time-boundaries
 
@@ -68,3 +69,7 @@ ADR-005 は日本時間の日付と境界を決めているが、実装がない
 `backend/pbt/tests/jst.rs` に、上の性質のテストを置く。
 `backend/warrior_core/src/jst.rs` の `#[cfg(test)]` に境界の例示テストを置く。
 `backend/warrior/tests/` の D1 の結合テストで、`YYYY-MM-DD` の文字列がそのまま保存され、読み出されることを確かめる。
+
+## 結果
+
+日本時間の日付、週、月、閏年を単体・PBT・D1 結合で確認した。

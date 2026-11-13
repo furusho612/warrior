@@ -3,6 +3,7 @@
 - Requirements: REQ-SET-006, REQ-SET-008, REQ-SET-009
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-set-calculations
 
@@ -99,3 +100,7 @@ AI に渡す参考値に限り、補助筋のセットを 0.5 として加える
 `backend/warrior_core/src/set_calc.rs` の `#[cfg(test)]` に境界の例示テストを置く。
 `backend/pbt/proptest-regressions/` に反例を保存する。
 記録画面、分析、AI、CSV の issue は、このモジュールの関数だけを使い、計算を再実装しない。
+
+## 結果
+
+ストリクト回数、推定 1RM、総重量、自己ベストを単体・PBT で確認した。

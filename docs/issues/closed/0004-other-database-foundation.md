@@ -3,6 +3,7 @@
 - Requirements: なし (データベース基盤は ADR-015 の判断であり、PRD の要求 ID を持たない)
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-database-foundation
 
@@ -78,3 +79,7 @@ SQL の組み立ては `backend/warrior_core` に置き、D1 への実行は `ba
 `backend/warrior/src/db.rs` に D1 の `prepare` と `batch` の薄いラッパーを置く。
 `backend/pbt/tests/` に UUID とカーソルの性質テストを置く。
 `backend/warrior/tests/` に `wrangler dev` を使うマイグレーションの結合テストを置く。
+
+## 結果
+
+マイグレーション、UUID、SQL、カーソル、時刻のテストを通した。D1 の日付文字列は結合テストで確認した。

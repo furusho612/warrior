@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-012
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-design-tokens
 
@@ -65,3 +66,7 @@ Tailwind の設定に色のリテラル値を書かない。
 `frontend/tailwind.css` は生成した `tokens.css` を読み込み、`@theme` でカスタムプロパティを参照する。
 `mise.toml` に `tokens` タスクを追加し、`build-frontend` と `check` の依存にする。
 `frontend/src/theme.rs` に、テーマ属性を切り替える関数の置き場所を作る。実際の切り替えは 0062 で実装する。
+
+## 結果
+
+`tokens.json` から CSS と Rust を生成し、削除後の再生成と色リテラル検査を通した。

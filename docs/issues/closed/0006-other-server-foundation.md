@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-009
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-server-foundation
 
@@ -74,3 +75,7 @@ HTTPS と実環境の暗号化は、0067 の staging で確かめる。この is
 `frontend/public/_headers` に静的ファイル用のヘッダを置く。`wrangler dev` で反映を確かめる。
 `backend/warrior/tests/` に `wrangler dev` を起動する結合テストを置く。
 `backend/pbt/tests/` にはこの issue の対象を置かない。
+
+## 結果
+
+セキュリティヘッダ、Origin 検証、JSON ログを `wrangler dev` の実出力で確認した。

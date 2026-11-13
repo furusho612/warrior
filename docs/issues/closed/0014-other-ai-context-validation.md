@@ -3,6 +3,7 @@
 - Requirements: REQ-AI-002, REQ-AI-003, REQ-AI-013, REQ-AI-016, REQ-AI-017
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-ai-context-validation
 
@@ -95,3 +96,7 @@ AI の提供者の API キーはアプリが持たず、呼び出しはサーバ
 `backend/pbt/tests/ai.rs` に性質テストを置く。
 `backend/warrior_core/src/ai/` の `#[cfg(test)]` に例示テストを置く。
 `frontend/src/text.rs` に医療上の助言ではない旨のキーを追加する。
+
+## 結果
+
+コンテキスト、プロンプト、出力検証、安全ガードを単体・PBT で確認した。
