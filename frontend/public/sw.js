@@ -9,11 +9,10 @@ const ready = wasm_bindgen("/sw/warrior_sw_bg.wasm");
 self.addEventListener("install", function (event) {
   event.waitUntil(
     ready.then(function () {
-      return wasm_bindgen.service_worker_install();
+      return wasm_bindgen.service_worker_install().then(function () {
+        wasm_bindgen.service_worker_start();
+      });
     }),
   );
 });
 
-ready.then(function () {
-  wasm_bindgen.service_worker_start();
-});
