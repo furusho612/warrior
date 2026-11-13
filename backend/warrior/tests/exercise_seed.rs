@@ -1,7 +1,7 @@
 //! 種目マスターの初期データの結合テスト。
 //!
 //! 対応する要求: `REQ-LIB-001`。
-//! ローカルの D1 に migrations を適用し、投入した 103 種目と 24 個の筋肉の単位を読む。
+//! ローカルの D1 に migrations を適用し、投入した 106 種目と 24 個の筋肉の単位を読む。
 //! データが固定であるため PBT は使わない。
 
 mod support;
@@ -22,6 +22,7 @@ const PORT: u16 = 8810;
 /// 15 本のプログラムの主な種目と、その種目を表す部位区分と記録方式。
 ///
 /// 種目名がマスターに無い場合は、同じ部位区分かつ同じ記録方式の種目を代替にする。
+/// 器具の網羅のため追加した 3 種は、プログラムの主な種目に含めない。
 const MAIN_EXERCISES: [(&str, &str, &str); 37] = [
     ("スクワット", "legs", "weight_and_reps"),
     ("ベンチプレス", "chest", "weight_and_reps"),
@@ -165,25 +166,29 @@ fn assert_seed_counts(exercises: &[SeedExercise], muscles: &[SeedMuscle]) {
         "the seed must contain 100 to 110 exercises but had {}",
         exercises.len()
     );
-    assert_eq!(exercises.len(), 103, "the appendix contains 103 exercises");
+    assert_eq!(
+        exercises.len(),
+        106,
+        "the appendix has 103 exercises and 3 additions"
+    );
     assert_eq!(
         muscles.len(),
-        272,
-        "the appendix has 118 primary and 154 secondary assignments"
+        281,
+        "the appendix has 122 primary and 159 secondary assignments"
     );
     assert_eq!(
         muscles
             .iter()
             .filter(|muscle| muscle.role == "primary")
             .count(),
-        118
+        122
     );
     assert_eq!(
         muscles
             .iter()
             .filter(|muscle| muscle.role == "secondary")
             .count(),
-        154
+        159
     );
     assert_eq!(
         exercises
@@ -209,8 +214,6 @@ fn assert_muscle_units(units: &[SeedMuscleUnit]) {
 }
 
 fn assert_equipment_coverage(exercises: &[SeedExercise]) {
-    // 付録の 103 種は、肩と二頭・前腕に自重、腹筋にバーベルを持たない。
-    // ここでは付録が定める部位区分と器具の組み合わせを固定する。
     let expected = BTreeMap::from([
         (
             "chest",
@@ -222,11 +225,11 @@ fn assert_equipment_coverage(exercises: &[SeedExercise]) {
         ),
         (
             "shoulders",
-            BTreeSet::from(["barbell", "dumbbell", "machine", "cable"]),
+            BTreeSet::from(["barbell", "dumbbell", "machine", "cable", "bodyweight"]),
         ),
         (
             "biceps_forearm",
-            BTreeSet::from(["barbell", "dumbbell", "machine", "cable"]),
+            BTreeSet::from(["barbell", "dumbbell", "machine", "cable", "bodyweight"]),
         ),
         (
             "triceps",
@@ -238,7 +241,14 @@ fn assert_equipment_coverage(exercises: &[SeedExercise]) {
         ),
         (
             "abs",
-            BTreeSet::from(["dumbbell", "machine", "cable", "bodyweight", "other"]),
+            BTreeSet::from([
+                "barbell",
+                "dumbbell",
+                "machine",
+                "cable",
+                "bodyweight",
+                "other",
+            ]),
         ),
         ("other", BTreeSet::from(["machine", "bodyweight", "other"])),
     ]);
@@ -426,6 +436,27 @@ fn assert_representative_muscles(
         &["rectus_abdominis_upper", "rectus_abdominis_lower"],
         &["obliques", "erector_spinae"],
     );
+    assert_muscles(
+        exercises,
+        by_exercise,
+        "パイクプッシュアップ",
+        &["anterior_deltoid"],
+        &["triceps_brachii", "trapezius_upper"],
+    );
+    assert_muscles(
+        exercises,
+        by_exercise,
+        "インバーテッドカール",
+        &["biceps_brachii"],
+        &["forearm"],
+    );
+    assert_muscles(
+        exercises,
+        by_exercise,
+        "バーベルロールアウト",
+        &["rectus_abdominis_upper", "rectus_abdominis_lower"],
+        &["obliques", "erector_spinae"],
+    );
 }
 
 fn assert_muscles(
@@ -505,21 +536,23 @@ fn assert_kana_order(exercises: &[SeedExercise]) {
             exercise
                 .name_kana
                 .chars()
-                .all(|character| ('ぁ'..='ゖ').contains(&character)),
-            "the reading {} must contain only hiragana",
+                .all(|character| ('ぁ'..='ゖ').contains(&character) || character == 'ー'),
+            "the reading {} must contain only hiragana and long vowel marks",
             exercise.name_kana
         );
     }
     for pair in exercises.windows(2) {
+        let current_key = kana_sort_key(&pair[0].name_kana);
+        let next_key = kana_sort_key(&pair[1].name_kana);
         let current = (
             rank(&body_parts, &pair[0].body_part),
             rank(&equipment, &pair[0].equipment),
-            pair[0].name_kana.as_str(),
+            current_key.as_str(),
         );
         let next = (
             rank(&body_parts, &pair[1].body_part),
             rank(&equipment, &pair[1].equipment),
-            pair[1].name_kana.as_str(),
+            next_key.as_str(),
         );
         assert!(
             current < next,
@@ -531,6 +564,38 @@ fn assert_kana_order(exercises: &[SeedExercise]) {
             pair[1].equipment,
             pair[1].name
         );
+    }
+}
+
+/// 長音を直前の母音に置き換え、SQLite の既定の文字列順でも五十音順になる読みにする。
+fn kana_sort_key(text: &str) -> String {
+    let mut key = String::new();
+    let mut previous = None;
+    for character in text.chars() {
+        if character == 'ー' {
+            key.push(previous.and_then(long_vowel).unwrap_or(character));
+        } else {
+            key.push(character);
+        }
+        previous = Some(character);
+    }
+    key
+}
+
+/// 長音が続く母音を返す。
+fn long_vowel(character: char) -> Option<char> {
+    match character {
+        'あ' | 'か' | 'が' | 'さ' | 'ざ' | 'た' | 'だ' | 'な' | 'は' | 'ば' | 'ぱ' | 'ま'
+        | 'や' | 'ら' | 'わ' | 'ぁ' | 'ゃ' => Some('あ'),
+        'い' | 'き' | 'ぎ' | 'し' | 'じ' | 'ち' | 'ぢ' | 'に' | 'ひ' | 'び' | 'ぴ' | 'み'
+        | 'り' | 'ぃ' => Some('い'),
+        'う' | 'く' | 'ぐ' | 'す' | 'ず' | 'つ' | 'づ' | 'ぬ' | 'ふ' | 'ぶ' | 'ぷ' | 'む'
+        | 'ゆ' | 'る' | 'ぅ' | 'ゅ' | 'ゔ' => Some('う'),
+        'え' | 'け' | 'げ' | 'せ' | 'ぜ' | 'て' | 'で' | 'ね' | 'へ' | 'べ' | 'ぺ' | 'め'
+        | 'れ' | 'ぇ' => Some('え'),
+        'お' | 'こ' | 'ご' | 'そ' | 'ぞ' | 'と' | 'ど' | 'の' | 'ほ' | 'ぼ' | 'ぽ' | 'も'
+        | 'よ' | 'ろ' | 'を' | 'ぉ' | 'ょ' => Some('お'),
+        _ => None,
     }
 }
 
