@@ -57,6 +57,8 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
     assert_eq!(count(&server, "passkeys"), 0);
     assert_eq!(count(&server, "webauthn_challenges"), 0);
     assert_eq!(count(&server, "elevation_tokens"), 0);
+    assert_eq!(count(&server, "user_rate_limits"), 0);
+    assert_eq!(count(&server, "ip_rate_limits"), 1);
     assert_eq!(
         server
             .get_r2_object(&format!("users/{USER_ID}/ai.json"))
@@ -120,6 +122,12 @@ fn seed_user(server: &DevServer, session_hash: &str) {
             "INSERT INTO elevation_tokens (id, user_id, token_hash, created_at, expires_at) \
              VALUES ('44444444-4444-4444-8444-444444444444', '{USER_ID}', 'elevation', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')"
         ),
+        format!(
+            "INSERT INTO user_rate_limits (user_id, kind, window_start, count, expires_at) \n             VALUES ('{USER_ID}', 'ai', 0, 1, '2099-01-01T00:00:00Z')"
+        ),
+        "INSERT INTO ip_rate_limits (ip, kind, window_start, count, expires_at) \
+         VALUES ('203.0.113.10', 'auth', 0, 1, '2099-01-01T00:00:00Z')"
+            .to_owned(),
     ] {
         server
             .execute_d1_json(&sql)

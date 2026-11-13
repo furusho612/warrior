@@ -12,7 +12,13 @@ use thirtyfour::prelude::*;
 
 #[tokio::test]
 async fn chrome_virtual_authenticator_registers_logs_in_and_deletes_passkeys() {
-    let server = DevServer::start(8787);
+    let server = DevServer::start_with_vars(
+        8787,
+        &[
+            ("RATE_LIMIT_AUTH_IP", "50"),
+            ("RATE_LIMIT_PASSKEY_IP", "100"),
+        ],
+    );
     server
         .apply_migrations()
         .expect("the local D1 migrations must apply");

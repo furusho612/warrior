@@ -19,6 +19,7 @@ use super::session::{self, Session};
 use super::{append_cookie, cookie, now_iso, now_seconds, var};
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
+use crate::rate_limit::{self, Kind};
 
 const KIND_REGISTRATION: &str = "registration";
 const KIND_AUTHENTICATION: &str = "authentication";
@@ -171,13 +172,16 @@ struct PasskeyItem {
 }
 
 /// `POST /api/auth/passkey/register/start`
-pub async fn register_start(_request: Request, context: RouteContext<()>) -> Result<Response> {
+pub async fn register_start(request: Request, context: RouteContext<()>) -> Result<Response> {
+    if let Some(denied) = rate_limit::check_ip(&request, &context.env, Kind::PasskeyIp).await? {
+        return Ok(denied);
+    }
     let env = context.env;
-    let Some(session) = session::resolve(&_request, &env).await? else {
+    let Some(session) = session::resolve(&request, &env).await? else {
         return Ok(response(ErrorCode::Unauthorized, "authentication required"));
     };
     let db = Db::new(env.d1("DB")?);
-    if !elevation_is_valid(&_request, &db, &session.id).await? {
+    if !elevation_is_valid(&request, &db, &session.id).await? {
         return Ok(response(ErrorCode::Forbidden, "reauthentication required"));
     }
     let challenge = issue_challenge(&db, Some(&session.id), KIND_REGISTRATION).await?;
@@ -186,6 +190,9 @@ pub async fn register_start(_request: Request, context: RouteContext<()>) -> Res
 
 /// `POST /api/auth/passkey/register/finish`
 pub async fn register_finish(mut request: Request, context: RouteContext<()>) -> Result<Response> {
+    if let Some(denied) = rate_limit::check_ip(&request, &context.env, Kind::PasskeyIp).await? {
+        return Ok(denied);
+    }
     let env = context.env;
     let Some(session) = session::resolve(&request, &env).await? else {
         return Ok(response(ErrorCode::Unauthorized, "authentication required"));
@@ -267,6 +274,9 @@ pub async fn register_finish(mut request: Request, context: RouteContext<()>) ->
 
 /// `POST /api/auth/passkey/login/start`
 pub async fn login_start(mut request: Request, context: RouteContext<()>) -> Result<Response> {
+    if let Some(denied) = rate_limit::check_ip(&request, &context.env, Kind::PasskeyIp).await? {
+        return Ok(denied);
+    }
     let env = context.env;
     let db = Db::new(env.d1("DB")?);
     let input: LoginStartInput = match request.json().await {
@@ -293,6 +303,9 @@ pub async fn login_start(mut request: Request, context: RouteContext<()>) -> Res
 
 /// `POST /api/auth/passkey/login/finish`
 pub async fn login_finish(mut request: Request, context: RouteContext<()>) -> Result<Response> {
+    if let Some(denied) = rate_limit::check_ip(&request, &context.env, Kind::PasskeyIp).await? {
+        return Ok(denied);
+    }
     let env = context.env;
     let db = Db::new(env.d1("DB")?);
     let input: AuthenticationInputJson = match request.json().await {
@@ -318,6 +331,9 @@ pub async fn login_finish(mut request: Request, context: RouteContext<()>) -> Re
 
 /// `POST /api/auth/reauthenticate/passkey/start`
 pub async fn reauthenticate_start(request: Request, context: RouteContext<()>) -> Result<Response> {
+    if let Some(denied) = rate_limit::check_ip(&request, &context.env, Kind::PasskeyIp).await? {
+        return Ok(denied);
+    }
     let env = context.env;
     let Some(session) = session::resolve(&request, &env).await? else {
         return Ok(response(ErrorCode::Unauthorized, "authentication required"));
@@ -334,6 +350,9 @@ pub async fn reauthenticate_finish(
     mut request: Request,
     context: RouteContext<()>,
 ) -> Result<Response> {
+    if let Some(denied) = rate_limit::check_ip(&request, &context.env, Kind::PasskeyIp).await? {
+        return Ok(denied);
+    }
     let env = context.env;
     let Some(session) = session::resolve(&request, &env).await? else {
         return Ok(response(ErrorCode::Unauthorized, "authentication required"));

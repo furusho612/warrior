@@ -53,6 +53,16 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の再認証トークン。",
     },
     Table {
+        name: "user_rate_limits",
+        class: TableClass::Owned,
+        reason: "利用者ごとのレート制限のカウンタ。",
+    },
+    Table {
+        name: "ip_rate_limits",
+        class: TableClass::Temporary,
+        reason: "IP ごとのレート制限のカウンタ。利用者に紐づかない。",
+    },
+    Table {
         name: "oauth_states",
         class: TableClass::Temporary,
         reason: "5 分で失効する OAuth の状態。セッションを無効にすれば残っても認証に使えない。",
@@ -64,6 +74,7 @@ pub const TABLES: &[Table] = &[
 /// `users` を最後に置き、外部キーの子を先に消す。
 pub const USER_OWNED_TABLES: &[&str] = &[
     "webauthn_challenges",
+    "user_rate_limits",
     "elevation_tokens",
     "passkeys",
     "auth_sessions",
@@ -95,6 +106,8 @@ mod tests {
             "passkeys",
             "webauthn_challenges",
             "elevation_tokens",
+            "user_rate_limits",
+            "ip_rate_limits",
             "oauth_states",
         ] {
             assert!(classify(name).is_some(), "{name} must be classified");

@@ -32,23 +32,32 @@ pub struct DevServer {
 impl DevServer {
     /// `wrangler dev` をローカルモードで起動し、health が 200 になるまで待つ。
     pub fn start(port: u16) -> Self {
+        Self::start_with_vars(port, &[])
+    }
+
+    /// vars を上書きして `wrangler dev` を起動する。
+    pub fn start_with_vars(port: u16, vars: &[(&str, &str)]) -> Self {
         let persist_dir = unique_persist_dir();
         fs::create_dir_all(&persist_dir).expect("the persistence directory must be created");
         let root = repository_root();
         let log_path = persist_dir.join("wrangler.log");
         let log_file = fs::File::create(&log_path).expect("the log file must be created");
         let log_error = log_file.try_clone().expect("the log file must be cloned");
-        let child = Command::new("wrangler")
-            .args([
-                "dev",
-                "--local",
-                "--ip",
-                "127.0.0.1",
-                "--port",
-                &port.to_string(),
-                "--persist-to",
-                persist_dir.to_str().expect("a UTF-8 path"),
-            ])
+        let mut command = Command::new("wrangler");
+        command.args([
+            "dev",
+            "--local",
+            "--ip",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+            "--persist-to",
+            persist_dir.to_str().expect("a UTF-8 path"),
+        ]);
+        for (name, value) in vars {
+            command.args(["--var", &format!("{name}:{value}")]);
+        }
+        let child = command
             .current_dir(root)
             .process_group(0)
             .stdout(Stdio::from(log_file))

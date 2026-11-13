@@ -47,12 +47,22 @@ struct UserIdRow {
 }
 
 /// `GET /api/auth/google/start` の処理。
-pub async fn start(_request: Request, context: RouteContext<()>) -> Result<Response> {
+pub async fn start(request: Request, context: RouteContext<()>) -> Result<Response> {
+    if let Some(denied) =
+        crate::rate_limit::check_ip(&request, &context.env, crate::rate_limit::Kind::AuthIp).await?
+    {
+        return Ok(denied);
+    }
     begin(&context.env, "login", None).await
 }
 
 /// `GET /api/auth/reauthenticate/google/start` の処理。
 pub async fn start_elevation(request: Request, context: RouteContext<()>) -> Result<Response> {
+    if let Some(denied) =
+        crate::rate_limit::check_ip(&request, &context.env, crate::rate_limit::Kind::AuthIp).await?
+    {
+        return Ok(denied);
+    }
     let env = context.env;
     let Some(session) = session::resolve(&request, &env).await? else {
         return Ok(crate::error::response(
@@ -120,6 +130,11 @@ async fn begin(env: &Env, purpose: &str, user_id: Option<&str>) -> Result<Respon
 /// `GET /api/auth/google/callback` の処理。
 pub async fn callback(request: Request, context: RouteContext<()>) -> Result<Response> {
     let env = context.env;
+    if let Some(denied) =
+        crate::rate_limit::check_ip(&request, &env, crate::rate_limit::Kind::AuthIp).await?
+    {
+        return Ok(denied);
+    }
     let query = request
         .url()?
         .query_pairs()
