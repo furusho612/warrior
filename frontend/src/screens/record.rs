@@ -85,7 +85,6 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let session = use_signal(|| Option::<SessionRecord>::None);
     let memo = use_signal(String::new);
     let persisted_memo = use_signal(String::new);
-    let saving = use_signal(|| false);
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let route_id = training_id.clone();
@@ -115,7 +114,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 "{status_text}"
             }
             if session().is_some() {
-                MemoEditor { session, memo, persisted_memo, saving, save_error }
+                MemoEditor { session, memo, persisted_memo, save_error }
             } else if let Some(message) = load_error() {
                 p { class: "text-[13px] text-primary", "{message}" }
                 button {
@@ -151,10 +150,11 @@ fn MemoEditor(
     session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     persisted_memo: Signal<String>,
-    saving: Signal<bool>,
     save_error: Signal<Option<String>>,
 ) -> Element {
     let mut memo = memo;
+    let mut saving = use_signal(|| false);
+    let mut dirty = use_signal(|| false);
 
     rsx! {
         label { class: "text-[13px] font-bold", r#for: "record-memo", "{text(Key::RecordMemoLabel)}" }
@@ -166,7 +166,19 @@ fn MemoEditor(
             placeholder: "{text(Key::RecordMemoPlaceholder)}",
             oninput: move |event| {
                 memo.set(event.value());
-                spawn(save_current(session, memo, persisted_memo, saving, save_error));
+                if saving() {
+                    dirty.set(true);
+                    return;
+                }
+                saving.set(true);
+                spawn(save_loop(
+                    session,
+                    memo,
+                    persisted_memo,
+                    saving,
+                    dirty,
+                    save_error,
+                ));
             },
         }
         if saving() {
@@ -177,7 +189,18 @@ fn MemoEditor(
             button {
                 class: "min-h-11 border border-line px-3 text-[13px]",
                 onclick: move |_| {
-                    spawn(save_current(session, memo, persisted_memo, saving, save_error));
+                    if saving() {
+                        return;
+                    }
+                    saving.set(true);
+                    spawn(save_loop(
+                        session,
+                        memo,
+                        persisted_memo,
+                        saving,
+                        dirty,
+                        save_error,
+                    ));
                 },
                 "{text(Key::RecordRetry)}"
             }
@@ -282,31 +305,40 @@ async fn load(
     sync::refresh_status().await;
 }
 
-async fn save_current(
+async fn save_loop(
     mut session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     mut persisted_memo: Signal<String>,
     mut saving: Signal<bool>,
+    mut dirty: Signal<bool>,
     mut save_error: Signal<Option<String>>,
 ) {
-    let Some(record) = session() else {
-        return;
-    };
-    let draft = memo();
-    saving.set(true);
-    let result = save_draft(record, &draft).await;
-    saving.set(false);
-    match result {
-        Ok(updated) => {
-            session.set(Some(updated));
-            if memo() == draft {
-                persisted_memo.set(draft);
+    loop {
+        dirty.set(false);
+        let Some(record) = session() else {
+            saving.set(false);
+            return;
+        };
+        let draft = memo();
+        match save_draft(record, &draft).await {
+            Ok(updated) => {
+                if memo() == draft {
+                    persisted_memo.set(draft.clone());
+                }
+                session.set(Some(updated));
+                save_error.set(None);
+                sync::after_local_save().await;
             }
-            save_error.set(None);
-            sync::after_local_save().await;
+            Err(_) => {
+                save_error.set(Some(text(Key::RecordSaveFailed).to_owned()));
+                break;
+            }
         }
-        Err(_) => save_error.set(Some(text(Key::RecordSaveFailed).to_owned())),
+        if !dirty() {
+            break;
+        }
     }
+    saving.set(false);
 }
 
 async fn create_session() -> Result<SessionRecord, StorageError> {
