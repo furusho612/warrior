@@ -8,6 +8,7 @@ use worker::{Request, Response, Result, RouteContext, Router};
 use crate::account;
 use crate::auth::{oauth, passkey, session};
 use crate::sync;
+use crate::training_record;
 use crate::training_session;
 
 /// ヘルスチェックの経路の名前。
@@ -26,6 +27,10 @@ pub const SYNC_OPERATION_ROUTE_NAME: &str = "sync_operation";
 pub const TRAINING_FINISH_ROUTE_NAME: &str = "training_finish";
 /// トレーニングのサマリーを返す経路の名前。
 pub const TRAINING_SUMMARY_ROUTE_NAME: &str = "training_summary";
+/// サーバーに保存済みのトレーニングを返す経路の名前。
+pub const TRAINING_GET_ROUTE_NAME: &str = "training_get";
+/// トレーニングの編集権を引き継ぐ経路の名前。
+pub const TRAINING_TAKEOVER_ROUTE_NAME: &str = "training_takeover";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -42,6 +47,8 @@ pub fn build_router() -> Router<'static, ()> {
         .post_async("/api/sync/operations", sync::apply_operation)
         .post_async("/api/trainings/:id/finish", training_session::finish)
         .get_async("/api/trainings/:id/summary", training_session::summary)
+        .get_async("/api/trainings/:id", training_record::get)
+        .post_async("/api/trainings/:id/takeover", training_record::takeover)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
         .get_async(
             "/api/auth/reauthenticate/google/start",
@@ -75,6 +82,12 @@ pub fn route_name(path: &str) -> &'static str {
     if path.starts_with("/api/trainings/") && path.ends_with("/summary") {
         return TRAINING_SUMMARY_ROUTE_NAME;
     }
+    if path.starts_with("/api/trainings/") && path.ends_with("/takeover") {
+        return TRAINING_TAKEOVER_ROUTE_NAME;
+    }
+    if training_id_path(path).is_some() {
+        return TRAINING_GET_ROUTE_NAME;
+    }
     match path {
         HEALTH_PATH => HEALTH_ROUTE_NAME,
         "/api/auth/google/start" => GOOGLE_START_ROUTE_NAME,
@@ -100,12 +113,22 @@ async fn health(_request: Request, _context: RouteContext<()>) -> Result<Respons
     Response::from_json(&serde_json::json!({ "status": HEALTH_STATUS }))
 }
 
+/// `/api/trainings/:id` の形の経路から、トレーニングの ID の部分を取り出す。
+fn training_id_path(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api/trainings/")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(rest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         route_name, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME,
         LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
-        TRAINING_FINISH_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
+        TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
+        TRAINING_TAKEOVER_ROUTE_NAME,
     };
 
     #[test]
@@ -144,6 +167,19 @@ mod tests {
         assert_eq!(
             route_name("/api/trainings/3f2504e0-4f89-41d3-9a0c-0305e82c6601/summary"),
             TRAINING_SUMMARY_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/trainings/3f2504e0-4f89-41d3-9a0c-0305e82c6601"),
+            TRAINING_GET_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/trainings/3f2504e0-4f89-41d3-9a0c-0305e82c6601/takeover"),
+            TRAINING_TAKEOVER_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/trainings/"),
+            NOT_FOUND_ROUTE_NAME,
+            "an empty training id is not a route"
         );
     }
 

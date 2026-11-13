@@ -23,7 +23,10 @@ TypeOK ==
   /\ pending \in [Devices -> SUBSET Ops]
   /\ handoffSource \subseteq Ops
 
-Init ==
+(***************************************************************************)
+(* 端末トークンを持たない移行前の記録中の行は所有者を持たない。初期状態に含む。 *)
+(***************************************************************************)
+Finished ==
   /\ status = "finished"
   /\ editors = Devices
   /\ server = [o \in Ops |-> "none"]
@@ -31,6 +34,19 @@ Init ==
   /\ accepted = {}
   /\ pending = [d \in Devices |-> {}]
   /\ handoffSource = {}
+
+LegacyRecording ==
+  /\ status = "recording"
+  /\ editors = {}
+  /\ server = [o \in Ops |-> "none"]
+  /\ lastWriter = [o \in Ops |-> "none"]
+  /\ accepted = {}
+  /\ pending = [d \in Devices |-> {}]
+  /\ handoffSource = {}
+
+Init ==
+  \/ Finished
+  \/ LegacyRecording
 
 Start(d) ==
   /\ status = "finished"
@@ -70,6 +86,16 @@ Handoff(d) ==
        ELSE accepted
   /\ UNCHANGED <<status, server, lastWriter, accepted, pending>>
 
+(***************************************************************************)
+(* 所有者の無い記録中の行は、最初に書き込んだ端末が所有者になる (migration)。 *)
+(***************************************************************************)
+Claim(d) ==
+  /\ status = "recording"
+  /\ editors = {}
+  /\ editors' = {d}
+  /\ UNCHANGED <<status, server, lastWriter, accepted, pending,
+                 handoffSource>>
+
 Finish ==
   /\ status = "recording"
   /\ status' = "finished"
@@ -88,6 +114,7 @@ Next ==
   \/ \E d \in Devices, o \in Ops: Write(d, o)
   \/ \E d \in Devices, o \in Ops: Sync(d, o)
   \/ \E d \in Devices: Handoff(d)
+  \/ \E d \in Devices: Claim(d)
   \/ Finish
   \/ \E d \in Devices, o \in Ops: EditAfterFinish(d, o)
 

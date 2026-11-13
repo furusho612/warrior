@@ -7,7 +7,7 @@ mod support;
 
 use serde_json::{json, Value};
 use support::DevServer;
-use warrior_core::auth::hash_session_token;
+use warrior_core::auth::{hash_session_token, hash_terminal_token};
 use warrior_core::base64url;
 
 const ORIGIN: &str = "http://localhost:8787";
@@ -22,6 +22,7 @@ const DATE: &str = "2026-11-12";
 const STARTED_AT: &str = "2026-11-12T03:00:00Z";
 const SESSION_SELECT: &str =
     "SELECT date, started_at, memo, created_at, updated_at FROM training_sessions WHERE id = '";
+const TERMINAL_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4415";
 
 #[test]
 fn sync_operations_are_idempotent_scoped_to_the_user_and_atomic() {
@@ -31,11 +32,12 @@ fn sync_operations_are_idempotent_scoped_to_the_user_and_atomic() {
         .expect("the local D1 migrations must apply");
     let token = base64url::encode(&[9u8; 32]);
     seed(&server, &token);
-    let cookie = format!("warrior_session={token}");
+    let cookie = cookies(&token);
 
     let without_auth = post(&server, "", &create_operation(CREATE_OPERATION_ID, "first"));
     assert_eq!(without_auth.status, 401);
 
+    rejects_a_create_without_a_terminal_token(&server, &token);
     create_is_applied(&server, &cookie);
     replayed_create_does_not_change_d1(&server, &cookie);
     update_is_applied(&server, &cookie);
@@ -57,7 +59,7 @@ fn concurrent_creates_with_the_same_operation_id_apply_once() {
         .expect("the local D1 migrations must apply");
     let token = base64url::encode(&[7u8; 32]);
     seed(&server, &token);
-    let cookie = format!("warrior_session={token}");
+    let cookie = cookies(&token);
     let operation_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4414";
     let first = create_operation(operation_id, "first");
     let second = create_operation(operation_id, "second");
@@ -104,6 +106,22 @@ fn response_status(response: &support::HttpResponse) -> String {
         .as_str()
         .expect("a status")
         .to_owned()
+}
+
+fn rejects_a_create_without_a_terminal_token(server: &DevServer, token: &str) {
+    let training_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4416";
+    let operation_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4417";
+    let mut operation = create_operation(operation_id, "no terminal");
+    operation["training_id"] = json!(training_id);
+    operation["payload"]["id"] = json!(training_id);
+    let response = post(server, &format!("warrior_session={token}"), &operation);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(server, operation_id), 0);
+    assert_eq!(
+        session_count_for(server, training_id),
+        0,
+        "a rejected create must not leave a training"
+    );
 }
 
 fn create_is_applied(server: &DevServer, cookie: &str) {
@@ -272,6 +290,7 @@ fn update_operation(operation_id: &str, memo: &str) -> Value {
 }
 
 fn seed(server: &DevServer, token: &str) {
+    let terminal_token = base64url::encode(&[5u8; 32]);
     for sql in [
         format!(
             "INSERT INTO users (id, google_sub, email, display_name, created_at, updated_at) \
@@ -287,6 +306,11 @@ fn seed(server: &DevServer, token: &str) {
             hash_session_token(token)
         ),
         format!(
+            "INSERT INTO terminal_tokens (id, user_id, token_hash, created_at, last_seen_at) \
+             VALUES ('{TERMINAL_ID}', '{USER_ID}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            hash_terminal_token(&terminal_token)
+        ),
+        format!(
             "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \
              VALUES ('{OTHER_TRAINING_ID}', '{OTHER_USER_ID}', '2026-11-12', '2026-11-12T03:00:00Z', '別の記録', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
         ),
@@ -295,6 +319,11 @@ fn seed(server: &DevServer, token: &str) {
             .execute_d1_json(&sql)
             .expect("the user rows must be seeded");
     }
+}
+
+fn cookies(token: &str) -> String {
+    let terminal_token = base64url::encode(&[5u8; 32]);
+    format!("warrior_session={token}; warrior_terminal={terminal_token}")
 }
 
 fn first_row(server: &DevServer, sql: &str) -> Value {
@@ -325,8 +354,12 @@ fn applied_count(server: &DevServer, operation_id: &str) -> i64 {
 }
 
 fn session_count(server: &DevServer) -> i64 {
+    session_count_for(server, TRAINING_ID)
+}
+
+fn session_count_for(server: &DevServer, training_id: &str) -> i64 {
     count(
         server,
-        &format!("SELECT COUNT(*) AS count FROM training_sessions WHERE id = '{TRAINING_ID}'"),
+        &format!("SELECT COUNT(*) AS count FROM training_sessions WHERE id = '{training_id}'"),
     )
 }

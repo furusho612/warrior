@@ -10,6 +10,7 @@ use serde::Deserialize;
 use warrior_core::datetime;
 use warrior_core::exercise::{ExerciseSnapshot, GripSelection, Laterality};
 use warrior_core::jst::JstDate;
+use warrior_core::ownership::{decide_write, WriteDecision};
 use warrior_core::set_calc::{
     BestKey, SetKind, SetRecord, SetSegment, SetValidationError, SideValue,
 };
@@ -22,12 +23,14 @@ use worker::{console_error, Date, Request, Response, Result, RouteContext};
 use crate::auth::session;
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
+use crate::ownership;
 
 #[derive(Debug, Deserialize)]
 struct SessionSummaryRow {
     date: String,
     started_at: Option<String>,
     finished_at: Option<String>,
+    owner_terminal_id: Option<String>,
     duration_seconds: Option<i64>,
     total_weight_kg: Option<f64>,
     exercise_count: Option<i64>,
@@ -62,8 +65,8 @@ struct SetSegmentRow {
     right_duration_seconds: Option<i64>,
 }
 
-const SESSION_SUMMARY_COLUMNS: &str = "date, started_at, finished_at, duration_seconds, \
-     total_weight_kg, exercise_count, set_count, personal_bests";
+const SESSION_SUMMARY_COLUMNS: &str = "date, started_at, finished_at, owner_terminal_id, \
+     duration_seconds, total_weight_kg, exercise_count, set_count, personal_bests";
 
 const SET_SEGMENT_QUERY: &str = "SELECT te.id AS training_exercise_id, te.snapshot, \
      s.id AS set_id, s.kind AS kind, s.rpe AS set_rpe, s.grip AS grip, \
@@ -92,6 +95,23 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
     };
     if session_row.finished_at.is_some() {
         return summary_response(&db, &session_row, &training_id, &authenticated.id).await;
+    }
+    let Some(terminal_id) = ownership::ensure(&db, &request, &authenticated.id).await? else {
+        return Ok(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        ));
+    };
+    if decide_write(
+        false,
+        session_row.owner_terminal_id.as_deref(),
+        &terminal_id,
+    ) == WriteDecision::Forbid
+    {
+        return Ok(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        ));
     }
     let Some(started_at) = session_row.started_at.as_deref() else {
         return Ok(response(
@@ -129,6 +149,7 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         finish_statement(
             &training_id,
             &authenticated.id,
+            &terminal_id,
             &finished_at,
             &summary,
             &personal_bests,
@@ -200,14 +221,17 @@ fn select_summary_statement(training_id: &str, user_id: &str) -> SqlStatement {
 fn finish_statement(
     training_id: &str,
     user_id: &str,
+    terminal_id: &str,
     finished_at: &str,
     summary: &TrainingSessionSummary,
     personal_bests: &str,
 ) -> SqlStatement {
     SqlStatement::new(
         "UPDATE training_sessions SET finished_at = ?, duration_seconds = ?, \
-         total_weight_kg = ?, exercise_count = ?, set_count = ?, personal_bests = ? \
-         WHERE id = ? AND user_id = ? AND finished_at IS NULL",
+         total_weight_kg = ?, exercise_count = ?, set_count = ?, personal_bests = ?, \
+         owner_terminal_id = NULL \
+         WHERE id = ? AND user_id = ? AND finished_at IS NULL \
+         AND (owner_terminal_id IS NULL OR owner_terminal_id = ?)",
         vec![
             SqlValue::Text(finished_at.to_owned()),
             SqlValue::Integer(summary.duration_seconds),
@@ -217,6 +241,7 @@ fn finish_statement(
             SqlValue::Text(personal_bests.to_owned()),
             SqlValue::Text(training_id.to_owned()),
             SqlValue::Text(user_id.to_owned()),
+            SqlValue::Text(terminal_id.to_owned()),
         ],
     )
 }
@@ -494,10 +519,11 @@ mod tests {
     };
 
     #[test]
-    fn the_finish_batch_scopes_the_update_to_the_user_and_an_unfinished_session() {
+    fn the_finish_batch_scopes_the_update_to_the_user_the_owner_and_an_unfinished_session() {
         let statement = finish_statement(
             "3f2504e0-4f89-41d3-9a0c-0305e82c6601",
             "3f2504e0-4f89-41d3-9a0c-0305e82c6602",
+            "3f2504e0-4f89-41d3-9a0c-0305e82c6603",
             "2026-11-12T04:00:00Z",
             &TrainingSessionSummary {
                 duration_seconds: 3_600,
@@ -508,13 +534,21 @@ mod tests {
             },
             "[]",
         );
+        assert!(statement.sql().contains("owner_terminal_id = NULL"));
         assert!(statement
             .sql()
             .contains("WHERE id = ? AND user_id = ? AND finished_at IS NULL"));
-        assert_eq!(statement.bindings().len(), 8);
+        assert!(statement
+            .sql()
+            .contains("(owner_terminal_id IS NULL OR owner_terminal_id = ?)"));
+        assert_eq!(statement.bindings().len(), 9);
         assert_eq!(
             statement.bindings()[6],
             warrior_core::sql::SqlValue::Text("3f2504e0-4f89-41d3-9a0c-0305e82c6601".to_owned())
+        );
+        assert_eq!(
+            statement.bindings()[8],
+            warrior_core::sql::SqlValue::Text("3f2504e0-4f89-41d3-9a0c-0305e82c6603".to_owned())
         );
     }
 
@@ -524,6 +558,7 @@ mod tests {
             date: "2026-11-12".to_owned(),
             started_at: Some("2026-11-12T03:00:00Z".to_owned()),
             finished_at: Some("2026-11-12T04:00:00Z".to_owned()),
+            owner_terminal_id: None,
             duration_seconds: Some(3_600),
             total_weight_kg: Some(1_640.0),
             exercise_count: Some(2),
@@ -548,6 +583,7 @@ mod tests {
             date: "2026-11-12".to_owned(),
             started_at: Some("2026-11-12T03:00:00Z".to_owned()),
             finished_at: None,
+            owner_terminal_id: None,
             duration_seconds: None,
             total_weight_kg: None,
             exercise_count: None,

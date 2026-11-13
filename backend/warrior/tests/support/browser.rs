@@ -175,10 +175,10 @@ pub async fn wait_for_route(driver: &WebDriver, route: &str) {
         if Instant::now() >= deadline {
             let logs = driver.get_log("browser").await.unwrap_or_default();
             let source = driver.source().await.unwrap_or_default();
+            let preview = source.chars().take(2000).collect::<String>();
             panic!(
-                "the route {route} did not appear; current URL: {:?}; logs: {logs:?}; source: {}",
-                driver.current_url().await,
-                &source[..source.len().min(2000)]
+                "the route {route} did not appear; current URL: {:?}; logs: {logs:?}; source: {preview}",
+                driver.current_url().await
             );
         }
         std::thread::sleep(POLL_INTERVAL);

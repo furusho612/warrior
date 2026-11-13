@@ -38,6 +38,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者のセッション。",
     },
     Table {
+        name: "terminal_tokens",
+        class: TableClass::Owned,
+        reason: "利用者の端末トークン。記録中のトレーニングの編集権を持つ。",
+    },
+    Table {
         name: "passkeys",
         class: TableClass::Owned,
         reason: "利用者のパスキー。",
@@ -146,6 +151,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "elevation_tokens",
     "passkeys",
     "auth_sessions",
+    "terminal_tokens",
     "superset_members",
     "set_segments",
     "sets",
@@ -178,6 +184,7 @@ mod tests {
         for name in [
             "users",
             "auth_sessions",
+            "terminal_tokens",
             "passkeys",
             "webauthn_challenges",
             "elevation_tokens",

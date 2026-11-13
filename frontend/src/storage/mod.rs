@@ -21,6 +21,7 @@ use warrior_core::sync::{
     Operation, OperationKind, OutboxEntry, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
+use warrior_core::training_record::TrainingRecord;
 
 pub mod indexeddb;
 pub mod outbox;
@@ -533,6 +534,61 @@ impl Storage {
         .await
     }
 
+    /// 編集権を失ったトレーニングを記録し、以後の送信を止める。
+    pub async fn mark_training_forbidden(&self, training_id: &str) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Meta.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let meta = transaction.store(Store::Meta.name())?;
+        match outbox::mark_forbidden(&meta, training_id).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
+    }
+
+    /// 編集権を失ったトレーニングの ID を返す。
+    pub async fn forbidden_trainings(&self) -> Result<Vec<String>, StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Meta.name()],
+            IdbTransactionMode::Readonly,
+        )?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let trainings = outbox::forbidden_trainings(&meta).await?;
+        transaction.finish().await?;
+        Ok(trainings)
+    }
+
+    /// サーバーに保存済みの記録で、端末の記録と送信待ちの列を置き換える。
+    ///
+    /// 引き継ぎと、閲覧のみの端末の読み直しで使う。トレーニングの木の古い行と、
+    /// そのトレーニングの送信待ちの操作を削除してから、応答の行だけを書く (ADR-002)。
+    pub async fn replace_session_tree(&self, record: &TrainingRecord) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::TrainingSessions.name(),
+                Store::TrainingExercises.name(),
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::Supersets.name(),
+                Store::SupersetMembers.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        match replace_session_tree_steps(&transaction, record).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
+    }
+
     /// 認証が無いときに、Sending を試行回数を変えずに Pending へ戻す。
     pub async fn return_to_pending(&self, operation_id: &str) -> Result<(), StorageError> {
         self.transition_outbox(|entries| {
@@ -588,6 +644,79 @@ async fn abort<T>(
     transaction.abort();
     let _ = transaction.finish().await;
     Err(error)
+}
+
+/// 端末に保存するスーパーセットの行。組に含める種目は `superset_members` に置く。
+#[derive(serde::Serialize)]
+struct StoredSuperset<'a> {
+    id: &'a str,
+    training_id: &'a str,
+    position: i64,
+    created_at: &'a str,
+    updated_at: &'a str,
+}
+
+async fn replace_session_tree_steps(
+    transaction: &indexeddb::Transaction,
+    record: &TrainingRecord,
+) -> Result<(), StorageError> {
+    let training_id = record.session.id.as_str();
+    let outbox_store = transaction.store(Store::Outbox.name())?;
+    let entries = outbox::read(&outbox_store).await?;
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.operation.training_id == training_id)
+    {
+        indexeddb::delete_entry(
+            &outbox_store,
+            &JsValue::from_str(&entry.operation.operation_id),
+        )
+        .await?;
+    }
+
+    delete_session_tree(transaction, training_id).await?;
+    let sessions = transaction.store(Store::TrainingSessions.name())?;
+    let mut session = record.session.clone();
+    session.confirmed_memo = session.memo.clone();
+    session.confirmed_sequence = 0;
+    indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
+
+    put_rows(transaction, Store::TrainingExercises, &record.exercises).await?;
+    put_rows(transaction, Store::Sets, &record.sets).await?;
+    put_rows(transaction, Store::SetSegments, &record.segments).await?;
+    let supersets = record
+        .supersets
+        .iter()
+        .map(|superset| StoredSuperset {
+            id: &superset.id,
+            training_id: &superset.training_id,
+            position: superset.position,
+            created_at: &superset.created_at,
+            updated_at: &superset.updated_at,
+        })
+        .collect::<Vec<_>>();
+    put_rows(transaction, Store::Supersets, &supersets).await?;
+    let members = record
+        .supersets
+        .iter()
+        .flat_map(|superset| superset.members.iter())
+        .collect::<Vec<_>>();
+    put_rows(transaction, Store::SupersetMembers, &members).await?;
+
+    let meta = transaction.store(Store::Meta.name())?;
+    outbox::clear_forbidden(&meta, training_id).await
+}
+
+async fn put_rows<T: serde::Serialize>(
+    transaction: &indexeddb::Transaction,
+    store: Store,
+    rows: &[T],
+) -> Result<(), StorageError> {
+    let object_store = transaction.store(store.name())?;
+    for row in rows {
+        indexeddb::put(&object_store, &indexeddb::to_js(row)?).await?;
+    }
+    Ok(())
 }
 
 fn ensure_record_store(store: Store) -> Result<(), StorageError> {

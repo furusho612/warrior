@@ -18,6 +18,10 @@ pub const WEBAUTHN_CHALLENGE_TTL_SECONDS: i64 = 5 * 60;
 pub const ELEVATION_TTL_SECONDS: i64 = 5 * 60;
 /// セッションの Cookie の名前。
 pub const SESSION_COOKIE: &str = "warrior_session";
+/// 端末トークンの Cookie の名前。
+pub const TERMINAL_COOKIE: &str = "warrior_terminal";
+/// 端末トークンの有効期限 (秒)。
+pub const TERMINAL_TTL_SECONDS: i64 = 365 * 24 * 60 * 60;
 /// 再認証の短命トークンの Cookie の名前。
 pub const ELEVATION_COOKIE: &str = "warrior_elevation";
 /// OAuth の state の Cookie の名前。
@@ -84,6 +88,18 @@ pub fn sha256_base64url(input: &[u8]) -> String {
 /// セッションの値を D1 に保存するハッシュにする。
 pub fn hash_session_token(token: &str) -> String {
     sha256_base64url(token.as_bytes())
+}
+
+/// 端末トークンの値を D1 に保存するハッシュにする。
+///
+/// 端末トークンは 32 バイトの乱数であり、D1 には SHA-256 の小文字 16 進だけを保存する。
+pub fn hash_terminal_token(token: &str) -> String {
+    let digest = Sha256::digest(token.as_bytes());
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
 }
 
 /// ID トークンの payload をデコードする。署名は検証しない (ADR-019)。
@@ -203,6 +219,18 @@ pub fn clear_session_cookie() -> String {
     format!("{SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
 }
 
+/// 端末トークンの Cookie。
+pub fn terminal_cookie(token: &str) -> String {
+    format!(
+        "{TERMINAL_COOKIE}={token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={TERMINAL_TTL_SECONDS}"
+    )
+}
+
+/// 端末トークンを消す Cookie。
+pub fn clear_terminal_cookie() -> String {
+    format!("{TERMINAL_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
+}
+
 /// OAuth の state の Cookie。
 pub fn oauth_state_cookie(state: &str) -> String {
     format!(
@@ -249,9 +277,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        clear_oauth_state_cookie, clear_session_cookie, hash_session_token, is_valid_opaque_token,
-        oauth_state_cookie, session_cookie, sha256_base64url, validate_id_token, validate_userinfo,
-        AuthError, OAUTH_STATE_COOKIE, SESSION_COOKIE,
+        clear_oauth_state_cookie, clear_session_cookie, clear_terminal_cookie, hash_session_token,
+        hash_terminal_token, is_valid_opaque_token, oauth_state_cookie, session_cookie,
+        sha256_base64url, terminal_cookie, validate_id_token, validate_userinfo, AuthError,
+        OAUTH_STATE_COOKIE, SESSION_COOKIE, TERMINAL_COOKIE,
     };
 
     fn jwt(payload: serde_json::Value) -> String {
@@ -286,6 +315,18 @@ mod tests {
     }
 
     #[test]
+    fn terminal_hash_is_lowercase_hex_and_not_reversible() {
+        assert_eq!(
+            hash_terminal_token("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(hash_terminal_token("abc").len(), 64);
+        assert_eq!(hash_terminal_token("abc"), hash_terminal_token("abc"));
+        assert_ne!(hash_terminal_token("abc"), hash_terminal_token("other"));
+        assert!(!hash_terminal_token("abc").contains("abc"));
+    }
+
+    #[test]
     fn opaque_tokens_are_32_bytes_in_base64url() {
         let token = crate::base64url::encode(&[0u8; 32]);
         assert!(is_valid_opaque_token(&token));
@@ -314,6 +355,16 @@ mod tests {
         assert_eq!(
             clear_oauth_state_cookie(),
             format!("{OAUTH_STATE_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
+        );
+        assert_eq!(
+            terminal_cookie("abc"),
+            format!(
+                "{TERMINAL_COOKIE}=abc; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000"
+            )
+        );
+        assert_eq!(
+            clear_terminal_cookie(),
+            format!("{TERMINAL_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
         );
     }
 
