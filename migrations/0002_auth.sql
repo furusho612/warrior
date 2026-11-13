@@ -20,5 +20,4 @@ CREATE TABLE auth_sessions (
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
 
-CREATE INDEX auth_sessions_token_hash ON auth_sessions (token_hash);
 CREATE INDEX auth_sessions_user_id ON auth_sessions (user_id);
