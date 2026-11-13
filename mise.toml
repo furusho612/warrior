@@ -1,0 +1,77 @@
+[tools]
+# ツールの版は ADR-022 で固定する。版は latest にしない。
+rust = { version = "1.99.0", profile = "minimal", components = ["clippy", "rustfmt"], targets = ["wasm32-unknown-unknown"] }
+"cargo:worker-build" = "0.8.6"
+node = "24.21.0"
+wrangler = { version = "4.135.0", allow_builds = ["esbuild", "sharp", "workerd"] }
+"github:DioxusLabs/dioxus" = "0.7.10"
+"github:wasm-bindgen/wasm-bindgen" = "0.2.129"
+chromedriver = "157.0.8103.15"
+"cargo:cargo-fuzz" = "0.13.2"
+ripgrep = "15.2.0"
+java = "temurin-25.0.4+101.0.LTS"
+
+[tasks.setup]
+description = "開発に必要な依存を取得する"
+run = "cargo fetch"
+
+[tasks.fmt]
+description = "Rust の整形を検査する"
+run = "cargo fmt --all --check"
+
+[tasks.lint]
+description = "Rust の lint と、絵文字を使わない規約の検査を実行する"
+run = [
+  "cargo clippy --workspace --all-targets -- -D warnings",
+  "rg --version",
+  "! rg --hidden -g '!.git' --pcre2 '(\\p{Emoji_Presentation}|\\p{Emoji}\\x{FE0F})'",
+]
+
+[tasks.test]
+description = "全ての自動テストを実行する"
+run = "cargo test --workspace"
+
+[tasks."test-pbt"]
+description = "性質テストを実行する"
+run = "cargo test -p warrior_pbt"
+
+[tasks."backend:build"]
+description = "利用者向けの Worker をビルドする"
+dir = "backend/warrior"
+run = "worker-build --release"
+
+[tasks."frontend:build-service-worker"]
+description = "Service Worker の wasm と JavaScript をビルドして配信物に置く"
+run = """
+set -e
+cargo build -p warrior_service_worker --target wasm32-unknown-unknown --release
+mkdir -p frontend/public/sw
+wasm-bindgen --target no-modules --out-dir frontend/public/sw --out-name warrior_sw target/wasm32-unknown-unknown/release/warrior_service_worker.wasm
+"""
+
+[tasks."frontend:build"]
+description = "Frontend (Dioxus) を Web 向けにリリースビルドする"
+depends = ["frontend:build-service-worker"]
+dir = "frontend"
+run = """
+set -e
+mise exec -- dx build --release --platform web
+# dx は public/ の静的ファイルを成果物へ写さないため、配信物に明示的に含める。
+cp -R public/. ../target/dx/warrior_frontend/release/web/public/
+"""
+
+[tasks."build-frontend"]
+description = "Frontend をビルドする (frontend:build の別名)"
+depends = ["frontend:build"]
+
+[tasks."build-service-worker"]
+description = "Service Worker をビルドする (frontend:build-service-worker の別名)"
+depends = ["frontend:build-service-worker"]
+
+[tasks.build]
+description = "Worker と Frontend をビルドする"
+depends = ["backend:build", "frontend:build"]
+
+[tasks.check]
+description = "静的検査と全ての自動テスト、ビルドを実行する (CI と手元の共通の入口)"
+depends = ["fmt", "lint", "test", "test-pbt", "backend:build", "frontend:build"]
