@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
-use warrior_core::set_calc::estimated_one_rep_max;
+use warrior_core::exercise::Laterality;
+use warrior_core::set_calc::RecordMode;
+use warrior_core::training_session::{BestKind, PersonalBestItem};
 
 const BENCH_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4701";
 const PLANK_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4702";
@@ -32,6 +34,7 @@ async fn starts_finishes_and_shows_the_summary_in_the_browser() {
     login(&driver, &server, &provider).await;
     let training_id = start_training(&driver, browser).await;
     sync_create_and_seed(&driver, &server, &training_id).await;
+    verify_offline_finish_is_rejected(&driver, &training_id).await;
     finish_and_verify_summary(&driver, &server, &training_id).await;
     verify_home_does_not_restore(&driver, &server).await;
 
@@ -120,6 +123,37 @@ async fn sync_create_and_seed(driver: &WebDriver, server: &DevServer, training_i
     seed_sets(server, &user_id, training_id);
 }
 
+async fn verify_offline_finish_is_rejected(driver: &WebDriver, training_id: &str) {
+    browser::offline(driver, true).await;
+    let textarea = driver
+        .find(By::Css("textarea[data-memo]"))
+        .await
+        .expect("the memo must exist");
+    textarea.click().await.expect("the memo must be focusable");
+    textarea
+        .send_keys("オフライン")
+        .await
+        .expect("the memo must be typed");
+    browser::wait_for_attribute(driver, "[data-sync-status]", "data-sync-status", "unsaved").await;
+
+    driver
+        .find(By::Css("[data-finish]"))
+        .await
+        .expect("the finish button must exist")
+        .click()
+        .await
+        .expect("the finish button must be clickable");
+    browser::wait_for_text(driver, "送信中の操作があります").await;
+    assert_eq!(
+        browser::attribute(driver, "[data-session-id]", "data-session-id").await,
+        training_id,
+        "a rejected finish must keep the record open"
+    );
+
+    browser::offline(driver, false).await;
+    browser::wait_for_attribute(driver, "[data-sync-status]", "data-sync-status", "saved").await;
+}
+
 async fn finish_and_verify_summary(driver: &WebDriver, server: &DevServer, training_id: &str) {
     driver
         .find(By::Css("[data-finish]"))
@@ -155,37 +189,8 @@ async fn finish_and_verify_summary(driver: &WebDriver, server: &DevServer, train
         "3"
     );
     assert_eq!(stored["total_weight_kg"], 1_640.0);
-    let personal_bests = stored["personal_bests"]
-        .as_str()
-        .expect("the stored personal bests are JSON")
-        .to_owned();
-    let personal_bests: Value =
-        serde_json::from_str(&personal_bests).expect("the stored personal bests are JSON");
-    assert_eq!(
-        personal_bests,
-        json!([
-            {
-                "exercise_id": BENCH_EXERCISE_ID,
-                "kind": "max_weight",
-                "value": 100.0
-            },
-            {
-                "exercise_id": BENCH_EXERCISE_ID,
-                "kind": "estimated_one_rep_max",
-                "value": estimated_one_rep_max(100.0, 5).expect("a value")
-            },
-            {
-                "exercise_id": BENCH_EXERCISE_ID,
-                "kind": "total_weight",
-                "value": 1_140.0
-            },
-            {
-                "exercise_id": PLANK_EXERCISE_ID,
-                "kind": "longest_duration",
-                "value": 60.0
-            }
-        ])
-    );
+    let personal_bests = stored_bests(&stored);
+    assert_items(&personal_bests, &session_bests());
     let rendered = eval_json(
         driver,
         "const done = arguments[arguments.length - 1]; \
@@ -197,15 +202,11 @@ async fn finish_and_verify_summary(driver: &WebDriver, server: &DevServer, train
     )
     .await;
     assert_eq!(rendered.as_array().map(Vec::len), Some(4));
-    for (index, item) in personal_bests
-        .as_array()
-        .expect("the personal bests are an array")
-        .iter()
-        .enumerate()
-    {
-        assert_eq!(rendered[index]["kind"], item["kind"]);
-        assert_eq!(rendered[index]["value"].as_f64(), item["value"].as_f64());
+    for (index, item) in personal_bests.iter().enumerate() {
+        assert_eq!(rendered[index]["kind"], item.kind.as_str());
+        assert_eq!(rendered[index]["value"].as_f64(), Some(item.value));
     }
+    browser::wait_for_text(driver, "ベンチプレス — 最大重量 — 100 kg").await;
     browser::wait_for_text(driver, "更新した自己ベスト").await;
 }
 
@@ -258,6 +259,10 @@ async fn check_record_layout(driver: &WebDriver, browser: Browser) {
         "5"
     );
     assert_eq!(
+        browser::attribute(driver, "[data-set-table]", "data-set-row-height").await,
+        "44"
+    );
+    assert_eq!(
         browser::attribute(driver, "[data-set-drawer]", "data-set-drawer").await,
         "true"
     );
@@ -283,9 +288,24 @@ async fn check_record_layout(driver: &WebDriver, browser: Browser) {
         .as_f64()
         .expect("a height");
     assert!(
-        table_height >= 220.0,
-        "the set table must fit five rows: {table_height}"
+        table_height >= 222.0,
+        "the set table must fit five 44px rows and its borders: {table_height}"
     );
+    let row_heights = eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         const heights = Array.from(document.querySelectorAll('[data-set-row]')) \
+           .map((row) => row.getBoundingClientRect().height); \
+         done(JSON.stringify(heights));",
+    )
+    .await;
+    assert_eq!(row_heights.as_array().map(Vec::len), Some(5));
+    for height in row_heights
+        .as_array()
+        .expect("the row heights are an array")
+    {
+        assert_eq!(height.as_f64(), Some(44.0));
+    }
     let overflow = driver
         .execute(
             "return document.documentElement.scrollWidth > window.innerWidth;",
@@ -354,6 +374,87 @@ fn session_row(server: &DevServer, training_id: &str) -> Value {
              set_count, personal_bests FROM training_sessions WHERE id = '{training_id}'"
         ),
     )
+}
+
+fn session_bests() -> Vec<PersonalBestItem> {
+    vec![
+        session_item(
+            BENCH_EXERCISE_ID,
+            "ベンチプレス",
+            RecordMode::WeightAndReps,
+            BestKind::MaxWeight,
+            100.0,
+        ),
+        session_item(
+            BENCH_EXERCISE_ID,
+            "ベンチプレス",
+            RecordMode::WeightAndReps,
+            BestKind::EstimatedOneRepMax,
+            116.58250529118924,
+        ),
+        session_item(
+            BENCH_EXERCISE_ID,
+            "ベンチプレス",
+            RecordMode::WeightAndReps,
+            BestKind::TotalWeight,
+            1_640.0,
+        ),
+        session_item(
+            PLANK_EXERCISE_ID,
+            "プランク",
+            RecordMode::Time,
+            BestKind::LongestDuration,
+            60.0,
+        ),
+    ]
+}
+
+fn session_item(
+    exercise_id: &str,
+    exercise_name: &str,
+    record_mode: RecordMode,
+    kind: BestKind,
+    value: f64,
+) -> PersonalBestItem {
+    PersonalBestItem {
+        exercise_id: exercise_id.to_owned(),
+        exercise_name: Some(exercise_name.to_owned()),
+        record_mode,
+        laterality: Laterality::Bilateral,
+        grip: None,
+        attachment: None,
+        kind,
+        value,
+    }
+}
+
+fn stored_bests(stored: &Value) -> Vec<PersonalBestItem> {
+    serde_json::from_str(
+        stored["personal_bests"]
+            .as_str()
+            .expect("the stored personal bests are JSON"),
+    )
+    .expect("the stored personal bests are JSON")
+}
+
+fn assert_items(actual: &[PersonalBestItem], expected: &[PersonalBestItem]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?}");
+    for (item, expected) in actual.iter().zip(expected) {
+        assert_eq!(item.exercise_id, expected.exercise_id);
+        assert_eq!(item.exercise_name, expected.exercise_name);
+        assert_eq!(item.record_mode, expected.record_mode);
+        assert_eq!(item.laterality, expected.laterality);
+        assert_eq!(item.grip, expected.grip);
+        assert_eq!(item.attachment, expected.attachment);
+        assert_eq!(item.kind, expected.kind);
+        assert!(
+            (item.value - expected.value).abs() < 1e-9,
+            "{:?} must be {} but was {}",
+            item.kind,
+            expected.value,
+            item.value
+        );
+    }
 }
 
 fn seed_sets(server: &DevServer, user_id: &str, training_id: &str) {

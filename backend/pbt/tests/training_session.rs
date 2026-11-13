@@ -2,11 +2,17 @@
 //!
 //! 対応する要求: `REQ-REC-005`。
 //! 任意のセットの列について、サマリーの総重量とセット数が `set_calc` の計算と一致し、
-//! 種目数がセットを持つ種目の数になることを確かめる。
+//! 種目数がセットを持つ種目の数になり、種目別の総重量のベストが全セットの合計になることを確かめる。
 
 use proptest::prelude::*;
+use warrior_core::exercise::Laterality;
+use warrior_core::jst::JstDate;
 use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord, SetSegment, SideValue};
-use warrior_core::training_session::summary_from_sets;
+use warrior_core::training_session::{summary_from_sets, BestKind, PersonalBestItem, SessionSet};
+
+fn date() -> JstDate {
+    JstDate::new(2026, 11, 12).unwrap()
+}
 
 fn key(index: u8) -> BestKey {
     BestKey {
@@ -105,8 +111,23 @@ fn time_record() -> impl Strategy<Value = SetRecord> {
     })
 }
 
-fn record() -> impl Strategy<Value = SetRecord> {
-    prop_oneof![weight_record(), time_record()]
+fn session_set() -> impl Strategy<Value = SessionSet> {
+    prop_oneof![weight_record(), time_record()].prop_map(|record| {
+        let name = record.key().exercise_id.clone();
+        SessionSet {
+            record,
+            exercise_name: name,
+            laterality: Laterality::Bilateral,
+        }
+    })
+}
+
+fn same_group(set: &SessionSet, item: &PersonalBestItem) -> bool {
+    set.record.key().exercise_id == item.exercise_id
+        && set.record.mode() == item.record_mode
+        && set.laterality == item.laterality
+        && set.record.key().grip == item.grip
+        && set.record.key().attachment == item.attachment
 }
 
 proptest! {
@@ -114,18 +135,21 @@ proptest! {
 
     #[test]
     fn summary_total_weight_and_set_count_follow_the_set_calculations(
-        sets in prop::collection::vec(record(), 0..=6),
+        sets in prop::collection::vec(session_set(), 0..=6),
         duration in 0i64..=86_400,
     ) {
-        let summary = summary_from_sets(duration, &sets);
-        let total_weight = sets.iter().map(SetRecord::total_weight_kg).sum::<f64>();
+        let summary = summary_from_sets(date(), duration, &sets);
+        let total_weight = sets
+            .iter()
+            .map(|set| set.record.total_weight_kg())
+            .sum::<f64>();
         let set_count = sets
             .iter()
-            .map(|set| set.counted_sets() as u32)
+            .map(|set| set.record.counted_sets() as u32)
             .sum::<u32>();
         let mut exercise_ids = sets
             .iter()
-            .map(|set| set.key().exercise_id.clone())
+            .map(|set| set.record.key().exercise_id.clone())
             .collect::<Vec<_>>();
         exercise_ids.sort();
         exercise_ids.dedup();
@@ -140,16 +164,31 @@ proptest! {
     }
 
     #[test]
-    fn summary_personal_bests_are_positive_and_known_kinds(
-        sets in prop::collection::vec(record(), 0..=6),
+    fn session_total_weight_bests_sum_every_set_of_the_exercise(
+        sets in prop::collection::vec(session_set(), 0..=6),
     ) {
-        let summary = summary_from_sets(60, &sets);
+        let summary = summary_from_sets(date(), 60, &sets);
+        for item in summary
+            .personal_bests
+            .iter()
+            .filter(|item| item.kind == BestKind::TotalWeight)
+        {
+            let expected = sets
+                .iter()
+                .filter(|set| same_group(set, item))
+                .map(|set| set.record.strict_total_weight_kg())
+                .sum::<f64>();
+            prop_assert!((item.value - expected).abs() < 1e-9);
+            prop_assert!(item.value > 0.0);
+        }
+    }
+
+    #[test]
+    fn session_personal_bests_are_positive(sets in prop::collection::vec(session_set(), 0..=6)) {
+        let summary = summary_from_sets(date(), 60, &sets);
         for item in &summary.personal_bests {
             prop_assert!(item.value > 0.0);
-            prop_assert!(
-                ["max_weight", "estimated_one_rep_max", "total_weight", "longest_duration"]
-                    .contains(&item.kind.as_str())
-            );
+            prop_assert!(BestKind::ALL.contains(&item.kind));
         }
     }
 }

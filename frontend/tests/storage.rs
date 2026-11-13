@@ -11,11 +11,13 @@ use std::cell::Cell;
 
 use js_sys::Promise;
 use serde_json::json;
+use warrior_core::exercise::Laterality;
+use warrior_core::set_calc::RecordMode;
 use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
-use warrior_core::training_session::{PersonalBestItem, SessionSource};
+use warrior_core::training_session::{BestKind, PersonalBestItem, SessionSource};
 use warrior_frontend::storage::{
     request_persistence, DiscardOutcome, Storage, StorageError, Store,
 };
@@ -263,7 +265,12 @@ async fn saving_a_finished_summary_removes_the_session_from_the_active_session()
     finished.set_count = Some(3);
     finished.personal_bests = vec![PersonalBestItem {
         exercise_id: "bench-press".to_owned(),
-        kind: "max_weight".to_owned(),
+        exercise_name: Some("ベンチプレス".to_owned()),
+        record_mode: RecordMode::WeightAndReps,
+        laterality: Laterality::Bilateral,
+        grip: None,
+        attachment: None,
+        kind: BestKind::MaxWeight,
         value: 100.0,
     }];
     storage

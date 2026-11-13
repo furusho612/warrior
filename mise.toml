@@ -70,7 +70,7 @@ depends = ["backend:build", "frontend:build", "test-oidc:build"]
 run = """
 set -e
 export WARRIOR_E2E_BROWSER=safari
-cargo test -p warrior --test e2e_harness_smoke --test wrangler_frontend_smoke --test e2e_auth --test e2e_safari_indexeddb
+cargo test -p warrior --test e2e_harness_smoke --test wrangler_frontend_smoke --test e2e_auth --test e2e_safari_indexeddb --test e2e_training_session
 """
 
 [tasks."test-browser"]

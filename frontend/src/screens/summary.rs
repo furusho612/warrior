@@ -1,7 +1,7 @@
 //! 終了したトレーニングのサマリーの表示。
 
 use dioxus::prelude::*;
-use warrior_core::training_session::{PersonalBestItem, TrainingSessionSummary};
+use warrior_core::training_session::{BestKind, PersonalBestItem, TrainingSessionSummary};
 
 use crate::text::{text, Key};
 use crate::training_session;
@@ -120,30 +120,34 @@ fn SummaryRow(label: String, value: String) -> Element {
 
 #[component]
 fn PersonalBestRow(item: PersonalBestItem) -> Element {
+    let label = best_label(item.kind);
+    let value = best_value(&item);
+    let name = item.exercise_name.clone();
     rsx! {
         li {
             class: "flex min-h-11 items-center justify-between border-b border-line",
-            "data-personal-best": "{item.kind}",
+            "data-personal-best": "{item.kind.as_str()}",
             "data-personal-best-value": "{item.value}",
-            span { class: "text-[13px]", "{best_label(&item.kind)}" }
-            span { class: "text-[15px] font-bold", "{best_value(&item)}" }
+            if let Some(name) = name {
+                span { class: "text-[13px]", "{name} — {label} — {value}" }
+            } else {
+                span { class: "text-[13px]", "{label} — {value}" }
+            }
         }
     }
 }
 
-fn best_label(kind: &str) -> String {
-    let label = match kind {
-        "max_weight" => text(Key::SummaryBestMaxWeight),
-        "estimated_one_rep_max" => text(Key::SummaryBestEstimatedOneRepMax),
-        "total_weight" => text(Key::SummaryBestTotalWeight),
-        "longest_duration" => text(Key::SummaryBestLongestDuration),
-        other => other,
-    };
-    label.to_owned()
+fn best_label(kind: BestKind) -> &'static str {
+    match kind {
+        BestKind::MaxWeight => text(Key::SummaryBestMaxWeight),
+        BestKind::EstimatedOneRepMax => text(Key::SummaryBestEstimatedOneRepMax),
+        BestKind::TotalWeight => text(Key::SummaryBestTotalWeight),
+        BestKind::LongestDuration => text(Key::SummaryBestLongestDuration),
+    }
 }
 
 fn best_value(item: &PersonalBestItem) -> String {
-    if item.kind == "longest_duration" {
+    if item.kind == BestKind::LongestDuration {
         format_duration(item.value as i64)
     } else {
         format!("{} kg", item.value)
@@ -166,6 +170,7 @@ fn format_duration(seconds: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use warrior_core::training_session::BestKind;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{best_label, format_duration};
@@ -182,14 +187,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn every_personal_best_kind_has_a_label() {
-        for kind in [
-            "max_weight",
-            "estimated_one_rep_max",
-            "total_weight",
-            "longest_duration",
-        ] {
-            assert_ne!(best_label(kind), kind);
-        }
-        assert_eq!(best_label("unknown_kind"), "unknown_kind");
+        assert_eq!(best_label(BestKind::MaxWeight), "最大重量");
+        assert_eq!(best_label(BestKind::EstimatedOneRepMax), "推定 1RM");
+        assert_eq!(best_label(BestKind::TotalWeight), "種目別の総重量");
+        assert_eq!(best_label(BestKind::LongestDuration), "最長時間");
     }
 }

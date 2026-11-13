@@ -6,7 +6,7 @@
 
 mod support;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
@@ -52,7 +52,7 @@ async fn discard_failed_create_scenario(driver: &WebDriver, server: &DevServer) 
         .await
         .expect("the record page must open");
     browser::wait_for_route(driver, "/record").await;
-    offline(driver, true).await;
+    browser::offline(driver, true).await;
     browser::click_text(driver, "記録を開始").await;
     browser::wait_for_route(driver, "/record/:training_id").await;
     let training_id = browser::attribute(driver, "[data-session-id]", "data-session-id").await;
@@ -70,7 +70,7 @@ async fn discard_failed_create_scenario(driver: &WebDriver, server: &DevServer) 
     wait_for_blocked_update(driver, "pending").await;
 
     seed_conflicting_session(server, &training_id);
-    offline(driver, false).await;
+    browser::offline(driver, false).await;
     driver
         .goto(format!("{}/", server.origin()))
         .await
@@ -101,7 +101,7 @@ async fn offline_memo_scenario(driver: &WebDriver, server: &DevServer) {
         "the record page must restore the active session"
     );
 
-    offline(driver, true).await;
+    browser::offline(driver, true).await;
     let textarea = driver
         .find(By::Css("textarea[data-memo]"))
         .await
@@ -114,7 +114,7 @@ async fn offline_memo_scenario(driver: &WebDriver, server: &DevServer) {
     browser::wait_for_attribute(driver, "[data-sync-status]", "data-sync-status", "unsaved").await;
     browser::wait_for_attribute(driver, "[data-persisted-memo]", "data-persisted-memo", MEMO).await;
 
-    offline(driver, false).await;
+    browser::offline(driver, false).await;
     wait_for_d1_memo(server, &training_id, MEMO).await;
     browser::wait_for_attribute(driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
@@ -168,7 +168,7 @@ async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
     let base = browser::value(driver, "textarea[data-memo]").await;
     assert_eq!(base, MEMO);
 
-    set_network(driver, true, 5000).await;
+    browser::set_network(driver, true, 5000).await;
     let textarea = driver
         .find(By::Css("textarea[data-memo]"))
         .await
@@ -178,7 +178,7 @@ async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
     type_memo(driver, &textarea, &mut current, DELAYED_MEMO).await;
     wait_for_transient_update(driver).await;
 
-    set_network(driver, false, 5000).await;
+    browser::set_network(driver, false, 5000).await;
     let textarea = driver
         .find(By::Css("textarea[data-memo]"))
         .await
@@ -195,7 +195,7 @@ async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
     )
     .await;
 
-    set_network(driver, false, 0).await;
+    browser::set_network(driver, false, 0).await;
     wait_for_d1_memo(server, &training_id, &expected).await;
     browser::wait_for_value(driver, "textarea[data-memo]", &expected).await;
     wait_for_outbox_empty(driver).await;
@@ -205,7 +205,7 @@ async fn slow_network_memo_scenario(driver: &WebDriver, server: &DevServer) {
     let training_id = browser::attribute(driver, "[data-session-id]", "data-session-id").await;
     let base = browser::value(driver, "textarea[data-memo]").await;
 
-    set_network(driver, false, 5000).await;
+    browser::set_network(driver, false, 5000).await;
     let textarea = driver
         .find(By::Css("textarea[data-memo]"))
         .await
@@ -240,7 +240,7 @@ async fn slow_network_memo_scenario(driver: &WebDriver, server: &DevServer) {
     )
     .await;
 
-    set_network(driver, false, 0).await;
+    browser::set_network(driver, false, 0).await;
     wait_for_d1_memo(server, &training_id, &second).await;
     wait_for_outbox_empty(driver).await;
 }
@@ -304,31 +304,6 @@ async fn type_memo(driver: &WebDriver, textarea: &WebElement, current: &mut Stri
         )
         .await;
     }
-}
-
-async fn offline(driver: &WebDriver, offline: bool) {
-    set_network(driver, offline, 0).await;
-}
-
-async fn set_network(driver: &WebDriver, offline: bool, latency: u64) {
-    driver
-        .cdp()
-        .send_raw("Network.enable", json!({}))
-        .await
-        .expect("the network must be enabled");
-    driver
-        .cdp()
-        .send_raw(
-            "Network.emulateNetworkConditions",
-            json!({
-                "offline": offline,
-                "latency": latency,
-                "downloadThroughput": if offline { 0 } else { -1 },
-                "uploadThroughput": if offline { 0 } else { -1 }
-            }),
-        )
-        .await
-        .expect("the network condition must change");
 }
 
 async fn wait_for_blocked_update(driver: &WebDriver, create_state: &str) {

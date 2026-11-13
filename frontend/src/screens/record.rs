@@ -1,4 +1,7 @@
-//! 記録の開始と、記録中のトレーニングのメモの端末内への保存。
+//! 記録の開始、記録中のメモの端末内への保存、トレーニングの終了。
+//!
+//! セット表、種目レール、レストタイマー、セット詳細の枠を置く。セットの入力と
+//! レストタイマーの中身は後続の画面が入れる。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -46,7 +49,7 @@ pub fn RecordScreen() -> Element {
                 "data-start-record": "true",
                 disabled: starting(),
                 onclick: move |_| {
-                    spawn(start_session(error, starting));
+                    spawn(start_empty_session(starting, error));
                 },
                 "{text(Key::RecordStart)}"
             }
@@ -55,7 +58,7 @@ pub fn RecordScreen() -> Element {
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
                     onclick: move |_| {
-                        spawn(start_session(error, starting));
+                        spawn(start_empty_session(starting, error));
                     },
                     "{text(Key::RecordRetry)}"
                 }
@@ -64,7 +67,10 @@ pub fn RecordScreen() -> Element {
     }
 }
 
-async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<bool>) {
+pub(crate) async fn start_empty_session(
+    mut starting: Signal<bool>,
+    mut error: Signal<Option<String>>,
+) {
     starting.set(true);
     let result = create_session().await;
     starting.set(false);
@@ -75,7 +81,7 @@ async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<b
                 training_id: session.id,
             });
         }
-        Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
+        Err(_) => error.set(Some(text(Key::RecordStartFailed).to_owned())),
     }
 }
 
@@ -190,10 +196,17 @@ fn SetTable() -> Element {
         div { class: "flex flex-col gap-1",
             h2 { class: "text-sm font-bold", "{text(Key::RecordSets)}" }
             div {
-                class: "h-[220px] overflow-y-auto border border-line bg-surface",
+                class: "h-[222px] overflow-y-auto border border-line bg-surface",
                 "data-set-table": "true",
                 "data-set-rows": "5",
-                p { class: "p-3 text-[11px] text-text-sub", "{text(Key::RecordSetTableEmpty)}" }
+                "data-set-row-height": "44",
+                for index in 0..5 {
+                    div {
+                        class: "h-11 border-b border-line",
+                        "data-set-row": "true",
+                        "data-set-row-index": "{index}",
+                    }
+                }
             }
         }
     }
@@ -254,6 +267,22 @@ async fn finish_training(
         return;
     };
     finishing.set(true);
+    error.set(None);
+    // 送信待ちが残ったまま終了すると、サーバーの記録とサマリーが食い違う。
+    sync::flush().await;
+    match pending_operations(&record.id).await {
+        Ok(true) => {
+            finishing.set(false);
+            error.set(Some(text(Key::RecordPendingOperations).to_owned()));
+            return;
+        }
+        Ok(false) => {}
+        Err(_) => {
+            finishing.set(false);
+            error.set(Some(text(Key::RecordFinishFailed).to_owned()));
+            return;
+        }
+    }
     let result = training_api::finish(&record.id).await;
     finishing.set(false);
     let summary = match result {
@@ -283,14 +312,13 @@ fn completed_session(
     finished_at: String,
     summary: TrainingSessionSummary,
 ) -> SessionRecord {
-    let personal_bests = summary.personal_bests;
     SessionRecord {
         finished_at: Some(finished_at.clone()),
         duration_seconds: Some(summary.duration_seconds),
         total_weight_kg: Some(summary.total_weight_kg),
         exercise_count: Some(summary.exercise_count),
         set_count: Some(summary.set_count),
-        personal_bests,
+        personal_bests: summary.personal_bests,
         updated_at: finished_at,
         ..record
     }
@@ -615,7 +643,15 @@ async fn save_loop(mut signals: RecordSignals, mut state: SaveState) {
     state.in_flight.set(false);
 }
 
-pub(crate) async fn create_session() -> Result<SessionRecord, StorageError> {
+async fn pending_operations(training_id: &str) -> Result<bool, StorageError> {
+    let storage = storage::current().await?;
+    let entries = storage.outbox_entries().await?;
+    Ok(entries
+        .iter()
+        .any(|entry| entry.operation.training_id == training_id))
+}
+
+async fn create_session() -> Result<SessionRecord, StorageError> {
     let now = now_iso();
     let date = datetime::japan_date_from_utc(&now)
         .ok_or_else(|| StorageError::InvalidOperation("the current time is invalid".to_owned()))?;

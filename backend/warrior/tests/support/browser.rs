@@ -378,6 +378,33 @@ pub fn free_port() -> u16 {
     listener.local_addr().expect("a local address").port()
 }
 
+/// Chrome の CDP で通信を切る、または遅くする。
+pub async fn set_network(driver: &WebDriver, offline: bool, latency: u64) {
+    driver
+        .cdp()
+        .send_raw("Network.enable", serde_json::json!({}))
+        .await
+        .expect("the network must be enabled");
+    driver
+        .cdp()
+        .send_raw(
+            "Network.emulateNetworkConditions",
+            serde_json::json!({
+                "offline": offline,
+                "latency": latency,
+                "downloadThroughput": if offline { 0 } else { -1 },
+                "uploadThroughput": if offline { 0 } else { -1 }
+            }),
+        )
+        .await
+        .expect("the network condition must change");
+}
+
+/// Chrome の CDP で通信を切る、または戻す。
+pub async fn offline(driver: &WebDriver, offline: bool) {
+    set_network(driver, offline, 0).await;
+}
+
 fn wait_for_driver(port: u16) {
     let deadline = Instant::now() + DRIVER_READY_TIMEOUT;
     loop {

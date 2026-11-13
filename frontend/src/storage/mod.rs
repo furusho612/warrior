@@ -367,13 +367,17 @@ impl Storage {
             IdbTransactionMode::Readwrite,
         )?;
         let sessions = transaction.store(Store::TrainingSessions.name())?;
-        let existing = indexeddb::get(&sessions, &JsValue::from_str(&session.id)).await?;
-        if existing.is_none() {
+        let Some(existing) = indexeddb::get(&sessions, &JsValue::from_str(&session.id)).await?
+        else {
             return Err(StorageError::InvalidOperation(
                 "the session does not exist".to_owned(),
             ));
-        }
-        if let Err(error) = indexeddb::put(&sessions, &indexeddb::to_js(session)?).await {
+        };
+        let existing: SessionRecord = indexeddb::from_js(&existing)?;
+        let mut session_to_store = session.clone();
+        session_to_store.confirmed_memo = existing.confirmed_memo;
+        session_to_store.confirmed_sequence = existing.confirmed_sequence;
+        if let Err(error) = indexeddb::put(&sessions, &indexeddb::to_js(&session_to_store)?).await {
             return abort(transaction, error).await;
         }
         transaction.finish().await

@@ -1,18 +1,23 @@
 //! トレーニングの終了と、保存したサマリーの取得。
 //!
-//! 終了の時点でサーバーが D1 の種目、セット、段からサマリーを計算し、
-//! `training_sessions` に保存する。保存と読み直しは 1 つの `batch()` にまとめる (ADR-015)。
-//! 終了済みのトレーニングの終了は、保存済みの値を返す (ADR-002)。
+//! 終了の時点でサーバーが D1 の種目、セット、段から今回のセッションのベストを計算し、
+//! 過去の終了済みトレーニングのベストと比較して、更新した自己ベストを返す。
+//! 今回のセッションのベストは `training_sessions.personal_bests` に保存する (ADR-015)。
+//! 保存と読み直しは 1 つの `batch()` にまとめ、終了済みのトレーニングの終了は
+//! 保存済みの値を返す (ADR-002)。
 
 use serde::Deserialize;
 use warrior_core::datetime;
-use warrior_core::exercise::{ExerciseSnapshot, Laterality};
+use warrior_core::exercise::{ExerciseSnapshot, GripSelection, Laterality};
+use warrior_core::jst::JstDate;
 use warrior_core::set_calc::{
     BestKey, SetKind, SetRecord, SetSegment, SetValidationError, SideValue,
 };
 use warrior_core::sql::{SqlStatement, SqlValue};
-use warrior_core::training_session::{summary_from_sets, PersonalBestItem, TrainingSessionSummary};
-use worker::{console_error, Request, Response, Result, RouteContext};
+use warrior_core::training_session::{
+    summary_from_sets, updated_personal_bests, PersonalBestItem, SessionSet, TrainingSessionSummary,
+};
+use worker::{console_error, Date, Request, Response, Result, RouteContext};
 
 use crate::auth::session;
 use crate::db::Db;
@@ -20,6 +25,7 @@ use crate::error::{response, ErrorCode};
 
 #[derive(Debug, Deserialize)]
 struct SessionSummaryRow {
+    date: String,
     started_at: Option<String>,
     finished_at: Option<String>,
     duration_seconds: Option<i64>,
@@ -30,16 +36,23 @@ struct SessionSummaryRow {
 }
 
 #[derive(Debug, Deserialize)]
+struct PersonalBestsRow {
+    personal_bests: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SetSegmentRow {
     training_exercise_id: String,
     snapshot: String,
     set_id: String,
     kind: String,
     set_rpe: Option<f64>,
+    grip: Option<String>,
+    segment_id: Option<String>,
     weight_kg: Option<f64>,
     reps: Option<i64>,
-    momentum_reps: i64,
-    assisted_reps: i64,
+    momentum_reps: Option<i64>,
+    assisted_reps: Option<i64>,
     duration_seconds: Option<i64>,
     left_weight_kg: Option<f64>,
     left_reps: Option<i64>,
@@ -49,18 +62,19 @@ struct SetSegmentRow {
     right_duration_seconds: Option<i64>,
 }
 
-const SESSION_SUMMARY_COLUMNS: &str = "started_at, finished_at, duration_seconds, \
+const SESSION_SUMMARY_COLUMNS: &str = "date, started_at, finished_at, duration_seconds, \
      total_weight_kg, exercise_count, set_count, personal_bests";
 
 const SET_SEGMENT_QUERY: &str = "SELECT te.id AS training_exercise_id, te.snapshot, \
-     s.id AS set_id, s.kind AS kind, s.rpe AS set_rpe, \
+     s.id AS set_id, s.kind AS kind, s.rpe AS set_rpe, s.grip AS grip, \
+     sg.id AS segment_id, \
      sg.weight_kg, sg.reps, sg.momentum_reps, sg.assisted_reps, sg.duration_seconds, \
      sg.left_weight_kg, sg.left_reps, sg.left_duration_seconds, \
      sg.right_weight_kg, sg.right_reps, sg.right_duration_seconds \
      FROM training_exercises te \
-     JOIN sets s ON s.training_exercise_id = te.id \
-     JOIN set_segments sg ON sg.set_id = s.id \
-     WHERE te.user_id = ? AND te.training_id = ? AND s.user_id = ? AND sg.user_id = ? \
+     JOIN sets s ON s.training_exercise_id = te.id AND s.completed = 1 \
+     LEFT JOIN set_segments sg ON sg.set_id = s.id AND sg.user_id = ? \
+     WHERE te.user_id = ? AND te.training_id = ? AND s.user_id = ? \
      ORDER BY te.position, s.position, sg.position";
 
 /// `POST /api/trainings/:id/finish`
@@ -77,7 +91,7 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     };
     if session_row.finished_at.is_some() {
-        return summary_response(&session_row);
+        return summary_response(&db, &session_row, &training_id, &authenticated.id).await;
     }
     let Some(started_at) = session_row.started_at.as_deref() else {
         return Ok(response(
@@ -89,6 +103,10 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         console_error!("the stored start time is invalid");
         return Ok(response(ErrorCode::Internal, "internal error"));
     };
+    let Some(achieved_on) = JstDate::parse(&session_row.date) else {
+        console_error!("the stored date is invalid");
+        return Ok(response(ErrorCode::Internal, "internal error"));
+    };
     let sets = match load_sets(&db, &training_id, &authenticated.id).await {
         Ok(sets) => sets,
         Err(error) => {
@@ -96,9 +114,10 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
-    let finished_at = crate::auth::now_iso();
-    let duration_seconds = crate::auth::now_seconds().saturating_sub(started_seconds);
-    let summary = summary_from_sets(duration_seconds, &sets);
+    let now_seconds = current_seconds();
+    let finished_at = datetime::format_utc(now_seconds);
+    let duration_seconds = now_seconds.saturating_sub(started_seconds);
+    let summary = summary_from_sets(achieved_on, duration_seconds, &sets);
     let personal_bests = match serde_json::to_string(&summary.personal_bests) {
         Ok(personal_bests) => personal_bests,
         Err(error) => {
@@ -131,7 +150,7 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         console_error!("the summary select returned no row");
         return Ok(response(ErrorCode::Internal, "internal error"));
     };
-    summary_response(&saved)
+    summary_response(&db, &saved, &training_id, &authenticated.id).await
 }
 
 /// `GET /api/trainings/:id/summary`
@@ -150,7 +169,11 @@ pub async fn summary(request: Request, context: RouteContext<()>) -> Result<Resp
     if session_row.finished_at.is_none() {
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     }
-    summary_response(&session_row)
+    summary_response(&db, &session_row, &training_id, &authenticated.id).await
+}
+
+fn current_seconds() -> i64 {
+    (Date::now().as_millis() / 1_000) as i64
 }
 
 async fn load_session(
@@ -184,7 +207,7 @@ fn finish_statement(
     SqlStatement::new(
         "UPDATE training_sessions SET finished_at = ?, duration_seconds = ?, \
          total_weight_kg = ?, exercise_count = ?, set_count = ?, personal_bests = ? \
-         WHERE id = ? AND user_id = ?",
+         WHERE id = ? AND user_id = ? AND finished_at IS NULL",
         vec![
             SqlValue::Text(finished_at.to_owned()),
             SqlValue::Integer(summary.duration_seconds),
@@ -198,14 +221,26 @@ fn finish_statement(
     )
 }
 
-fn summary_response(row: &SessionSummaryRow) -> Result<Response> {
-    match stored_summary(row) {
-        Some(summary) => Response::from_json(&summary),
-        None => {
-            console_error!("the stored summary is incomplete");
-            Ok(response(ErrorCode::Internal, "internal error"))
-        }
-    }
+async fn summary_response(
+    db: &Db,
+    row: &SessionSummaryRow,
+    training_id: &str,
+    user_id: &str,
+) -> Result<Response> {
+    let Some(summary) = stored_summary(row) else {
+        console_error!("the stored summary is incomplete");
+        return Ok(response(ErrorCode::Internal, "internal error"));
+    };
+    let finished_at = row.finished_at.as_deref().unwrap_or_default();
+    let past = past_personal_bests(db, user_id, training_id, finished_at).await?;
+    let personal_bests = updated_personal_bests(&summary.personal_bests, &past);
+    Response::from_json(&TrainingSessionSummary {
+        duration_seconds: summary.duration_seconds,
+        total_weight_kg: summary.total_weight_kg,
+        exercise_count: summary.exercise_count,
+        set_count: summary.set_count,
+        personal_bests,
+    })
 }
 
 fn stored_summary(row: &SessionSummaryRow) -> Option<TrainingSessionSummary> {
@@ -221,14 +256,47 @@ fn stored_summary(row: &SessionSummaryRow) -> Option<TrainingSessionSummary> {
     })
 }
 
-async fn load_sets(db: &Db, training_id: &str, user_id: &str) -> Result<Vec<SetRecord>> {
+async fn past_personal_bests(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    finished_at: &str,
+) -> Result<Vec<PersonalBestItem>> {
+    let result = db
+        .all(&SqlStatement::new(
+            "SELECT personal_bests FROM training_sessions \
+             WHERE user_id = ? AND id <> ? AND finished_at IS NOT NULL AND finished_at < ? \
+             AND personal_bests IS NOT NULL",
+            vec![
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+                SqlValue::Text(finished_at.to_owned()),
+            ],
+        ))
+        .await?;
+    let rows = result.results::<PersonalBestsRow>()?;
+    let mut items = Vec::new();
+    for row in rows {
+        let Some(personal_bests) = row.personal_bests else {
+            continue;
+        };
+        let stored =
+            serde_json::from_str::<Vec<PersonalBestItem>>(&personal_bests).map_err(|error| {
+                worker::Error::RustError(format!("the stored personal bests are invalid: {error}"))
+            })?;
+        items.extend(stored);
+    }
+    Ok(items)
+}
+
+async fn load_sets(db: &Db, training_id: &str, user_id: &str) -> Result<Vec<SessionSet>> {
     let result = db
         .all(&SqlStatement::new(
             SET_SEGMENT_QUERY,
             vec![
                 SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(training_id.to_owned()),
                 SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
                 SqlValue::Text(user_id.to_owned()),
             ],
         ))
@@ -245,6 +313,10 @@ enum BuildSetsError {
     UnreadableSnapshot,
     /// セット種別の文字列が既知の値でない。
     UnknownSetKind,
+    /// グリップの JSON を復元できない。
+    InvalidGrip,
+    /// 完了したセットに段が無い。
+    MissingSegments,
     /// セットが計算規則の検証を通らない。
     InvalidSetRecord(SetValidationError),
 }
@@ -259,10 +331,11 @@ struct StoredSet {
     id: String,
     kind: String,
     rpe: Option<f64>,
+    grip: Option<String>,
     segments: Vec<SetSegment>,
 }
 
-fn build_sets(rows: Vec<SetSegmentRow>) -> Result<Vec<SetRecord>, BuildSetsError> {
+fn build_sets(rows: Vec<SetSegmentRow>) -> Result<Vec<SessionSet>, BuildSetsError> {
     let mut groups = Vec::<ExerciseGroup>::new();
     for row in rows {
         let index = match groups
@@ -282,31 +355,48 @@ fn build_sets(rows: Vec<SetSegmentRow>) -> Result<Vec<SetRecord>, BuildSetsError
             }
         };
         let group = &mut groups[index];
-        let segment = segment_from_row(&row, group.snapshot.laterality);
+        let segment = row
+            .segment_id
+            .as_ref()
+            .map(|_| segment_from_row(&row, group.snapshot.laterality));
         match group.sets.iter_mut().find(|set| set.id == row.set_id) {
-            Some(set) => set.segments.push(segment),
-            None => group.sets.push(StoredSet {
-                id: row.set_id.clone(),
-                kind: row.kind.clone(),
-                rpe: row.set_rpe,
-                segments: vec![segment],
-            }),
+            Some(set) => {
+                if let Some(segment) = segment {
+                    set.segments.push(segment);
+                }
+            }
+            None => {
+                let mut segments = Vec::new();
+                if let Some(segment) = segment {
+                    segments.push(segment);
+                }
+                group.sets.push(StoredSet {
+                    id: row.set_id.clone(),
+                    kind: row.kind.clone(),
+                    rpe: row.set_rpe,
+                    grip: row.grip.clone(),
+                    segments,
+                });
+            }
         }
     }
 
-    let mut records = Vec::new();
+    let mut sets = Vec::new();
     for group in groups {
-        // サマリーの自己ベストは種目と記録方式の組で判定する (REQ-REC-005)。
-        // グリップとアタッチメントを分けた比較は、この計算の対象にしない。
-        let key = BestKey {
-            exercise_id: group.snapshot.exercise_id.clone(),
-            grip: None,
-            attachment: None,
-        };
         for set in group.sets {
+            if set.segments.is_empty() {
+                return Err(BuildSetsError::MissingSegments);
+            }
+            let grip = parse_grip(set.grip.as_deref())?;
+            let (grip, attachment) = grip.comparison_key();
+            let key = BestKey {
+                exercise_id: group.snapshot.exercise_id.clone(),
+                grip,
+                attachment,
+            };
             let kind = parse_set_kind(&set.kind).ok_or(BuildSetsError::UnknownSetKind)?;
             let record = SetRecord::new(
-                key.clone(),
+                key,
                 kind,
                 set.segments,
                 set.rpe,
@@ -314,10 +404,21 @@ fn build_sets(rows: Vec<SetSegmentRow>) -> Result<Vec<SetRecord>, BuildSetsError
                 group.snapshot.record_mode,
             )
             .map_err(BuildSetsError::InvalidSetRecord)?;
-            records.push(record);
+            sets.push(SessionSet {
+                record,
+                exercise_name: group.snapshot.name.clone(),
+                laterality: group.snapshot.laterality,
+            });
         }
     }
-    Ok(records)
+    Ok(sets)
+}
+
+fn parse_grip(text: Option<&str>) -> Result<GripSelection, BuildSetsError> {
+    match text {
+        None => Ok(GripSelection::None),
+        Some(text) => serde_json::from_str(text).map_err(|_| BuildSetsError::InvalidGrip),
+    }
 }
 
 fn parse_set_kind(text: &str) -> Option<SetKind> {
@@ -350,7 +451,7 @@ fn segment_from_row(row: &SetSegmentRow, laterality: Laterality) -> SetSegment {
         },
         Laterality::Bilateral => SetSegment {
             weight_kg: row.weight_kg.unwrap_or(0.0),
-            reps: to_u32_option(row.reps),
+            reps: to_u32(row.reps),
             momentum_reps: to_u32(row.momentum_reps),
             assisted_reps: to_u32(row.assisted_reps),
             left: None,
@@ -369,26 +470,23 @@ fn side_value(
 ) -> SideValue {
     SideValue {
         weight_kg: weight_kg.unwrap_or(0.0),
-        reps: to_u32_option(reps),
+        reps: to_u32(reps),
         duration_seconds: duration_seconds.and_then(|value| u32::try_from(value).ok()),
     }
 }
 
-fn to_u32_option(value: Option<i64>) -> u32 {
+fn to_u32(value: Option<i64>) -> u32 {
     value
         .and_then(|value| u32::try_from(value).ok())
         .unwrap_or(0)
 }
 
-fn to_u32(value: i64) -> u32 {
-    u32::try_from(value).unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use warrior_core::exercise::Laterality;
     use warrior_core::set_calc::{RecordMode, SetKind};
-    use warrior_core::training_session::TrainingSessionSummary;
+    use warrior_core::training_session::{BestKind, TrainingSessionSummary};
 
     use super::{
         build_sets, finish_statement, stored_summary, BuildSetsError, SessionSummaryRow,
@@ -396,7 +494,7 @@ mod tests {
     };
 
     #[test]
-    fn the_finish_batch_scopes_the_update_to_the_user() {
+    fn the_finish_batch_scopes_the_update_to_the_user_and_an_unfinished_session() {
         let statement = finish_statement(
             "3f2504e0-4f89-41d3-9a0c-0305e82c6601",
             "3f2504e0-4f89-41d3-9a0c-0305e82c6602",
@@ -410,7 +508,9 @@ mod tests {
             },
             "[]",
         );
-        assert!(statement.sql().contains("WHERE id = ? AND user_id = ?"));
+        assert!(statement
+            .sql()
+            .contains("WHERE id = ? AND user_id = ? AND finished_at IS NULL"));
         assert_eq!(statement.bindings().len(), 8);
         assert_eq!(
             statement.bindings()[6],
@@ -421,6 +521,7 @@ mod tests {
     #[test]
     fn a_stored_summary_round_trips_through_the_row() {
         let row = SessionSummaryRow {
+            date: "2026-11-12".to_owned(),
             started_at: Some("2026-11-12T03:00:00Z".to_owned()),
             finished_at: Some("2026-11-12T04:00:00Z".to_owned()),
             duration_seconds: Some(3_600),
@@ -428,7 +529,8 @@ mod tests {
             exercise_count: Some(2),
             set_count: Some(3),
             personal_bests: Some(
-                r#"[{"exercise_id":"bench","kind":"max_weight","value":100.0}]"#.to_owned(),
+                r#"[{"exercise_id":"bench","exercise_name":"ベンチプレス","record_mode":"weight_and_reps","laterality":"bilateral","grip":null,"attachment":null,"kind":"max_weight","value":100.0}]"#
+                    .to_owned(),
             ),
         };
         let summary = stored_summary(&row).expect("a stored summary");
@@ -436,13 +538,14 @@ mod tests {
         assert_eq!(summary.total_weight_kg, 1_640.0);
         assert_eq!(summary.exercise_count, 2);
         assert_eq!(summary.set_count, 3);
-        assert_eq!(summary.personal_bests[0].kind, "max_weight");
+        assert_eq!(summary.personal_bests[0].kind, BestKind::MaxWeight);
         assert_eq!(summary.personal_bests[0].value, 100.0);
     }
 
     #[test]
     fn an_unfinished_summary_row_has_no_summary() {
         let row = SessionSummaryRow {
+            date: "2026-11-12".to_owned(),
             started_at: Some("2026-11-12T03:00:00Z".to_owned()),
             finished_at: None,
             duration_seconds: None,
@@ -491,17 +594,19 @@ mod tests {
             ),
             segment_row("exercise-time", "set-time", "normal", None, None, Some(90)),
         ];
-        let records = build_sets(rows).expect("the stored sets are valid");
-        assert_eq!(records.len(), 4);
-        assert_eq!(records[0].kind(), SetKind::Warmup);
-        assert_eq!(records[0].total_weight_kg(), 0.0);
-        assert_eq!(records[1].mode(), RecordMode::WeightAndReps);
-        assert_eq!(records[1].total_weight_kg(), 500.0);
-        assert_eq!(records[2].kind(), SetKind::Drop);
-        assert_eq!(records[2].segments().len(), 2);
-        assert_eq!(records[2].total_weight_kg(), 1_280.0);
-        assert_eq!(records[3].mode(), RecordMode::Time);
-        assert_eq!(records[3].longest_duration_seconds(), Some(90));
+        let sets = build_sets(rows).expect("the stored sets are valid");
+        assert_eq!(sets.len(), 4);
+        assert_eq!(sets[0].record.kind(), SetKind::Warmup);
+        assert_eq!(sets[0].record.total_weight_kg(), 0.0);
+        assert_eq!(sets[1].record.mode(), RecordMode::WeightAndReps);
+        assert_eq!(sets[1].record.total_weight_kg(), 500.0);
+        assert_eq!(sets[2].record.kind(), SetKind::Drop);
+        assert_eq!(sets[2].record.segments().len(), 2);
+        assert_eq!(sets[2].record.total_weight_kg(), 1_280.0);
+        assert_eq!(sets[3].record.mode(), RecordMode::Time);
+        assert_eq!(sets[3].record.longest_duration_seconds(), Some(90));
+        assert_eq!(sets[1].exercise_name, "exercise-weight");
+        assert_eq!(sets[1].laterality, Laterality::Bilateral);
     }
 
     #[test]
@@ -515,6 +620,34 @@ mod tests {
             None,
         )];
         assert_eq!(build_sets(rows), Err(BuildSetsError::UnknownSetKind));
+    }
+
+    #[test]
+    fn a_completed_set_without_segments_is_rejected() {
+        let mut row = segment_row(
+            "exercise-weight",
+            "set-normal",
+            "normal",
+            Some(100.0),
+            Some(5),
+            None,
+        );
+        row.segment_id = None;
+        assert_eq!(build_sets(vec![row]), Err(BuildSetsError::MissingSegments));
+    }
+
+    #[test]
+    fn an_invalid_grip_json_is_rejected() {
+        let mut row = segment_row(
+            "exercise-weight",
+            "set-normal",
+            "normal",
+            Some(100.0),
+            Some(5),
+            None,
+        );
+        row.grip = Some("not-json".to_owned());
+        assert_eq!(build_sets(vec![row]), Err(BuildSetsError::InvalidGrip));
     }
 
     fn segment_row(
@@ -546,10 +679,12 @@ mod tests {
             set_id: set_id.to_owned(),
             kind: kind.to_owned(),
             set_rpe: None,
+            grip: None,
+            segment_id: Some(format!("{set_id}-segment")),
             weight_kg,
             reps,
-            momentum_reps: 0,
-            assisted_reps: 0,
+            momentum_reps: Some(0),
+            assisted_reps: Some(0),
             duration_seconds,
             left_weight_kg: None,
             left_reps: None,
