@@ -158,7 +158,7 @@ description = "ローカルの D1 にマイグレーションを適用する"
 run = "wrangler d1 migrations apply DB --local"
 
 [tasks.formal]
-description = "編集権とオフライン同期の TLA+ 仕様を TLC で検査する"
+description = "認証、レスト通知、編集権、オフライン同期の TLA+ 仕様を TLC で検査する"
 run = """
 set -e
 if ! command -v shasum > /dev/null 2>&1; then
@@ -175,6 +175,8 @@ printf '%s  %s\\n' 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050
 }
 java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir formal/.cache/states -config formal/TrainingOwnership.cfg formal/TrainingOwnership.tla
 java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir formal/.cache/states -config formal/OfflineSync.cfg formal/OfflineSync.tla
+java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir formal/.cache/states -config formal/Auth.cfg formal/Auth.tla
+java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir formal/.cache/states -config formal/RestNotification.cfg formal/RestNotification.tla
 """
 
 [tasks.check]
