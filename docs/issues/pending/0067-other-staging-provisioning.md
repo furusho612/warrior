@@ -9,7 +9,7 @@
 ## 目的
 
 staging を追加する必要が生じたときに、ADR-023 の手順で staging の D1、R2、Queues、Workers AI、Cron Triggers を用意する。
-実機の確認 (iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS と暗号化)、AI の品質評価、プッシュ通知の実機計測 (0038) を production から分離して行えるようにする。
+実機の確認 (iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録と復帰後の同期、未保存の表示、HTTPS と暗号化)、AI の品質評価、プッシュ通知の実機計測 (0038) を production から分離して行えるようにする。
 レート制限の上限値と時間窓も staging の vars に置く。
 
 ## 優先度根拠
@@ -34,7 +34,7 @@ D1 のマイグレーションを staging に適用してからデプロイす�
 ローカルの `.dev.vars` には staging の資格情報を置き、production の資格情報を置かない。
 
 ホスト名を変えるとパスキーが無効になり、OAuth のリダイレクト URI も変わるため、ホスト名を後から変えない。
-staging で 0006 の HTTPS と暗号化、0016 の Safari と Android の Chrome のパスキー、0020 の iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、iPhone の Safari と Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録を確認する。
+staging で 0006 の HTTPS と暗号化、0016 の Safari と Android の Chrome のパスキー、0020 の iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、iPhone の Safari と Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録と復帰後の同期、未保存の表示を確認する。
 staging を追加した後は、production と同じ `AI_MODEL` を staging に置く。
 
 ## 完了条件
@@ -58,7 +58,7 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 - [ ] 0020 の iOS の PWA の起動と、読み込んだ後に通信を切っても画面の表示を続けられることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、iOS の PWA を満たす。
 - [ ] Android の Chrome ですべての画面を操作できることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、Android の Chrome を満たす。PC の Chrome と Safari の画面は 0007 の経路の台帳の E2E で確認し、各機能の操作はその機能の E2E と staging で確認する。
 - [ ] iPhone の Safari ですべての画面を操作できることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、iPhone の Safari を満たす。
-- [ ] iOS の Safari、PC の Safari、Android の Chrome で、通信を切って記録を続け、通信を戻して再読み込みし、復帰後の同期と未保存の表示を確かめる。これは `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005` の受入基準に対応する。
+- [ ] iOS の Safari、PC の Safari、Android の Chrome で、通信を切って記録を続け、通信を戻して再読み込みし、記録画面が開き、入力済みのセットが残り、復帰後の同期と未保存の表示を確かめる。タブを閉じて開き直した場合も同じ状態から再開できることを確かめる。これは `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005` の受入基準に対応する。
 
 ## 解決方法
 
@@ -74,16 +74,16 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 利用者が `mise run deploy-staging` で staging にデプロイする。
 エージェントが `.dev.vars.example` に staging の資格情報の名前を追加する。利用者が `.dev.vars` に staging の資格情報を置く。
 作業の結果は issue に追記し、Secret の値は書かない。
-利用者が staging で iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS と暗号化を確認し、結果を issue に追記する。
+利用者が staging で iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録と復帰後の同期、未保存の表示、HTTPS と暗号化を確認し、結果を issue に追記する。
 
 ## 止める理由
 
 今は production を先に用意するため、staging を作らない。
-iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS の確認、AI の品質評価、プッシュ通知の実機計測 (0038) のうち、どの作業を先に始めるかは、その着手時に決まる。
+iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録と復帰後の同期、未保存の表示、HTTPS の確認、AI の品質評価、プッシュ通知の実機計測 (0038) のうち、どの作業を先に始めるかは、その着手時に決まる。
 エージェントは実環境へ接続しない。
 
 ## 再開条件
 
-利用者が staging を必要とする作業 (iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS の確認、プッシュ通知の実機計測 (0038)、AI の品質評価 (0069) を含む) を始める。
+利用者が staging を必要とする作業 (iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録と復帰後の同期、未保存の表示、HTTPS の確認、プッシュ通知の実機計測 (0038)、AI の品質評価 (0069) を含む) を始める。
 0003 の production の資源ができている。
 利用者が staging の資源を作る権限と、Google OAuth と VAPID の staging 用の資格情報を用意する。
