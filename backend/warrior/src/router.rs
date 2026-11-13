@@ -8,6 +8,7 @@ use worker::{Request, Response, Result, RouteContext, Router};
 use crate::account;
 use crate::auth::{oauth, passkey, session};
 use crate::sync;
+use crate::training_session;
 
 /// ヘルスチェックの経路の名前。
 pub const HEALTH_ROUTE_NAME: &str = "health";
@@ -21,6 +22,10 @@ pub const LOGOUT_ROUTE_NAME: &str = "auth_logout";
 pub const ME_ROUTE_NAME: &str = "me";
 /// 同期の操作を適用する経路の名前。
 pub const SYNC_OPERATION_ROUTE_NAME: &str = "sync_operation";
+/// トレーニングを終了する経路の名前。
+pub const TRAINING_FINISH_ROUTE_NAME: &str = "training_finish";
+/// トレーニングのサマリーを返す経路の名前。
+pub const TRAINING_SUMMARY_ROUTE_NAME: &str = "training_summary";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -35,6 +40,8 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/me/passkeys", passkey::list)
         .delete_async("/api/account", account::delete)
         .post_async("/api/sync/operations", sync::apply_operation)
+        .post_async("/api/trainings/:id/finish", training_session::finish)
+        .get_async("/api/trainings/:id/summary", training_session::summary)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
         .get_async(
             "/api/auth/reauthenticate/google/start",
@@ -61,6 +68,12 @@ pub fn build_router() -> Router<'static, ()> {
 pub fn route_name(path: &str) -> &'static str {
     if path.starts_with("/api/me/passkeys/") {
         return "passkeys_delete";
+    }
+    if path.starts_with("/api/trainings/") && path.ends_with("/finish") {
+        return TRAINING_FINISH_ROUTE_NAME;
+    }
+    if path.starts_with("/api/trainings/") && path.ends_with("/summary") {
+        return TRAINING_SUMMARY_ROUTE_NAME;
     }
     match path {
         HEALTH_PATH => HEALTH_ROUTE_NAME,
@@ -92,6 +105,7 @@ mod tests {
     use super::{
         route_name, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME,
         LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
+        TRAINING_FINISH_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
     };
 
     #[test]
@@ -118,6 +132,18 @@ mod tests {
         assert_eq!(
             route_name("/api/sync/operations"),
             SYNC_OPERATION_ROUTE_NAME
+        );
+    }
+
+    #[test]
+    fn names_the_training_session_routes() {
+        assert_eq!(
+            route_name("/api/trainings/3f2504e0-4f89-41d3-9a0c-0305e82c6601/finish"),
+            TRAINING_FINISH_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/trainings/3f2504e0-4f89-41d3-9a0c-0305e82c6601/summary"),
+            TRAINING_SUMMARY_ROUTE_NAME
         );
     }
 

@@ -139,10 +139,14 @@ fn create_statements(
         ),
         SqlStatement::new(
             "INSERT INTO training_sessions \
-             (id, user_id, date, started_at, memo, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             (id, user_id, date, started_at, memo, source_kind, routine_id, program_day_id, \
+             custom_program_day_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              date = excluded.date, started_at = excluded.started_at, memo = excluded.memo, \
+             source_kind = excluded.source_kind, routine_id = excluded.routine_id, \
+             program_day_id = excluded.program_day_id, \
+             custom_program_day_id = excluded.custom_program_day_id, \
              updated_at = excluded.updated_at \
              WHERE training_sessions.user_id = excluded.user_id",
             vec![
@@ -151,11 +155,19 @@ fn create_statements(
                 SqlValue::Text(payload.date.clone()),
                 SqlValue::Text(payload.started_at.clone()),
                 SqlValue::Text(payload.memo.clone()),
+                SqlValue::Text(payload.source_kind.as_str().to_owned()),
+                optional_text(&payload.routine_id),
+                optional_text(&payload.program_day_id),
+                optional_text(&payload.custom_program_day_id),
                 SqlValue::Text(now.to_owned()),
                 SqlValue::Text(now.to_owned()),
             ],
         ),
     ]
+}
+
+fn optional_text(value: &Option<String>) -> SqlValue {
+    value.clone().map_or(SqlValue::Null, SqlValue::Text)
 }
 
 fn update_statements(
@@ -201,6 +213,7 @@ mod tests {
     use warrior_core::sync::{Operation, OperationKind};
 
     use super::{create_statements, update_statements};
+    use warrior_core::training_session::SessionSource;
 
     const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
     const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3302";
@@ -221,11 +234,26 @@ mod tests {
             date: "2026-11-12".to_owned(),
             started_at: "2026-11-12T03:00:00Z".to_owned(),
             memo: "メモ".to_owned(),
+            source_kind: SessionSource::Empty,
+            routine_id: None,
+            program_day_id: None,
+            custom_program_day_id: None,
         };
         let statements = create_statements(USER_ID, &operation, &payload, "2026-11-12T00:00:00Z");
         assert_eq!(statements.len(), 2);
         assert!(statements[0].sql().contains("applied_operations"));
         assert!(statements[1].sql().contains("ON CONFLICT(id)"));
+        assert!(statements[1]
+            .sql()
+            .contains("source_kind = excluded.source_kind"));
+        assert_eq!(
+            statements[1].bindings()[5],
+            warrior_core::sql::SqlValue::Text("empty".to_owned())
+        );
+        assert_eq!(
+            statements[1].bindings()[6],
+            warrior_core::sql::SqlValue::Null
+        );
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub mod router;
 pub mod scheduled;
 pub mod security;
 pub mod sync;
+pub mod training_session;
 
 use error::ErrorCode;
 

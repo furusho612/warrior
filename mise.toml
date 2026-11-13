@@ -53,7 +53,7 @@ run = [
 [tasks."test-integration"]
 description = "wrangler dev を起動する結合テストを実行する"
 depends = ["backend:build", "frontend:build", "test-oidc:build"]
-run = "cargo test -p warrior --test wrangler_http_foundation --test wrangler_jst_storage --test wrangler_auth --test wrangler_passkey_state --test account_deletion_tables --test wrangler_account_deletion --test wrangler_sync --test rate_limit --test scheduled_cleanup -- --test-threads=1"
+run = "cargo test -p warrior --test wrangler_http_foundation --test wrangler_jst_storage --test wrangler_auth --test wrangler_passkey_state --test account_deletion_tables --test wrangler_account_deletion --test wrangler_sync --test wrangler_training_session --test rate_limit --test scheduled_cleanup -- --test-threads=1"
 
 [tasks."test-oidc:build"]
 description = "テスト専用の OIDC の提供者をビルドする"
@@ -62,7 +62,7 @@ run = "cargo build -p warrior_test_oidc"
 [tasks.e2e]
 description = "Chrome の E2E と、資源の teardown のテストを実行する"
 depends = ["backend:build", "frontend:build", "test-oidc:build"]
-run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke --test e2e_auth --test e2e_passkey --test e2e_account_deletion --test e2e_pwa --test e2e_offline"
+run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke --test e2e_auth --test e2e_passkey --test e2e_account_deletion --test e2e_pwa --test e2e_offline --test e2e_training_session"
 
 [tasks."e2e-safari"]
 description = "Safari の E2E のスモークを実行する"

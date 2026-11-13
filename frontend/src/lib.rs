@@ -13,3 +13,4 @@ pub mod storage;
 pub mod sync;
 pub mod text;
 pub mod theme;
+pub mod training_session;

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::datetime;
 use crate::ids::is_valid_uuid_v4;
 use crate::jst::JstDate;
+use crate::training_session::{PersonalBestItem, SessionSource};
 
 /// メモの最大の文字数 (PRD の REQ-NFR-019)。
 pub const MEMO_MAX_CHARS: usize = 2000;
@@ -71,6 +72,18 @@ pub struct SessionCreatePayload {
     pub started_at: String,
     /// トレーニング全体のメモ。
     pub memo: String,
+    /// 開始元の種別。省略した場合は空の状態からの開始とする。
+    #[serde(default)]
+    pub source_kind: SessionSource,
+    /// 開始元のルーティンの UUID v4。
+    #[serde(default)]
+    pub routine_id: Option<String>,
+    /// 開始元のプログラムの日の UUID v4。
+    #[serde(default)]
+    pub program_day_id: Option<String>,
+    /// 開始元の独自のプログラムの日の UUID v4。
+    #[serde(default)]
+    pub custom_program_day_id: Option<String>,
 }
 
 /// トレーニングの更新の本文。
@@ -86,7 +99,7 @@ pub struct SessionUpdatePayload {
 }
 
 /// 端末とサーバーが持つトレーニングの行。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionRecord {
     /// トレーニングの UUID v4。
     pub id: String,
@@ -102,6 +115,36 @@ pub struct SessionRecord {
     /// サーバーが受理した操作の順序。
     #[serde(default)]
     pub confirmed_sequence: u64,
+    /// 開始元の種別。
+    #[serde(default)]
+    pub source_kind: SessionSource,
+    /// 開始元のルーティンの UUID v4。
+    #[serde(default)]
+    pub routine_id: Option<String>,
+    /// 開始元のプログラムの日の UUID v4。
+    #[serde(default)]
+    pub program_day_id: Option<String>,
+    /// 開始元の独自のプログラムの日の UUID v4。
+    #[serde(default)]
+    pub custom_program_day_id: Option<String>,
+    /// 終了した時刻の ISO 8601 の UTC の文字列。
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    /// 開始時刻から終了時刻までの秒数。
+    #[serde(default)]
+    pub duration_seconds: Option<i64>,
+    /// 総重量 (kg)。
+    #[serde(default)]
+    pub total_weight_kg: Option<f64>,
+    /// セットを持つ種目の数。
+    #[serde(default)]
+    pub exercise_count: Option<u32>,
+    /// トレーニングのセット数。
+    #[serde(default)]
+    pub set_count: Option<u32>,
+    /// 終了時に更新した自己ベスト。
+    #[serde(default)]
+    pub personal_bests: Vec<PersonalBestItem>,
     /// 作成した時刻。
     pub created_at: String,
     /// 更新した時刻。
@@ -149,6 +192,8 @@ pub enum SyncError {
     DateMismatch,
     /// メモが 2000 文字を超える。
     MemoTooLong,
+    /// 空の開始元にルーティン ID またはプログラムの日 ID がある。
+    SourceIdUnexpected,
 }
 
 impl SyncError {
@@ -165,6 +210,7 @@ impl SyncError {
             Self::InvalidStartedAt => "invalid_started_at",
             Self::DateMismatch => "date_mismatch",
             Self::MemoTooLong => "memo_too_long",
+            Self::SourceIdUnexpected => "source_id_unexpected",
         }
     }
 }
@@ -193,6 +239,7 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
             if payload.id != operation.training_id {
                 return Err(SyncError::PayloadIdMismatch);
             }
+            validate_source_ids(&payload)?;
             validate_session_fields(&payload.date, &payload.started_at, &payload.memo)?;
             ValidatedPayload::Create(payload)
         }
@@ -208,6 +255,17 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
         operation: operation.clone(),
         payload,
     })
+}
+
+fn validate_source_ids(payload: &SessionCreatePayload) -> Result<(), SyncError> {
+    if payload.source_kind == SessionSource::Empty
+        && (payload.routine_id.is_some()
+            || payload.program_day_id.is_some()
+            || payload.custom_program_day_id.is_some())
+    {
+        return Err(SyncError::SourceIdUnexpected);
+    }
+    Ok(())
 }
 
 fn validate_session_fields(date: &str, started_at: &str, memo: &str) -> Result<(), SyncError> {
@@ -476,7 +534,7 @@ mod tests {
         discard, mark_permanent_failure, mark_sending, mark_success, mark_transient_failure,
         next_sendable, pending_update, recover_interrupted, retry, unresolved_create,
         unsaved_count, validate_operation, Operation, OperationKind, OutboxEntry, OutboxState,
-        SyncError, MEMO_MAX_CHARS,
+        SessionRecord, SyncError, MEMO_MAX_CHARS,
     };
 
     const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -553,6 +611,58 @@ mod tests {
         let mut operation = create_operation();
         operation.payload["memo"] = json!("あ".repeat(MEMO_MAX_CHARS + 1));
         assert_eq!(validate_operation(&operation), Err(SyncError::MemoTooLong));
+    }
+
+    #[test]
+    fn accepts_an_empty_source_without_ids() {
+        let mut operation = create_operation();
+        operation.payload["source_kind"] = json!("empty");
+        operation.payload["routine_id"] = json!(null);
+        operation.payload["program_day_id"] = json!(null);
+        operation.payload["custom_program_day_id"] = json!(null);
+        assert!(validate_operation(&operation).is_ok());
+    }
+
+    #[test]
+    fn rejects_an_empty_source_with_a_routine_id() {
+        let mut operation = create_operation();
+        operation.payload["source_kind"] = json!("empty");
+        operation.payload["routine_id"] = json!(PARENT_ID);
+        assert_eq!(
+            validate_operation(&operation),
+            Err(SyncError::SourceIdUnexpected)
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_source_kind() {
+        let mut operation = create_operation();
+        operation.payload["source_kind"] = json!("unknown");
+        assert_eq!(
+            validate_operation(&operation),
+            Err(SyncError::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn a_legacy_session_record_deserializes_with_the_new_fields_defaulted() {
+        let record: SessionRecord = serde_json::from_value(json!({
+            "id": TRAINING_ID,
+            "date": "2026-11-12",
+            "started_at": "2026-11-12T03:00:00Z",
+            "memo": "旧い記録",
+            "created_at": "2026-11-12T03:00:00Z",
+            "updated_at": "2026-11-12T03:00:00Z"
+        }))
+        .expect("a legacy record must deserialize");
+        assert_eq!(record.source_kind, super::SessionSource::Empty);
+        assert_eq!(record.routine_id, None);
+        assert_eq!(record.finished_at, None);
+        assert_eq!(record.duration_seconds, None);
+        assert_eq!(record.total_weight_kg, None);
+        assert_eq!(record.exercise_count, None);
+        assert_eq!(record.set_count, None);
+        assert!(record.personal_bests.is_empty());
     }
 
     #[test]

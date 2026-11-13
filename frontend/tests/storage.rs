@@ -15,6 +15,7 @@ use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
+use warrior_core::training_session::{PersonalBestItem, SessionSource};
 use warrior_frontend::storage::{
     request_persistence, DiscardOutcome, Storage, StorageError, Store,
 };
@@ -56,6 +57,16 @@ fn session(memo: &str) -> SessionRecord {
         memo: memo.to_owned(),
         confirmed_memo: String::new(),
         confirmed_sequence: 0,
+        source_kind: SessionSource::Empty,
+        routine_id: None,
+        program_day_id: None,
+        custom_program_day_id: None,
+        finished_at: None,
+        duration_seconds: None,
+        total_weight_kg: None,
+        exercise_count: None,
+        set_count: None,
+        personal_bests: Vec::new(),
         created_at: "2026-11-12T03:00:00Z".to_owned(),
         updated_at: "2026-11-12T03:00:00Z".to_owned(),
     }
@@ -77,6 +88,10 @@ fn create_operation_with_memo(operation_id: &str, memo: &str) -> Operation {
             date: "2026-11-12".to_owned(),
             started_at: "2026-11-12T03:00:00Z".to_owned(),
             memo: memo.to_owned(),
+            source_kind: SessionSource::Empty,
+            routine_id: None,
+            program_day_id: None,
+            custom_program_day_id: None,
         })
         .expect("a create payload"),
     }
@@ -154,7 +169,7 @@ async fn saves_a_session_and_its_operations_and_lists_the_outbox_in_order() {
 }
 
 #[wasm_bindgen_test]
-async fn active_session_ignores_a_missing_start_time_and_returns_the_latest_start() {
+async fn active_session_ignores_missing_start_times_and_finished_sessions() {
     let name = database_name("active-session");
     let storage = open(&name).await;
 
@@ -198,6 +213,24 @@ async fn active_session_ignores_a_missing_start_time_and_returns_the_latest_star
             .expect("the session must be saved");
     }
 
+    storage
+        .put_record(
+            Store::TrainingSessions,
+            &json!({
+                "id": "3f2504e0-4f89-41d3-9a0c-0305e82c4314",
+                "date": "2026-11-12",
+                "started_at": "2026-11-14T03:00:00Z",
+                "memo": "終了済み",
+                "confirmed_memo": "",
+                "confirmed_sequence": 0,
+                "finished_at": "2026-11-14T04:00:00Z",
+                "created_at": "2026-11-14T03:00:00Z",
+                "updated_at": "2026-11-14T04:00:00Z"
+            }),
+        )
+        .await
+        .expect("the finished session must be saved");
+
     let active = storage
         .active_session()
         .await
@@ -206,6 +239,61 @@ async fn active_session_ignores_a_missing_start_time_and_returns_the_latest_star
     assert_eq!(active.id, "3f2504e0-4f89-41d3-9a0c-0305e82c4313");
     assert_eq!(active.started_at.as_deref(), Some("2026-11-13T03:00:00Z"));
     assert_eq!(active.memo, "3f2504e0-4f89-41d3-9a0c-0305e82c4313");
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn saving_a_finished_summary_removes_the_session_from_the_active_session() {
+    let name = database_name("finished-summary");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    let mut finished = session("終了");
+    finished.finished_at = Some("2026-11-12T04:00:00Z".to_owned());
+    finished.duration_seconds = Some(3_600);
+    finished.total_weight_kg = Some(1_640.0);
+    finished.exercise_count = Some(2);
+    finished.set_count = Some(3);
+    finished.personal_bests = vec![PersonalBestItem {
+        exercise_id: "bench-press".to_owned(),
+        kind: "max_weight".to_owned(),
+        value: 100.0,
+    }];
+    storage
+        .save_session_summary(&finished)
+        .await
+        .expect("the summary must be saved");
+
+    assert!(storage
+        .active_session()
+        .await
+        .expect("the sessions must be readable")
+        .is_none());
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.finished_at.as_deref(), Some("2026-11-12T04:00:00Z"));
+    assert_eq!(stored.duration_seconds, Some(3_600));
+    assert_eq!(stored.total_weight_kg, Some(1_640.0));
+    assert_eq!(stored.exercise_count, Some(2));
+    assert_eq!(stored.set_count, Some(3));
+    assert_eq!(stored.personal_bests, finished.personal_bests);
+    assert!(
+        storage
+            .save_session_summary(&session("未終了"))
+            .await
+            .is_err(),
+        "an unfinished session cannot store a summary"
+    );
 
     storage
         .clear_account()

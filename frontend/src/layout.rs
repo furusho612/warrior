@@ -29,12 +29,14 @@ pub fn AppShell() -> Element {
                 div { class: "flex min-h-0 flex-1",
                     aside {
                         class: "flex w-[60px] shrink-0 flex-col items-center border-r border-line bg-surface pt-3 text-[11px] text-text-sub",
+                        "data-exercise-rail": "true",
                         span { class: "font-bold", "{text(Key::RecordRail)}" }
                     }
                     main { class: "min-h-0 min-w-0 flex-1 overflow-y-auto", Outlet::<Route> {} }
                 }
                 div {
                     class: "flex h-[72px] shrink-0 items-center justify-center border-t border-line bg-surface text-[11px] text-text-sub",
+                    "data-rest-timer": "true",
                     "{text(Key::RestTimer)}"
                 }
             } else {

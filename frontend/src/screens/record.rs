@@ -11,11 +11,13 @@ use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
     SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
+use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::routes::{navigate, Route};
 use crate::storage::{self, DiscardOutcome, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
+use crate::training_session as training_api;
 
 #[component]
 pub fn RecordScreen() -> Element {
@@ -164,6 +166,9 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-persisted-memo": "{persisted}",
             RecordHeader { signals, state_signals }
             MemoEditor { signals, state_signals }
+            RecordFinish { signals }
+            SetTable {}
+            SetDrawer {}
             RecordLoadError {
                 training_id: training_id.clone(),
                 signals,
@@ -176,6 +181,118 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 state_signals,
             }
         }
+    }
+}
+
+#[component]
+fn SetTable() -> Element {
+    rsx! {
+        div { class: "flex flex-col gap-1",
+            h2 { class: "text-sm font-bold", "{text(Key::RecordSets)}" }
+            div {
+                class: "h-[220px] overflow-y-auto border border-line bg-surface",
+                "data-set-table": "true",
+                "data-set-rows": "5",
+                p { class: "p-3 text-[11px] text-text-sub", "{text(Key::RecordSetTableEmpty)}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn SetDrawer() -> Element {
+    rsx! {
+        aside {
+            class: "hidden border border-line bg-surface p-3",
+            "data-set-drawer": "true",
+            h2 { class: "text-sm font-bold", "{text(Key::RecordSetDetail)}" }
+            p { class: "text-[11px] text-text-sub", "{text(Key::RecordSetDetailEmpty)}" }
+        }
+    }
+}
+
+#[component]
+fn RecordFinish(signals: RecordSignals) -> Element {
+    let finishing = use_signal(|| false);
+    let error = use_signal(|| Option::<String>::None);
+    let enabled = (signals.session)().is_some();
+    let busy = finishing();
+
+    rsx! {
+        button {
+            class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+            "data-finish": "true",
+            disabled: busy || !enabled,
+            onclick: move |_| {
+                spawn(finish_training(signals, finishing, error));
+            },
+            if busy {
+                "{text(Key::RecordFinishing)}"
+            } else {
+                "{text(Key::RecordFinish)}"
+            }
+        }
+        if let Some(message) = error() {
+            p { class: "text-[13px] text-primary", "{message}" }
+            button {
+                class: "min-h-11 border border-line px-3 text-[13px]",
+                onclick: move |_| {
+                    spawn(finish_training(signals, finishing, error));
+                },
+                "{text(Key::RecordRetry)}"
+            }
+        }
+    }
+}
+
+async fn finish_training(
+    mut signals: RecordSignals,
+    mut finishing: Signal<bool>,
+    mut error: Signal<Option<String>>,
+) {
+    let Some(record) = (signals.session)() else {
+        return;
+    };
+    finishing.set(true);
+    let result = training_api::finish(&record.id).await;
+    finishing.set(false);
+    let summary = match result {
+        Ok(summary) => summary,
+        Err(_) => {
+            error.set(Some(text(Key::RecordFinishFailed).to_owned()));
+            return;
+        }
+    };
+    let completed = completed_session(record, now_iso(), summary);
+    let saved = match storage::current().await {
+        Ok(storage) => storage.save_session_summary(&completed).await,
+        Err(error) => Err(error),
+    };
+    match saved {
+        Ok(()) => {
+            error.set(None);
+            signals.session.set(Some(completed.clone()));
+            navigate(&format!("/summary/{}", completed.id));
+        }
+        Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
+    }
+}
+
+fn completed_session(
+    record: SessionRecord,
+    finished_at: String,
+    summary: TrainingSessionSummary,
+) -> SessionRecord {
+    let personal_bests = summary.personal_bests;
+    SessionRecord {
+        finished_at: Some(finished_at.clone()),
+        duration_seconds: Some(summary.duration_seconds),
+        total_weight_kg: Some(summary.total_weight_kg),
+        exercise_count: Some(summary.exercise_count),
+        set_count: Some(summary.set_count),
+        personal_bests,
+        updated_at: finished_at,
+        ..record
     }
 }
 
@@ -362,7 +479,7 @@ fn FailedOperations(
                                                 signals
                                                     .memo_revision
                                                     .set((signals.memo_revision)() + 1);
-                                                signals.session.set(Some(updated));
+                                                signals.session.set(Some(*updated));
                                                 refresh_state(&training_id, state_signals).await;
                                             }
                                             _ => {}
@@ -498,7 +615,7 @@ async fn save_loop(mut signals: RecordSignals, mut state: SaveState) {
     state.in_flight.set(false);
 }
 
-async fn create_session() -> Result<SessionRecord, StorageError> {
+pub(crate) async fn create_session() -> Result<SessionRecord, StorageError> {
     let now = now_iso();
     let date = datetime::japan_date_from_utc(&now)
         .ok_or_else(|| StorageError::InvalidOperation("the current time is invalid".to_owned()))?;
@@ -510,6 +627,16 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
         memo: String::new(),
         confirmed_memo: String::new(),
         confirmed_sequence: 0,
+        source_kind: SessionSource::Empty,
+        routine_id: None,
+        program_day_id: None,
+        custom_program_day_id: None,
+        finished_at: None,
+        duration_seconds: None,
+        total_weight_kg: None,
+        exercise_count: None,
+        set_count: None,
+        personal_bests: Vec::new(),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -521,6 +648,10 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
             .clone()
             .expect("a created session has a start time"),
         memo: String::new(),
+        source_kind: SessionSource::Empty,
+        routine_id: None,
+        program_day_id: None,
+        custom_program_day_id: None,
     };
     let operation = Operation {
         operation_id: new_uuid()?,
