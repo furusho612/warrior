@@ -54,6 +54,11 @@ pub async fn start(_request: Request, context: RouteContext<()>) -> Result<Respo
     let code_verifier = crate::random::random_token()?;
     let now = now_seconds();
     let db = Db::new(env.d1("DB")?);
+    let cleanup = SqlStatement::new(
+        "DELETE FROM oauth_states WHERE expires_at <= ?",
+        vec![SqlValue::Text(warrior_core::datetime::format_utc(now))],
+    );
+    db.run(&cleanup).await?;
     let statement = SqlStatement::new(
         "INSERT INTO oauth_states \
          (state, nonce, code_verifier, redirect_uri, created_at, expires_at) \

@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-006, REQ-NFR-009, REQ-MYP-007
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-google-oauth-session
 
@@ -88,3 +89,9 @@ URL の ID が認証中の利用者に属することを検査し、属さない
 `backend/pbt/tests/auth.rs` にセッションのハッシュの性質テストを置く。
 `frontend/src/screens/login.rs` に、Google のログインを開始する画面と、認証のエラーの表示を置く。
 `frontend/src/text.rs` にログイン、ログアウト、認証エラーのキーを追加する。
+
+## 結果
+
+Google OAuth の認可コードフロー、D1 の state、セッション、`GET /api/me`、ログアウトを実装した。
+ログイン画面から認可を開始し、認証の後にホームへ移動する。Chrome の E2E と結合テストで、state の 1 回限りと期限切れ、セッションの期限切れ、複数端末での同一利用者、ハッシュだけの保存、ログアウトを確認した。
+ログインの誤りは `/login/error` に表示する。Safari の E2E は CI の macOS ジョブで実行する。
