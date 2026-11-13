@@ -157,6 +157,26 @@ run = "wrangler deploy --env production"
 description = "ローカルの D1 にマイグレーションを適用する"
 run = "wrangler d1 migrations apply DB --local"
 
+[tasks.formal]
+description = "編集権とオフライン同期の TLA+ 仕様を TLC で検査する"
+run = """
+set -e
+if ! command -v shasum > /dev/null 2>&1; then
+  echo "shasum is required to verify tla2tools.jar but was not found" >&2
+  exit 1
+fi
+mkdir -p formal/.cache
+if [ ! -f formal/.cache/tla2tools.jar ]; then
+  curl -fsSL --connect-timeout 10 --max-time 300 -o formal/.cache/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+fi
+printf '%s  %s\\n' 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88 formal/.cache/tla2tools.jar | shasum -a 256 -c - > /dev/null || {
+  echo "tla2tools.jar checksum mismatch: delete formal/.cache/tla2tools.jar and retry" >&2
+  exit 1
+}
+java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir formal/.cache/states -config formal/TrainingOwnership.cfg formal/TrainingOwnership.tla
+java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir formal/.cache/states -config formal/OfflineSync.cfg formal/OfflineSync.tla
+"""
+
 [tasks.check]
 description = "静的検査と全ての自動テスト、ビルドを実行する (CI と手元の共通の入口)"
-depends = ["tokens", "fmt", "lint", "test", "test-pbt", "test-integration", "test-browser", "e2e", "backend:build", "frontend:build"]
+depends = ["tokens", "fmt", "lint", "test", "test-pbt", "test-integration", "test-browser", "e2e", "formal", "backend:build", "frontend:build"]

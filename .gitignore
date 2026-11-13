@@ -14,5 +14,8 @@ frontend/public/tailwind.css
 # ビルド時に生成する Service Worker の wasm と JavaScript
 frontend/public/sw/
 
+# TLA+ の jar と TLC の作業ディレクトリ
+formal/.cache/
+
 # Dioxus CLI の成果物
 frontend/dist/

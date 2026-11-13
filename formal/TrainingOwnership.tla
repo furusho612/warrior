@@ -1,0 +1,119 @@
+---------------------------- MODULE TrainingOwnership ----------------------------
+(***************************************************************************)
+(* 記録中のトレーニングの編集権、引き継ぎ、終了後の同時編集の TLA+ 仕様。 *)
+(* 定数は端末 2 台、操作 2 つとし、TLC で短時間に検査する。               *)
+(***************************************************************************)
+
+EXTENDS Naturals, FiniteSets
+
+CONSTANTS Devices, Ops, BreakOwnerGuard, BreakHandoffGuard
+
+VARIABLES status, editors, server, lastWriter, accepted, pending,
+          handoffSource
+
+vars == <<status, editors, server, lastWriter, accepted, pending,
+          handoffSource>>
+
+TypeOK ==
+  /\ status \in {"recording", "finished"}
+  /\ editors \subseteq Devices
+  /\ server \in [Ops -> Devices \cup {"none"}]
+  /\ lastWriter \in [Ops -> Devices \cup {"none"}]
+  /\ accepted \subseteq Ops
+  /\ pending \in [Devices -> SUBSET Ops]
+  /\ handoffSource \subseteq Ops
+
+Init ==
+  /\ status = "finished"
+  /\ editors = Devices
+  /\ server = [o \in Ops |-> "none"]
+  /\ lastWriter = [o \in Ops |-> "none"]
+  /\ accepted = {}
+  /\ pending = [d \in Devices |-> {}]
+  /\ handoffSource = {}
+
+Start(d) ==
+  /\ status = "finished"
+  /\ status' = "recording"
+  /\ editors' = {d}
+  /\ server' = [o \in Ops |-> "none"]
+  /\ lastWriter' = [o \in Ops |-> "none"]
+  /\ accepted' = {}
+  /\ pending' = [e \in Devices |-> {}]
+  /\ handoffSource' = {}
+
+Write(d, o) ==
+  /\ status = "recording"
+  /\ d \in editors
+  /\ o \notin pending[d]
+  /\ pending' = [pending EXCEPT ![d] = @ \cup {o}]
+  /\ UNCHANGED <<status, editors, server, lastWriter, accepted,
+                 handoffSource>>
+
+Sync(d, o) ==
+  /\ status = "recording"
+  /\ d \in editors
+  /\ o \in pending[d]
+  /\ server' = [server EXCEPT ![o] = d]
+  /\ lastWriter' = [lastWriter EXCEPT ![o] = d]
+  /\ accepted' = accepted \cup {o}
+  /\ pending' = [pending EXCEPT ![d] = @ \ {o}]
+  /\ UNCHANGED <<status, editors, handoffSource>>
+
+Handoff(d) ==
+  /\ status = "recording"
+  /\ d \in Devices
+  /\ editors' = IF BreakOwnerGuard THEN editors \cup {d} ELSE {d}
+  /\ handoffSource' =
+       IF BreakHandoffGuard
+       THEN accepted \cup (UNION {pending[e] : e \in editors})
+       ELSE accepted
+  /\ UNCHANGED <<status, server, lastWriter, accepted, pending>>
+
+Finish ==
+  /\ status = "recording"
+  /\ status' = "finished"
+  /\ editors' = Devices
+  /\ UNCHANGED <<server, lastWriter, accepted, pending, handoffSource>>
+
+EditAfterFinish(d, o) ==
+  /\ status = "finished"
+  /\ server' = [server EXCEPT ![o] = d]
+  /\ lastWriter' = [lastWriter EXCEPT ![o] = d]
+  /\ accepted' = accepted \cup {o}
+  /\ UNCHANGED <<status, editors, pending, handoffSource>>
+
+Next ==
+  \/ \E d \in Devices: Start(d)
+  \/ \E d \in Devices, o \in Ops: Write(d, o)
+  \/ \E d \in Devices, o \in Ops: Sync(d, o)
+  \/ \E d \in Devices: Handoff(d)
+  \/ Finish
+  \/ \E d \in Devices, o \in Ops: EditAfterFinish(d, o)
+
+Spec == Init /\ [][Next]_vars
+
+AtMostOneEditor ==
+  status = "recording" => Cardinality(editors) <= 1
+
+HandoffFromSaved ==
+  handoffSource \subseteq accepted
+
+LastWriteWins ==
+  server = lastWriter
+
+AfterFinishAllCanEdit ==
+  status = "finished" => editors = Devices
+
+AcceptedWritesSurvive ==
+  \A o \in Ops: server[o] # "none" => o \in accepted
+
+Inv ==
+  /\ TypeOK
+  /\ AtMostOneEditor
+  /\ HandoffFromSaved
+  /\ LastWriteWins
+  /\ AfterFinishAllCanEdit
+  /\ AcceptedWritesSurvive
+
+=============================================================================

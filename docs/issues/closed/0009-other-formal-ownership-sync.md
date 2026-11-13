@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-003, REQ-NFR-005, REQ-NFR-015
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-formal-ownership-sync
 
@@ -67,3 +68,8 @@ TLC を CI で実行する。
 `mise.toml` に `formal` タスクを追加し、`tla2tools.jar` の取得と TLC の実行を書く。
 `.github/workflows/ci.yml` に TLC のジョブを追加する。
 `tools/` に TLA+ の定数と実行の補助を置く場合は、本番のビルドに含めない。
+
+## 結果
+
+`mise run formal` で `TrainingOwnership` は 4961 states / 912 distinct、`OfflineSync` は 1473 states / 256 distinct を検査し、違反なしで終了した。
+ガードを外したコピーでは、編集権の同時付与、未同期操作の引き継ぎ、重複適用のそれぞれで `Invariant Inv is violated` を確認した。詳細は `formal/README.md` に記録した。
