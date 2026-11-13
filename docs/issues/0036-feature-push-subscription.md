@@ -65,7 +65,7 @@ iOS でホーム画面に追加していない場合、プッシュ通知が届�
 - [ ] 許可するホストを追加するときは、ADR と許可リストを同じ変更で更新する。
 - [ ] ログアウトでその端末の購読が削除され、アカウントの削除で利用者の全ての購読が削除される。
 - [ ] 結合テストで、endpoint の許可と拒否、同じ endpoint の重複、ログアウトとアカウントの削除を確かめる。
-- [ ] E2E で、許可の状態、購読の作成、Service Worker の `push` の表示、通知を押したときの画面の移動を確かめる。`push` のイベントは CDP の `ServiceWorker.deliverPushMessage` で届ける。
+- [ ] E2E で、許可の状態、購読の作成、Service Worker の `push` の表示、通知を押したときの画面の移動を確かめる。`push` のイベントは CDP の `ServiceWorker.deliverPushMessage` で届ける。許可の状態と `push` の表示は `REQ-TMR-008` の受入基準「プッシュ通知を許可した端末で、画面を消灯した状態またはブラウザを閉じた状態でも、レストの終了がプッシュ通知で届く。通知はそのトレーニングを開始した端末にだけ届き、同じアカウントのほかの端末には届かない」に対応する。通知を押したときの画面の移動は ADR-024 の E2E の対象であり、受入基準に対応しない。
 - [ ] ローカルのテストは、許可リストと Service Worker の表示を対象にする。実際のプッシュサービスへの購読は 0067 の staging と 0038 の実機計測で確かめる。
 - [ ] PBT で、endpoint の検証が、HTTPS で許可されたホストの endpoint だけを受理することを確かめる。
 
@@ -79,6 +79,6 @@ iOS でホーム画面に追加していない場合、プッシュ通知が届�
 `frontend/src/push.rs` に、購読の作成と解除、iOS の案内を置く。
 `frontend/src/screens/mypage.rs` に、プッシュ通知の設定を置く。設定の保存は 0062 が担う。
 `backend/warrior/tests/push_subscription.rs` に結合テストを追加する。
-`frontend/tests/push.rs` にブラウザのテストを追加する。
+`backend/warrior/tests/e2e_push.rs` に E2E を追加する。
 `backend/pbt/tests/push.rs` に endpoint の性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `push_subscriptions` を追加する。

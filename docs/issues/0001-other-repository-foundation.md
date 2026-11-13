@@ -46,11 +46,11 @@ Rust は 1.99.0、`wasm32-unknown-unknown` のターゲット、clippy、rustfmt
 `frontend:build-service-worker` を `frontend:build` の依存に置く。
 `check` は整形、lint、単体テスト、PBT、フロントエンドのビルド、Service Worker のビルドを順に実行する。
 Fuzzing の型検査は 0065 で `check` に加える。
-Chrome のブラウザテストはそれぞれの issue で `check` に加える。Safari のブラウザテストと Safari の E2E は、macOS のジョブで実行するタスクに加える。
+Chrome のブラウザのテストと Chrome の E2E はそれぞれの issue で `check` に加える。Safari のブラウザのテストと Safari の E2E は、macOS のジョブで実行するタスクに加える。
 各 issue は、追加したテストを `mise run check` か、CI で実行するタスクに含める。
 
 CI は GitHub Actions を前提にし、Linux の runner で `mise run check` を実行するジョブを置く。
-macOS の runner を使う Safari の E2E と Safari のブラウザテストは 0008 で加える。
+macOS の runner を使う Safari の E2E と Safari のブラウザのテストは 0008 で加える。
 CI の提供者が変わる場合は、同じ `mise run check` を呼ぶ設定に置き換える。
 
 本番のビルドに含めるクレートは ADR-025 の表に限る。

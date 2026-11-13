@@ -21,7 +21,7 @@
 | PBT | 純粋なロジックの不変条件、ラウンドトリップ、単調性 | PBT のクレートの `tests/` | `proptest` |
 | Fuzzing | 任意の入力に対するパーサのクラッシュ耐性 | Fuzzing のクレートの `fuzz_targets/` | `cargo-fuzz` |
 | 形式手法 | 状態機械の不変条件 | `formal/` | TLA+、TLC |
-| E2E | 実物を組み合わせた振る舞い、画面、ブラウザの API | Worker の結合テスト、フロントエンドのブラウザテスト | `wrangler dev`、ChromeDriver、safaridriver、`wasm-bindgen-test` |
+| E2E | 実物を組み合わせた振る舞い、画面、ブラウザの API | Worker の結合テスト、フロントエンドのブラウザのテスト | `wrangler dev`、ChromeDriver、safaridriver、`wasm-bindgen-test` |
 
 ### 単体テスト
 
@@ -119,7 +119,7 @@ D1 のマイグレーションとスキーマの制約は、`wrangler dev` の�
 Chrome は ChromeDriver、Safari は macOS に付属する safaridriver を使う。
 `thirtyfour` 以外の追加のクレートは要らない。
 パスキーは ChromeDriver の WebAuthn の拡張コマンドで仮想認証器を付ける。
-ブラウザの API に依存する部品は、`wasm-bindgen-test` を Chrome と Safari の実ブラウザで実行して確かめる。
+IndexedDB、Service Worker、通知などのブラウザの API に依存する部品は、`wasm-bindgen-test` を Chrome と Safari の実ブラウザで実行して確かめる。Push と WebAuthn は Chrome の E2E と staging の実機で確かめる。
 
 ブラウザごとの対象は次のとおりである。
 
@@ -205,7 +205,7 @@ issue の `Requirements` に挙げた受入基準ごとに、少なくとも 1 �
 
 ### CI とローカル実行
 
-`mise run check` で、整形、lint、フロントエンドのビルドと lint、形式手法、単体テスト、PBT、結合テスト、ブラウザのテスト、E2E、Fuzzing の型検査を実行する。Safari のブラウザテストと E2E は macOS のジョブで `mise run test-browser-safari` と `mise run e2e-safari` を実行する。
+`mise run check` で、整形、lint、フロントエンドのビルドと lint、形式手法、単体テスト、PBT、結合テスト、ブラウザのテスト、E2E、Fuzzing の型検査を実行する。Safari のブラウザのテストと E2E は macOS のジョブで `mise run test-browser-safari` と `mise run e2e-safari` を実行する。
 Fuzzing の実行は nightly の CI で行い、`mise run fuzz` に時間の上限を置く。
 `mise run verify-staging` は、利用者が staging にデプロイした後に、Workers AI の正常系と実機のプッシュ通知を確かめる。
 `verify-staging` は、レスト終了時刻と Service Worker の受信時刻の差を 10 回集計し、5 秒以内が 9 回以上かを判定する。通知が届かなかった試行も失敗として数える。
@@ -238,7 +238,7 @@ Service Worker 自身の wasm は `wasm-bindgen-test` で直接テストしに�
 テスト専用のクレートは開発の依存に限り、本番の wasm に含めない。
 
 テストの数が増えるため、テスト名と要求 ID の対応を保つ運用が必要になる。
-`mise run check` を CI と手元の共通の入口にし、テストの実行方法を分散させない。Safari のブラウザテストと E2E だけは macOS のジョブで実行する。
+`mise run check` を CI と手元の共通の入口にし、テストの実行方法を分散させない。Safari のブラウザのテストと E2E だけは macOS のジョブで実行する。
 
 ## References
 
