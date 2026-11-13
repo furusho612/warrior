@@ -477,11 +477,12 @@ impl Exercise {
             {
                 return Err(ExerciseError::PrimaryMissing);
             }
-            if self
-                .muscles
-                .iter()
-                .any(|assignment| assignment.muscle.body_part() != self.body_part)
-            {
+            // 部位区分は、その部位の筋肉を主働筋に 1 つ以上持つことで表す。
+            // 主働筋と補助筋は他の部位の筋肉を含む (PRD の「付録: 種目マスターの初期登録案」)。
+            if !self.muscles.iter().any(|assignment| {
+                assignment.role == MuscleRole::Primary
+                    && assignment.muscle.body_part() == self.body_part
+            }) {
                 return Err(ExerciseError::MuscleBodyPartMismatch);
             }
         }
@@ -616,6 +617,26 @@ mod tests {
         let mut value = exercise();
         value.muscles[0].muscle = MuscleUnit::Quadriceps;
         assert_eq!(value.validate(), Err(ExerciseError::MuscleBodyPartMismatch));
+    }
+
+    #[test]
+    fn secondary_muscles_may_belong_to_another_body_part() {
+        let mut value = exercise();
+        value.muscles.push(MuscleAssignment {
+            muscle: MuscleUnit::TricepsBrachii,
+            role: MuscleRole::Secondary,
+        });
+        value.validate().unwrap();
+    }
+
+    #[test]
+    fn primary_muscles_may_include_another_body_part_when_one_matches() {
+        let mut value = exercise();
+        value.muscles.push(MuscleAssignment {
+            muscle: MuscleUnit::TrapeziusUpper,
+            role: MuscleRole::Primary,
+        });
+        value.validate().unwrap();
     }
 
     #[test]
