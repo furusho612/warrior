@@ -61,7 +61,7 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 ## 解決方法
 
 利用者が Cloudflare のダッシュボードまたは `wrangler` のコマンドで staging の資源を作る。
-利用者が `wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、返った ID を `wrangler.toml` の `[env.staging]` に書く。`<DB>`、`<BUCKET>`、`<QUEUE>` は staging 用の別名にし、R2 のバケットは staging 用に 1 つだけ作る。
+利用者が `wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、D1 は返った `database_id`、R2 と Queues は返った名前を `wrangler.toml` の `[env.staging]` に書く。`<DB>`、`<BUCKET>`、`<QUEUE>` は staging 用の別名にし、R2 のバケットは staging 用に 1 つだけ作る。
 利用者が `wrangler.toml` の `[env.staging.vars]` に Relying Party ID、Origin、Google OAuth のクライアント ID、リダイレクト URI、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を含む staging の vars を置く。
 利用者が `[env.staging.ai]` と `[env.staging.triggers]` を staging 用に設定する。
 利用者が `wrangler d1 migrations apply DB --remote --env staging` でマイグレーションを適用する。
@@ -70,7 +70,7 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 利用者が R2 のライフサイクルルールを `wrangler r2 bucket lifecycle add <BUCKET> <NAME> exports/ --expire-days 7` で設定する。
 エージェントが `mise.toml` に `deploy-staging` を追加する。
 利用者が `mise run deploy-staging` で staging にデプロイする。
-`.dev.vars.example` と `.dev.vars` に staging の資格情報の名前を追加する。
+エージェントが `.dev.vars.example` に staging の資格情報の名前を追加する。利用者が `.dev.vars` に staging の資格情報を置く。
 作業の結果は issue に追記し、Secret の値は書かない。
 利用者が staging で iPhone の Safari のパスキーとすべての画面、iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、Android の Chrome のすべての画面、HTTPS と暗号化を確認し、結果を issue に追記する。
 
