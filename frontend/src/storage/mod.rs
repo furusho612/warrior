@@ -295,37 +295,41 @@ impl Storage {
         let existing_session: SessionRecord = indexeddb::from_js(&existing_session)?;
         let mut session_to_store = session.clone();
         session_to_store.confirmed_memo = existing_session.confirmed_memo;
+        session_to_store.confirmed_sequence = existing_session.confirmed_sequence;
 
         let entries = outbox::read(&outbox_store).await?;
         let merge_target = pending_update(&entries, &operation.training_id);
-        let (operation_id, sequence, attempts, parent, reuse) = match merge_target {
+        let (operation_id, sequence, attempts, parent, state, reuse) = match merge_target {
             Some(entry) => (
                 entry.operation.operation_id.clone(),
                 entry.operation.sequence,
                 entry.attempts,
                 entry.operation.parent_operation_id.clone(),
+                entry.state,
                 true,
             ),
-            None => (
-                operation.operation_id.clone(),
-                outbox::next_sequence(&meta, &operation.training_id).await?,
-                0,
-                unresolved_create(&entries, &operation.training_id)
-                    .map(|entry| entry.operation.operation_id.clone()),
-                false,
-            ),
+            None => {
+                let parent = unresolved_create(&entries, &operation.training_id)
+                    .map(|entry| entry.operation.operation_id.clone());
+                let state = if parent.is_some() {
+                    OutboxState::Blocked
+                } else {
+                    OutboxState::Pending
+                };
+                (
+                    operation.operation_id.clone(),
+                    outbox::next_sequence(&meta, &operation.training_id).await?,
+                    0,
+                    parent,
+                    state,
+                    false,
+                )
+            }
         };
         let mut stored_operation = operation.clone();
         stored_operation.operation_id = operation_id;
         stored_operation.sequence = sequence;
-        stored_operation.parent_operation_id = parent.clone();
-        let state = if reuse {
-            OutboxState::Pending
-        } else if parent.is_some() {
-            OutboxState::Blocked
-        } else {
-            OutboxState::Pending
-        };
+        stored_operation.parent_operation_id = parent;
         let entry = OutboxEntry {
             operation: stored_operation,
             state,
@@ -406,8 +410,10 @@ impl Storage {
         let entries = outbox::read(&store).await?;
         let mut updated = entries.clone();
         apply(&mut updated);
-        write_outbox_differences(&store, &entries, &updated).await?;
-        transaction.finish().await
+        match write_outbox_differences(&store, &entries, &updated).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
     }
 
     /// 操作を送信中にする。
@@ -418,7 +424,7 @@ impl Storage {
         .await
     }
 
-    /// 操作を成功として列から削除し、サーバーが受理したメモを記録する。
+    /// 操作を成功として列から削除し、サーバーが受理したメモと順序を記録する。
     pub async fn mark_success(&self, operation_id: &str) -> Result<(), StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
@@ -426,30 +432,10 @@ impl Storage {
             &[Store::Outbox.name(), Store::TrainingSessions.name()],
             IdbTransactionMode::Readwrite,
         )?;
-        let outbox_store = transaction.store(Store::Outbox.name())?;
-        let sessions = transaction.store(Store::TrainingSessions.name())?;
-        let entries = outbox::read(&outbox_store).await?;
-        let Some(target) = entries
-            .iter()
-            .find(|entry| entry.operation.operation_id == operation_id)
-            .cloned()
-        else {
-            transaction.finish().await?;
-            return Ok(());
-        };
-        let mut updated = entries.clone();
-        success_transition(&mut updated, operation_id);
-        write_outbox_differences(&outbox_store, &entries, &updated).await?;
-
-        if let Some(memo) = payload_memo(&target.operation) {
-            let key = JsValue::from_str(&target.operation.training_id);
-            if let Some(value) = indexeddb::get(&sessions, &key).await? {
-                let mut session: SessionRecord = indexeddb::from_js(&value)?;
-                session.confirmed_memo = memo;
-                indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
-            }
+        match mark_success_steps(&transaction, operation_id).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
         }
-        transaction.finish().await
     }
 
     /// 一時的な失敗として Pending に戻す。
@@ -468,12 +454,18 @@ impl Storage {
         .await
     }
 
-    /// Failed の操作を Pending に戻す。
+    /// Failed の操作を Pending に戻す。確定済みの古い更新は戻さない。
     pub async fn retry(&self, operation_id: &str) -> Result<(), StorageError> {
-        self.transition_outbox(|entries| {
-            retry_transition(entries, operation_id);
-        })
-        .await
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Outbox.name(), Store::TrainingSessions.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        match retry_steps(&transaction, operation_id).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
     }
 
     /// 操作と子孫を破棄し、作成なら記録を、更新ならメモを戻す。
@@ -492,30 +484,13 @@ impl Storage {
             ],
             IdbTransactionMode::Readwrite,
         )?;
-        let outbox_store = transaction.store(Store::Outbox.name())?;
-        let entries = outbox::read(&outbox_store).await?;
-        let Some(target) = entries
-            .iter()
-            .find(|entry| entry.operation.operation_id == operation_id)
-            .cloned()
-        else {
-            transaction.finish().await?;
-            return Ok(DiscardOutcome::OperationsRemoved);
-        };
-        let mut updated = entries.clone();
-        let removed = discard_transition(&mut updated, operation_id);
-        for operation_id in removed {
-            indexeddb::delete_entry(&outbox_store, &JsValue::from_str(&operation_id)).await?;
+        match discard_steps(&transaction, operation_id).await {
+            Ok(outcome) => {
+                transaction.finish().await?;
+                Ok(outcome)
+            }
+            Err(error) => abort(transaction, error).await,
         }
-
-        let outcome = if target.operation.kind == OperationKind::TrainingSessionCreate {
-            delete_session_tree(&transaction, &target.operation.training_id).await?;
-            DiscardOutcome::SessionDeleted
-        } else {
-            revert_session_memo(&transaction, &target.operation.training_id).await?
-        };
-        transaction.finish().await?;
-        Ok(outcome)
     }
 
     /// 送信中のまま残った操作を Pending に戻す。
@@ -592,19 +567,133 @@ fn ensure_record_store(store: Store) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn payload_memo(operation: &Operation) -> Option<String> {
+fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
     match operation.kind {
         OperationKind::TrainingSessionCreate => {
             serde_json::from_value::<SessionCreatePayload>(operation.payload.clone())
-                .ok()
                 .map(|payload| payload.memo)
+                .map_err(|error| StorageError::Serialize(error.to_string()))
         }
         OperationKind::TrainingSessionUpdate => {
             serde_json::from_value::<SessionUpdatePayload>(operation.payload.clone())
-                .ok()
                 .map(|payload| payload.memo)
+                .map_err(|error| StorageError::Serialize(error.to_string()))
         }
     }
+}
+
+async fn retry_steps(
+    transaction: &indexeddb::Transaction,
+    operation_id: &str,
+) -> Result<(), StorageError> {
+    let outbox_store = transaction.store(Store::Outbox.name())?;
+    let sessions = transaction.store(Store::TrainingSessions.name())?;
+    let entries = outbox::read(&outbox_store).await?;
+    let Some(target) = entries
+        .iter()
+        .find(|entry| entry.operation.operation_id == operation_id)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let key = JsValue::from_str(&target.operation.training_id);
+    if let Some(value) = indexeddb::get(&sessions, &key).await? {
+        let session: SessionRecord = indexeddb::from_js(&value)?;
+        if target.operation.sequence <= session.confirmed_sequence {
+            return Ok(());
+        }
+    }
+
+    let mut updated = entries.clone();
+    if retry_transition(&mut updated, operation_id) {
+        write_outbox_differences(&outbox_store, &entries, &updated).await?;
+    }
+    Ok(())
+}
+
+async fn discard_steps(
+    transaction: &indexeddb::Transaction,
+    operation_id: &str,
+) -> Result<DiscardOutcome, StorageError> {
+    let outbox_store = transaction.store(Store::Outbox.name())?;
+    let entries = outbox::read(&outbox_store).await?;
+    let Some(target) = entries
+        .iter()
+        .find(|entry| entry.operation.operation_id == operation_id)
+        .cloned()
+    else {
+        return Ok(DiscardOutcome::OperationsRemoved);
+    };
+
+    let mut updated = entries.clone();
+    let removed = discard_transition(&mut updated, operation_id);
+    for removed_id in removed {
+        indexeddb::delete_entry(&outbox_store, &JsValue::from_str(&removed_id)).await?;
+    }
+
+    if target.operation.kind == OperationKind::TrainingSessionCreate {
+        delete_session_tree(transaction, &target.operation.training_id).await?;
+        return Ok(DiscardOutcome::SessionDeleted);
+    }
+
+    let has_newer_update = updated.iter().any(|entry| {
+        entry.operation.training_id == target.operation.training_id
+            && entry.operation.kind == OperationKind::TrainingSessionUpdate
+            && entry.operation.sequence > target.operation.sequence
+    });
+    if has_newer_update {
+        return Ok(DiscardOutcome::OperationsRemoved);
+    }
+
+    revert_session_memo(transaction, &target.operation.training_id).await
+}
+
+async fn mark_success_steps(
+    transaction: &indexeddb::Transaction,
+    operation_id: &str,
+) -> Result<(), StorageError> {
+    let outbox_store = transaction.store(Store::Outbox.name())?;
+    let sessions = transaction.store(Store::TrainingSessions.name())?;
+    let entries = outbox::read(&outbox_store).await?;
+    let Some(target) = entries
+        .iter()
+        .find(|entry| entry.operation.operation_id == operation_id)
+        .cloned()
+    else {
+        return Ok(());
+    };
+
+    let mut updated = entries.clone();
+    success_transition(&mut updated, operation_id);
+    if target.operation.kind == OperationKind::TrainingSessionUpdate {
+        let obsolete = entries
+            .iter()
+            .filter(|entry| {
+                entry.operation.training_id == target.operation.training_id
+                    && entry.operation.kind == OperationKind::TrainingSessionUpdate
+                    && entry.operation.sequence < target.operation.sequence
+                    && matches!(
+                        entry.state,
+                        OutboxState::Pending | OutboxState::Blocked | OutboxState::Failed
+                    )
+            })
+            .map(|entry| entry.operation.operation_id.clone())
+            .collect::<Vec<_>>();
+        for obsolete_id in obsolete {
+            discard_transition(&mut updated, &obsolete_id);
+        }
+    }
+    write_outbox_differences(&outbox_store, &entries, &updated).await?;
+
+    let memo = payload_memo(&target.operation)?;
+    let key = JsValue::from_str(&target.operation.training_id);
+    if let Some(value) = indexeddb::get(&sessions, &key).await? {
+        let mut session: SessionRecord = indexeddb::from_js(&value)?;
+        session.confirmed_memo = memo;
+        session.confirmed_sequence = target.operation.sequence;
+        indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
+    }
+    Ok(())
 }
 
 async fn write_outbox_differences(

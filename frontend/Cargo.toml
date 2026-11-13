@@ -23,6 +23,8 @@ web-sys = { version = "0.3", features = [
   "Event",
   "EventTarget",
   "Headers",
+  "IdbCursor",
+  "IdbCursorWithValue",
   "IdbDatabase",
   "IdbFactory",
   "IdbIndex",

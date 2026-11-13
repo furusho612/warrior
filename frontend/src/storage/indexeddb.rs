@@ -6,15 +6,15 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use js_sys::{Array, Promise};
+use js_sys::{Array, Promise, Reflect};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    DomStringList, IdbDatabase, IdbFactory, IdbObjectStore, IdbObjectStoreParameters,
-    IdbOpenDbRequest, IdbRequest, IdbTransaction, IdbTransactionMode,
+    DomStringList, IdbCursorWithValue, IdbDatabase, IdbFactory, IdbObjectStore,
+    IdbObjectStoreParameters, IdbOpenDbRequest, IdbRequest, IdbTransaction, IdbTransactionMode,
 };
 
 use super::StorageError;
@@ -326,6 +326,76 @@ fn ensure_schema(
             }
         }
     }
+    if version >= 2 {
+        let sessions = transaction
+            .object_store("training_sessions")
+            .map_err(|error| StorageError::Open(describe(&error)))?;
+        migrate_confirmed_memo(&sessions, transaction)?;
+    }
+    Ok(())
+}
+
+fn migrate_confirmed_memo(
+    store: &IdbObjectStore,
+    transaction: &IdbTransaction,
+) -> Result<(), StorageError> {
+    let request = store
+        .open_cursor()
+        .map_err(|error| StorageError::Open(describe(&error)))?;
+    let store = store.clone();
+    let success_transaction = transaction.clone();
+    let success = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+        let Some(request) = event_target::<IdbRequest>(&event) else {
+            let _ = success_transaction.abort();
+            return;
+        };
+        let Ok(result) = request.result() else {
+            let _ = success_transaction.abort();
+            return;
+        };
+        if result.is_null() || result.is_undefined() {
+            return;
+        }
+        let Ok(cursor) = result.dyn_into::<IdbCursorWithValue>() else {
+            let _ = success_transaction.abort();
+            return;
+        };
+        let Ok(value) = cursor.value() else {
+            let _ = success_transaction.abort();
+            return;
+        };
+        let Ok(object) = value.dyn_into::<js_sys::Object>() else {
+            let _ = success_transaction.abort();
+            return;
+        };
+        let has_confirmed =
+            Reflect::has(&object, &JsValue::from_str("confirmed_memo")).unwrap_or(false);
+        if !has_confirmed {
+            let Ok(memo) = Reflect::get(&object, &JsValue::from_str("memo")) else {
+                let _ = success_transaction.abort();
+                return;
+            };
+            if !memo.is_undefined()
+                && (Reflect::set(&object, &JsValue::from_str("confirmed_memo"), &memo).is_err()
+                    || store.put(&JsValue::from(object)).is_err())
+            {
+                let _ = success_transaction.abort();
+                return;
+            }
+        }
+        if cursor.continue_().is_err() {
+            let _ = success_transaction.abort();
+        }
+    });
+    request.set_onsuccess(Some(success.as_ref().unchecked_ref()));
+    success.forget();
+
+    let error_transaction = transaction.clone();
+    let error = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        let _ = error_transaction.abort();
+    });
+    request.set_onerror(Some(error.as_ref().unchecked_ref()));
+    error.forget();
     Ok(())
 }
 

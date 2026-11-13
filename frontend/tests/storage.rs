@@ -2,8 +2,8 @@
 //!
 //! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`。
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
-//! 永続ストレージの拒否はブラウザの判断を制御できないため、要求の結果を待った後も
-//! 保存できることで、保存が許可の結果に依存しないことを確かめる。
+//! 永続ストレージの拒否を強制する API はないため、`request_persistence` の結果に
+//! かかわらず保存が続くことで、保存が許可の結果に依存しないことを確かめる。
 //! セットと段は `put_record` で保存し、outbox の操作は作らない。0021 にはセットの
 //! 同期操作がなく、0025 が型付きの `save_set` を追加する。
 
@@ -15,6 +15,7 @@ use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
+use warrior_frontend::screens::record::apply_confirmed;
 use warrior_frontend::storage::{
     request_persistence, DiscardOutcome, Storage, StorageError, Store,
 };
@@ -55,6 +56,7 @@ fn session(memo: &str) -> SessionRecord {
         started_at: Some("2026-11-12T03:00:00Z".to_owned()),
         memo: memo.to_owned(),
         confirmed_memo: String::new(),
+        confirmed_sequence: 0,
         created_at: "2026-11-12T03:00:00Z".to_owned(),
         updated_at: "2026-11-12T03:00:00Z".to_owned(),
     }
@@ -101,6 +103,18 @@ async fn open(name: &str) -> Storage {
     Storage::open_with(name, 2)
         .await
         .expect("the database must open")
+}
+
+/// メモをサーバーが受理した状態のトレーニングを作る。
+async fn create_and_confirm(storage: &Storage, memo: &str) {
+    storage
+        .save_session_create(&session(memo), &create_operation_with_memo(CREATE_ID, memo))
+        .await
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
 }
 
 #[wasm_bindgen_test]
@@ -688,6 +702,336 @@ async fn a_failed_save_keeps_the_session_and_confirmed_memo() {
 }
 
 #[wasm_bindgen_test]
+async fn review_retrying_an_older_failed_update_does_not_regress_the_confirmed_memo() {
+    let name = database_name("retry-confirmed");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, "c").await;
+
+    storage
+        .save_session_update(&session("x"), &update_operation(UPDATE_ID, "x"))
+        .await
+        .expect("the older update must be saved");
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the older update must be sending");
+    storage
+        .mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the older update must fail");
+
+    storage
+        .save_session_update(&session("y"), &update_operation(SECOND_UPDATE_ID, "y"))
+        .await
+        .expect("the newer update must be saved");
+    storage
+        .mark_sending(SECOND_UPDATE_ID)
+        .await
+        .expect("the newer update must be sending");
+    storage
+        .mark_success(SECOND_UPDATE_ID)
+        .await
+        .expect("the newer update must succeed");
+
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "y");
+    assert_eq!(stored.confirmed_memo, "y");
+    assert_eq!(stored.confirmed_sequence, 3);
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry.operation.operation_id == UPDATE_ID),
+        "the superseded failed update must leave the outbox"
+    );
+
+    storage
+        .retry(UPDATE_ID)
+        .await
+        .expect("retrying a superseded update must do nothing");
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert!(entries.is_empty());
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "y");
+    assert_eq!(stored.confirmed_memo, "y");
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn a_confirmed_update_is_not_retried() {
+    let name = database_name("retry-guard");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, "c").await;
+
+    storage
+        .save_session_update(&session("x"), &update_operation(UPDATE_ID, "x"))
+        .await
+        .expect("the older update must be saved");
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the older update must be sending");
+    storage
+        .save_session_update(&session("y"), &update_operation(SECOND_UPDATE_ID, "y"))
+        .await
+        .expect("the newer update must be saved");
+    storage
+        .mark_success(SECOND_UPDATE_ID)
+        .await
+        .expect("the newer update must succeed out of order");
+    storage
+        .mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the older update must fail after the newer success");
+
+    storage
+        .retry(UPDATE_ID)
+        .await
+        .expect("a confirmed update must not be retried");
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].operation.operation_id, UPDATE_ID);
+    assert_eq!(entries[0].state, OutboxState::Failed);
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.confirmed_memo, "y");
+    assert_eq!(stored.confirmed_sequence, 3);
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn review_discarding_an_older_failed_update_keeps_the_newer_pending_memo() {
+    let name = database_name("discard-older");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, "c").await;
+
+    storage
+        .save_session_update(&session("x"), &update_operation(UPDATE_ID, "x"))
+        .await
+        .expect("the older update must be saved");
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the older update must be sending");
+    storage
+        .mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the older update must fail");
+    storage
+        .save_session_update(&session("y"), &update_operation(SECOND_UPDATE_ID, "y"))
+        .await
+        .expect("the newer update must be saved");
+
+    let outcome = storage
+        .discard(UPDATE_ID)
+        .await
+        .expect("the older update must be discarded");
+    assert_eq!(outcome, DiscardOutcome::OperationsRemoved);
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "y");
+    assert_eq!(stored.confirmed_memo, "c");
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].operation.operation_id, SECOND_UPDATE_ID);
+
+    let outcome = storage
+        .discard(SECOND_UPDATE_ID)
+        .await
+        .expect("the newer update must be discarded");
+    let reverted = match outcome {
+        DiscardOutcome::MemoReverted(session) => session,
+        other => panic!("the newest update must revert the memo: {other:?}"),
+    };
+    assert_eq!(reverted.memo, "c");
+    assert_eq!(reverted.confirmed_memo, "c");
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "c");
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn updates_merge_while_the_create_is_pending_and_unblock_after_success() {
+    let name = database_name("merge-blocked");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    for (operation_id, memo) in [
+        (UPDATE_ID, "a"),
+        (SECOND_UPDATE_ID, "b"),
+        (THIRD_UPDATE_ID, "c"),
+    ] {
+        storage
+            .save_session_update(&session(memo), &update_operation(operation_id, memo))
+            .await
+            .expect("the update must be saved");
+    }
+
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 2);
+    let update = entries
+        .iter()
+        .find(|entry| entry.operation.kind == OperationKind::TrainingSessionUpdate)
+        .expect("the merged update");
+    assert_eq!(update.operation.operation_id, UPDATE_ID);
+    assert_eq!(update.operation.sequence, 2);
+    assert_eq!(update.operation.payload["memo"], "c");
+    assert_eq!(update.state, OutboxState::Blocked);
+    assert_eq!(
+        update.operation.parent_operation_id.as_deref(),
+        Some(CREATE_ID)
+    );
+
+    storage
+        .mark_sending(CREATE_ID)
+        .await
+        .expect("the create must be sending");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].state, OutboxState::Pending);
+    assert_eq!(entries[0].operation.payload["memo"], "c");
+    assert_eq!(
+        next_sendable(&entries).map(|entry| entry.operation.operation_id.as_str()),
+        Some(UPDATE_ID)
+    );
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn the_latest_memo_survives_two_pending_updates_and_a_transient_failure() {
+    let name = database_name("latest-memo");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, "c").await;
+
+    storage
+        .save_session_update(&session("a"), &update_operation(UPDATE_ID, "a"))
+        .await
+        .expect("the first update must be saved");
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the first update must be sending");
+    storage
+        .mark_transient_failure(UPDATE_ID)
+        .await
+        .expect("the first update must fail transiently");
+    storage
+        .save_session_update(&session("b"), &update_operation(SECOND_UPDATE_ID, "b"))
+        .await
+        .expect("the second update must be saved");
+    storage
+        .save_session_update(&session("c"), &update_operation(THIRD_UPDATE_ID, "c"))
+        .await
+        .expect("the third update must merge into the second");
+
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].operation.operation_id, UPDATE_ID);
+    assert_eq!(entries[0].state, OutboxState::Pending);
+    assert!(entries[0].attempted);
+    assert_eq!(entries[1].operation.operation_id, SECOND_UPDATE_ID);
+    assert_eq!(entries[1].operation.payload["memo"], "c");
+
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the first update must be retried");
+    storage
+        .mark_success(UPDATE_ID)
+        .await
+        .expect("the first update must succeed");
+    storage
+        .mark_sending(SECOND_UPDATE_ID)
+        .await
+        .expect("the second update must be sending");
+    storage
+        .mark_success(SECOND_UPDATE_ID)
+        .await
+        .expect("the second update must succeed");
+
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "c");
+    assert_eq!(stored.confirmed_memo, "c");
+    assert_eq!(stored.confirmed_sequence, 3);
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable")
+        .is_empty());
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
 async fn persistence_permission_does_not_gate_saving() {
     let name = database_name("persistence");
     let storage = open(&name).await;
@@ -764,6 +1108,59 @@ async fn a_blocked_migration_keeps_the_data_and_adds_the_new_index() {
         .clear_account()
         .await
         .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn a_version_one_session_gets_the_confirmed_memo_from_its_memo() {
+    let name = database_name("migrate-confirmed");
+    let v1 = Storage::open_with(&name, 1)
+        .await
+        .expect("the version 1 database must open");
+    v1.put_record(
+        Store::TrainingSessions,
+        &json!({
+            "id": TRAINING_ID,
+            "date": "2026-11-12",
+            "started_at": "2026-11-12T03:00:00Z",
+            "memo": "base",
+            "created_at": "2026-11-12T03:00:00Z",
+            "updated_at": "2026-11-12T03:00:00Z"
+        }),
+    )
+    .await
+    .expect("the version 1 session must be saved");
+
+    let v2 = Storage::open_with(&name, 2)
+        .await
+        .expect("the version 2 database must open");
+    let stored = v2
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.confirmed_memo, "base");
+
+    v2.save_session_update(&session("draft"), &update_operation(UPDATE_ID, "draft"))
+        .await
+        .expect("the update must be saved");
+    v2.mark_sending(UPDATE_ID)
+        .await
+        .expect("the update must be sending");
+    v2.mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the update must fail");
+    let outcome = v2
+        .discard(UPDATE_ID)
+        .await
+        .expect("the update must be discarded");
+    let reverted = match outcome {
+        DiscardOutcome::MemoReverted(session) => session,
+        other => panic!("the update must revert the memo: {other:?}"),
+    };
+    assert_eq!(reverted.memo, "base");
+    assert_eq!(reverted.confirmed_memo, "base");
+
+    v2.clear_account().await.expect("the cleanup must work");
 }
 
 #[wasm_bindgen_test]
@@ -906,6 +1303,21 @@ async fn records_are_limited_to_record_stores() {
         .clear_account()
         .await
         .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+fn refreshing_confirmed_does_not_change_the_draft() {
+    let mut current = session("draft");
+    current.confirmed_memo = "old".to_owned();
+    current.confirmed_sequence = 1;
+    let mut stored = session("saved");
+    stored.confirmed_memo = "new".to_owned();
+    stored.confirmed_sequence = 3;
+
+    let merged = apply_confirmed(&current, &stored);
+    assert_eq!(merged.memo, "draft");
+    assert_eq!(merged.confirmed_memo, "new");
+    assert_eq!(merged.confirmed_sequence, 3);
 }
 
 async fn raw_open(name: &str) -> web_sys::IdbDatabase {

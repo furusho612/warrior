@@ -99,6 +99,9 @@ pub struct SessionRecord {
     /// サーバーが受理したメモ。
     #[serde(default)]
     pub confirmed_memo: String,
+    /// サーバーが受理した操作の順序。
+    #[serde(default)]
+    pub confirmed_sequence: u64,
     /// 作成した時刻。
     pub created_at: String,
     /// 更新した時刻。
@@ -333,7 +336,8 @@ pub fn recover_interrupted(entries: &mut [OutboxEntry]) -> bool {
     changed
 }
 
-/// 同じトレーニングの最も新しい、送信を試みていない Pending の更新を返す。
+/// 同じトレーニングの最も新しい、Pending または Blocked の更新を返す。
+/// その更新が送信を試みたものであれば、合流先にしない。
 pub fn pending_update<'a>(
     entries: &'a [OutboxEntry],
     training_id: &str,
@@ -343,10 +347,10 @@ pub fn pending_update<'a>(
         .filter(|entry| {
             entry.operation.training_id == training_id
                 && entry.operation.kind == OperationKind::TrainingSessionUpdate
-                && entry.state == OutboxState::Pending
-                && !entry.attempted
+                && matches!(entry.state, OutboxState::Pending | OutboxState::Blocked)
         })
         .max_by_key(|entry| entry.operation.sequence)
+        .filter(|entry| !entry.attempted)
 }
 
 /// 同じトレーニングの未解決の作成操作を返す。
@@ -683,20 +687,20 @@ mod tests {
     }
 
     #[test]
-    fn pending_update_skips_attempted_and_older_updates() {
-        let mut older = entry(update_operation(UPDATE_ID, 2), OutboxState::Pending);
-        older.attempted = false;
+    fn pending_update_uses_only_the_latest_pending_or_blocked_update() {
+        let older = entry(update_operation(UPDATE_ID, 2), OutboxState::Pending);
         let mut attempted = entry(update_operation(PARENT_ID, 3), OutboxState::Pending);
         attempted.attempted = true;
-        let mut newer = entry(update_operation(CHILD_ID, 4), OutboxState::Pending);
-        newer.attempted = false;
-        let entries = vec![older, attempted, newer];
-
+        let newer = entry(update_operation(CHILD_ID, 4), OutboxState::Blocked);
+        let entries = vec![older.clone(), attempted.clone(), newer];
         assert_eq!(
             pending_update(&entries, TRAINING_ID)
                 .map(|entry| entry.operation.operation_id.as_str()),
             Some(CHILD_ID)
         );
+
+        let entries = vec![older, attempted];
+        assert_eq!(pending_update(&entries, TRAINING_ID), None);
     }
 
     #[test]

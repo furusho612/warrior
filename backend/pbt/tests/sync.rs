@@ -255,24 +255,33 @@ proptest! {
     }
 
     #[test]
-    fn only_the_latest_unattempted_pending_update_is_merged(
+    fn only_the_latest_update_is_a_merge_candidate(
         older_sequence in 1u64..5,
         older_attempted in any::<bool>(),
         newer_attempted in any::<bool>(),
+        newer_blocked in any::<bool>(),
     ) {
         let older = update_entry("older", older_sequence, older_attempted);
-        let newer = update_entry("newer", older_sequence + 1, newer_attempted);
+        let mut newer = update_entry("newer", older_sequence + 1, newer_attempted);
+        if newer_blocked {
+            newer.state = OutboxState::Blocked;
+        }
         let entries = vec![older, newer];
-        let merged = pending_update(&entries, "training-1")
-            .map(|entry| entry.operation.operation_id.as_str());
-        let expected = if !newer_attempted {
-            Some("newer")
-        } else if !older_attempted {
-            Some("older")
-        } else {
-            None
-        };
-        prop_assert_eq!(merged, expected);
+        let candidate = pending_update(&entries, "training-1");
+        let expected = if newer_attempted { None } else { Some("newer") };
+        prop_assert_eq!(
+            candidate.map(|entry| entry.operation.operation_id.as_str()),
+            expected
+        );
+        if let Some(candidate) = candidate {
+            for entry in &entries {
+                if entry.operation.kind == OperationKind::TrainingSessionUpdate
+                    && matches!(entry.state, OutboxState::Pending | OutboxState::Blocked)
+                {
+                    prop_assert!(entry.operation.sequence <= candidate.operation.sequence);
+                }
+            }
+        }
     }
 
     #[test]

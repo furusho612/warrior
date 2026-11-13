@@ -89,12 +89,20 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let route_id = training_id.clone();
+    let confirmed_id = training_id.clone();
 
     use_effect(move || {
-        let _revision = sync::revision();
         let id = route_id.clone();
         spawn(async move {
             load(id, session, memo, persisted_memo, load_error).await;
+        });
+    });
+
+    use_effect(move || {
+        let _revision = sync::revision();
+        let id = confirmed_id.clone();
+        spawn(async move {
+            refresh_confirmed(id, session).await;
         });
     });
 
@@ -275,8 +283,38 @@ async fn load(
     sync::refresh_status().await;
 }
 
+async fn refresh_confirmed(training_id: String, mut session: Signal<Option<SessionRecord>>) {
+    let Ok(storage) = storage::current().await else {
+        return;
+    };
+    let Ok(Some(stored)) = storage.session(&training_id).await else {
+        return;
+    };
+    let current = match session.try_read() {
+        Ok(current) => current.as_ref().cloned(),
+        Err(_) => None,
+    };
+    let Some(current) = current else {
+        return;
+    };
+    if current.confirmed_memo == stored.confirmed_memo
+        && current.confirmed_sequence == stored.confirmed_sequence
+    {
+        return;
+    }
+    session.set(Some(apply_confirmed(&current, &stored)));
+}
+
+/// サーバーが受理したメモと順序だけを写す。draft は変えない。
+pub fn apply_confirmed(current: &SessionRecord, stored: &SessionRecord) -> SessionRecord {
+    let mut merged = current.clone();
+    merged.confirmed_memo = stored.confirmed_memo.clone();
+    merged.confirmed_sequence = stored.confirmed_sequence;
+    merged
+}
+
 async fn save_current(
-    mut session: Signal<Option<SessionRecord>>,
+    session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     mut persisted_memo: Signal<String>,
     mut saving: Signal<bool>,
@@ -290,9 +328,10 @@ async fn save_current(
     let result = save_draft(record, &draft).await;
     saving.set(false);
     match result {
-        Ok(updated) => {
-            session.set(Some(updated));
-            persisted_memo.set(draft);
+        Ok(_) => {
+            if memo() == draft {
+                persisted_memo.set(draft);
+            }
             save_error.set(None);
             sync::after_local_save().await;
         }
@@ -311,6 +350,7 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
         started_at: Some(now.clone()),
         memo: String::new(),
         confirmed_memo: String::new(),
+        confirmed_sequence: 0,
         created_at: now.clone(),
         updated_at: now,
     };
