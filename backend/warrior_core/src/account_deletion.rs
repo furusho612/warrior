@@ -78,6 +78,41 @@ pub const TABLES: &[Table] = &[
         reason: "利用者ごとのマスター種目の上書き。",
     },
     Table {
+        name: "training_sessions",
+        class: TableClass::Owned,
+        reason: "利用者のトレーニング。",
+    },
+    Table {
+        name: "training_exercises",
+        class: TableClass::Owned,
+        reason: "トレーニングに追加した種目。親の training_sessions から所有される。",
+    },
+    Table {
+        name: "sets",
+        class: TableClass::Owned,
+        reason: "種目に記録したセット。親の training_exercises から所有される。",
+    },
+    Table {
+        name: "set_segments",
+        class: TableClass::Owned,
+        reason: "ドロップセットの段。親の sets から所有される。",
+    },
+    Table {
+        name: "supersets",
+        class: TableClass::Owned,
+        reason: "トレーニングのスーパーセットの組。",
+    },
+    Table {
+        name: "superset_members",
+        class: TableClass::Owned,
+        reason: "スーパーセットに含める種目。親の supersets から所有される。",
+    },
+    Table {
+        name: "applied_operations",
+        class: TableClass::Owned,
+        reason: "利用者の端末から適用した同期の操作。",
+    },
+    Table {
         name: "muscles",
         class: TableClass::Master,
         reason: "筋肉の単位。利用者に紐づかない。",
@@ -111,6 +146,13 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "elevation_tokens",
     "passkeys",
     "auth_sessions",
+    "superset_members",
+    "set_segments",
+    "sets",
+    "supersets",
+    "training_exercises",
+    "applied_operations",
+    "training_sessions",
     "users",
 ];
 
@@ -147,6 +189,13 @@ mod tests {
             "user_exercises",
             "user_exercise_muscles",
             "master_exercise_overrides",
+            "training_sessions",
+            "training_exercises",
+            "sets",
+            "set_segments",
+            "supersets",
+            "superset_members",
+            "applied_operations",
             "oauth_states",
         ] {
             assert!(classify(name).is_some(), "{name} must be classified");

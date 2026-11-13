@@ -7,7 +7,7 @@ mod support;
 
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
-use thirtyfour::{SameSite, WebDriver};
+use thirtyfour::SameSite;
 use warrior_core::auth::hash_session_token;
 
 #[tokio::test]
@@ -27,8 +27,8 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
         .await
         .expect("the test user must be selected");
 
-    login(&driver, &server).await;
-    let me = get_text(&driver, &format!("{}/api/me", server.origin())).await;
+    browser::login_with_google(&driver, &server).await;
+    let me = browser::get_text(&driver, &format!("{}/api/me", server.origin())).await;
     assert!(me.contains("\"email\":\"alice@example.test\""), "{me}");
     assert!(me.contains("\"display_name\":\"テスト利用者\""), "{me}");
     let first_id = serde_json::from_str::<serde_json::Value>(&me)
@@ -79,8 +79,13 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
     assert_eq!(token_hash, hash_session_token(&session.value));
     assert_ne!(token_hash, session.value);
 
-    logout(&driver, &server).await;
-    let after_logout = get_text(&driver, &format!("{}/api/me", server.origin())).await;
+    driver
+        .goto(format!("{}/", server.origin()))
+        .await
+        .expect("the home page must open");
+    browser::wait_for_route(&driver, "/").await;
+    browser::logout(&driver).await;
+    let after_logout = browser::get_text(&driver, &format!("{}/api/me", server.origin())).await;
     assert!(
         after_logout.contains("\"code\":\"unauthorized\""),
         "{after_logout}"
@@ -97,15 +102,15 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
         .expect("a session count");
     assert_eq!(count, 0, "logout must delete the session row");
 
-    let error_page = get_text(&driver, &format!("{}/login/error", server.origin())).await;
+    let error_page = browser::get_text(&driver, &format!("{}/login/error", server.origin())).await;
     assert!(
         error_page.contains("ログインできませんでした"),
         "{error_page}; URL: {:?}",
         driver.current_url().await
     );
 
-    login(&driver, &server).await;
-    let again = get_text(&driver, &format!("{}/api/me", server.origin())).await;
+    browser::login_with_google(&driver, &server).await;
+    let again = browser::get_text(&driver, &format!("{}/api/me", server.origin())).await;
     assert!(
         again.contains("\"email\":\"alice@example.test\""),
         "{again}"
@@ -122,78 +127,4 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
     );
 
     driver.quit().await.expect("the browser must close");
-}
-
-async fn login(driver: &WebDriver, server: &DevServer) {
-    driver
-        .goto(format!("{}/login", server.origin()))
-        .await
-        .expect("the login page must open");
-    wait_for_route(driver, server, "/login").await;
-    driver
-        .execute(
-            "const button = document.querySelector('button'); if (!button) { return false; } button.click(); return true;",
-            Vec::<serde_json::Value>::new(),
-        )
-        .await
-        .expect("the login button must be clickable");
-    wait_for_route(driver, server, "/").await;
-}
-
-async fn logout(driver: &WebDriver, server: &DevServer) {
-    driver
-        .goto(format!("{}/", server.origin()))
-        .await
-        .expect("the home page must open");
-    wait_for_route(driver, server, "/").await;
-    driver
-        .execute_async(
-            "const done = arguments[arguments.length - 1]; fetch('/api/auth/logout', { method: 'POST' }).then((response) => response.text()).then((text) => done(text)).catch((error) => done(String(error)));",
-            Vec::<serde_json::Value>::new(),
-        )
-        .await
-        .expect("the logout request must complete");
-}
-
-async fn get_text(driver: &WebDriver, url: &str) -> String {
-    driver.goto(url).await.expect("the page must open");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    loop {
-        let text = driver
-            .execute(
-                "return document.body ? document.body.innerText : ''",
-                Vec::<serde_json::Value>::new(),
-            )
-            .await
-            .expect("the page text must be readable")
-            .json()
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-        if !text.is_empty() {
-            return text;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the page text did not appear: {url}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-}
-
-async fn wait_for_route(driver: &WebDriver, server: &DevServer, expected: &str) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    loop {
-        let source = driver.source().await.unwrap_or_default();
-        if source.contains(&format!("data-route=\"{expected}\"")) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the route {expected} did not appear; current URL: {:?}; logs: {:?}",
-            driver.current_url().await,
-            server.log_lines()
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
 }

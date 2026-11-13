@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 use thirtyfour::prelude::*;
 use thirtyfour::{ChromiumLikeCapabilities, LoggingPrefsLogLevel};
 
+use super::DevServer;
+
 const DRIVER_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -130,6 +132,108 @@ pub async fn open(browser: Browser, driver: &DriverProcess) -> WebDriver {
             .unwrap_or_else(|error| panic!("the window must be sized: {error}"));
     }
     session
+}
+
+/// テスト用の OIDC の提供者の利用者を選び、Google のログインを通す。
+pub async fn login_with_google(driver: &WebDriver, server: &DevServer) {
+    driver
+        .goto(format!("{}/login", server.origin()))
+        .await
+        .expect("the login page must open");
+    wait_for_route(driver, "/login").await;
+    driver
+        .find(By::XPath(
+            "//button[contains(normalize-space(.), 'Google でログイン')]",
+        ))
+        .await
+        .expect("the Google login button")
+        .click()
+        .await
+        .expect("the Google login button must be clickable");
+    wait_for_route(driver, "/").await;
+}
+
+/// ログアウトの要求を送る。
+pub async fn logout(driver: &WebDriver) {
+    driver
+        .execute_async(
+            "const done = arguments[arguments.length - 1]; fetch('/api/auth/logout', { method: 'POST' }).then((r) => r.text()).then((t) => done(t));",
+            Vec::<serde_json::Value>::new(),
+        )
+        .await
+        .expect("the logout must complete");
+}
+
+/// `data-route` が現れるまで待つ。
+pub async fn wait_for_route(driver: &WebDriver, route: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let source = driver.source().await.unwrap_or_default();
+        if source.contains(&format!("data-route=\"{route}\"")) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the route {route} did not appear; current URL: {:?}",
+            driver.current_url().await
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 画面の文字列が現れるまで待つ。
+pub async fn wait_for_text(driver: &WebDriver, needle: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let source = driver.source().await.unwrap_or_default();
+        if source.contains(needle) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the page did not contain {needle}: {source}"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 文字列を持つボタンを押す。
+pub async fn click_text(driver: &WebDriver, label: &str) {
+    let button = driver
+        .find(By::XPath(format!(
+            "//button[contains(normalize-space(.), '{}')]",
+            label
+        )))
+        .await
+        .unwrap_or_else(|error| panic!("the button {label} must exist: {error}"));
+    button.click().await.expect("the button must be clickable");
+}
+
+/// ページを開き、本文が現れるまで待って返す。
+pub async fn get_text(driver: &WebDriver, url: &str) -> String {
+    driver.goto(url).await.expect("the page must open");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let text = driver
+            .execute(
+                "return document.body ? document.body.innerText : ''",
+                Vec::<serde_json::Value>::new(),
+            )
+            .await
+            .expect("the page text must be readable")
+            .json()
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if !text.is_empty() {
+            return text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the page text did not appear: {url}"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
 }
 
 /// OS に空きポートを選ばせる。

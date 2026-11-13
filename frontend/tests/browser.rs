@@ -1,6 +1,6 @@
-//! ブラウザの API を直接確かめるテストの入口。
+//! ブラウザの DOM の入口を確かめるテスト。
 //!
-//! IndexedDB、Service Worker、通知のテストは後続の変更で追加する。
+//! IndexedDB のテストは `tests/storage.rs` が持つ。
 
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;

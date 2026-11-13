@@ -12,18 +12,36 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+warrior_core = { path = "../backend/warrior_core" }
 # dioxus-web は host のビルドでも履歴の API を使うため、Location を明示する。
 web-sys = { version = "0.3", features = [
+  "Crypto",
   "Document",
+  "DomException",
+  "DomStringList",
   "Element",
   "Event",
   "EventTarget",
+  "Headers",
+  "IdbDatabase",
+  "IdbFactory",
+  "IdbIndex",
+  "IdbObjectStore",
+  "IdbObjectStoreParameters",
+  "IdbOpenDbRequest",
+  "IdbRequest",
+  "IdbTransaction",
+  "IdbTransactionMode",
   "Location",
   "MediaQueryList",
   "Navigator",
+  "Request",
+  "RequestInit",
+  "Response",
   "ServiceWorker",
   "ServiceWorkerContainer",
   "ServiceWorkerRegistration",
+  "StorageManager",
   "Window",
 ] }
 
