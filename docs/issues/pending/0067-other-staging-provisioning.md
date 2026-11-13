@@ -1,6 +1,6 @@
 # staging の資源を必要になった時点で用意する
 
-- Requirements: REQ-NFR-001, REQ-NFR-009, REQ-NFR-013, REQ-NFR-014, REQ-NFR-017 (staging の用意は ADR-023)
+- Requirements: REQ-NFR-001, REQ-NFR-003, REQ-NFR-004, REQ-NFR-009, REQ-NFR-013, REQ-NFR-014, REQ-NFR-017 (staging の用意は ADR-023)
 - Priority: Low
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
@@ -9,7 +9,7 @@
 ## 目的
 
 staging を追加する必要が生じたときに、ADR-023 の手順で staging の D1、R2、Queues、Workers AI、Cron Triggers を用意する。
-実機の確認 (iPhone の Safari のパスキーとすべての画面、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、HTTPS と暗号化)、AI の品質評価、プッシュ通知の実機計測 (0038) を production から分離して行えるようにする。
+実機の確認 (iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS と暗号化)、AI の品質評価、プッシュ通知の実機計測 (0038) を production から分離して行えるようにする。
 レート制限の上限値と時間窓も staging の vars に置く。
 
 ## 優先度根拠
@@ -34,7 +34,7 @@ D1 のマイグレーションを staging に適用してからデプロイす�
 ローカルの `.dev.vars` には staging の資格情報を置き、production の資格情報を置かない。
 
 ホスト名を変えるとパスキーが無効になり、OAuth のリダイレクト URI も変わるため、ホスト名を後から変えない。
-staging で 0006 の HTTPS と暗号化、0016 の Safari のパスキー、0020 の iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、iPhone の Safari のすべての画面、Android の Chrome のすべての画面を確認する。
+staging で 0006 の HTTPS と暗号化、0016 の Safari と Android の Chrome のパスキー、0020 の iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、iPhone と Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録を確認する。
 staging を追加した後は、production と同じ `AI_MODEL` を staging に置く。
 
 ## 完了条件
@@ -53,10 +53,12 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 - [ ] staging の `AI_MODEL` が production と同じである。これは 0061 と 0069 の判断に対応する。
 - [ ] 0006 の HTTPS と実環境の暗号化 (REQ-NFR-009 の受入基準「すべての通信が暗号化された経路で行われる」) を staging で確かめる。
 - [ ] 0016 の Safari のパスキー (REQ-NFR-013 の受入基準「登録、追加、削除の前に、Google アカウントまたは既存のパスキーによる再認証を求め、失敗した場合は操作を実行しない。1 つのアカウントに複数のパスキーを登録でき、追加と削除ができる」) を staging で確かめる。Safari での登録、ログイン、複数パスキーの追加と削除、Google からの復旧、再認証なしの拒否を確かめる。Google からの復旧は `REQ-NFR-014` の受入基準「登録したパスキーを使えない状態でも、Google アカウントでログインして新しいパスキーを登録できる」に対応する。
+- [ ] Android の Chrome のパスキーを staging で確かめる。Android での登録、ログイン、複数パスキーの追加と削除、Google からの復旧、再認証なしの拒否を確かめる。これは `REQ-NFR-013` と `REQ-NFR-014` の受入基準に対応する。
 - [ ] 0020 の iOS の Service Worker 自身の wasm の起動 (ADR-020 の Consequences の「iOS のホーム画面に追加した PWA で、Service Worker 自身の wasm が起動できることを確認する」) を staging で確かめる。これは内部条件であり、REQ-NFR-001 の受入基準の外側である。
 - [ ] 0020 の iOS の PWA の起動と、読み込んだ後に通信を切っても画面の表示を続けられることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、iOS の PWA を満たす。
 - [ ] Android の Chrome ですべての画面を操作できることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、Android の Chrome を満たす。PC の Chrome と Safari のすべての画面は 0007 以降の E2E で確認する。
 - [ ] iPhone の Safari ですべての画面を操作できることを staging で確かめる。これは REQ-NFR-001 の受入基準「スマートフォンの Safari と Chrome、PC の Chrome と Safari の最新版で、すべての画面を操作できる」のうち、iPhone の Safari を満たす。
+- [ ] iOS の Safari、PC の Safari、Android の Chrome で、通信を切って記録を続け、復帰後に同期できることを staging で確かめる。これは `REQ-NFR-003` と `REQ-NFR-004` の受入基準に対応する。
 
 ## 解決方法
 
@@ -72,16 +74,16 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 利用者が `mise run deploy-staging` で staging にデプロイする。
 エージェントが `.dev.vars.example` に staging の資格情報の名前を追加する。利用者が `.dev.vars` に staging の資格情報を置く。
 作業の結果は issue に追記し、Secret の値は書かない。
-利用者が staging で iPhone の Safari のパスキーとすべての画面、iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、Android の Chrome のすべての画面、HTTPS と暗号化を確認し、結果を issue に追記する。
+利用者が staging で iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS と暗号化を確認し、結果を issue に追記する。
 
 ## 止める理由
 
 今は production を先に用意するため、staging を作らない。
-iPhone の Safari のパスキーとすべての画面、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、HTTPS の確認、AI の品質評価、プッシュ通知の実機計測 (0038) のうち、どの作業を先に始めるかは、その着手時に決まる。
+iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS の確認、AI の品質評価、プッシュ通知の実機計測 (0038) のうち、どの作業を先に始めるかは、その着手時に決まる。
 エージェントは実環境へ接続しない。
 
 ## 再開条件
 
-利用者が staging を必要とする作業 (iPhone の Safari のパスキーとすべての画面、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、HTTPS の確認、プッシュ通知の実機計測 (0038)、AI の品質評価 (0069) を含む) を始める。
+利用者が staging を必要とする作業 (iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録、HTTPS の確認、プッシュ通知の実機計測 (0038)、AI の品質評価 (0069) を含む) を始める。
 0003 の production の資源ができている。
 利用者が staging の資源を作る権限と、Google OAuth と VAPID の staging 用の資格情報を用意する。

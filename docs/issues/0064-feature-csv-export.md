@@ -88,6 +88,7 @@ D1 には書き出しのメタデータだけを置く。
 `backend/warrior/src/router.rs` に `POST /api/exports`、`GET /api/exports/:id` を追加する。
 `frontend/src/screens/mypage.rs` に書き出しの操作を置く。
 `backend/warrior/tests/csv_export.rs` に結合テストを追加する。
+`backend/warrior/tests/e2e_csv_export.rs` に E2E を追加する。
 `backend/pbt/tests/csv.rs` に性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に書き出しのメタデータの表を追加する。
 0003 と 0067 が `exports/` の接頭辞のライフサイクルルールを設定する。

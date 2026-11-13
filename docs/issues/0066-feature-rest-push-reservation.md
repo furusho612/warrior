@@ -92,6 +92,7 @@ Cron Triggers で、期限を過ぎた予約と、lease の期限を過ぎた Qu
 `backend/warrior/src/queue.rs` に、`JOBS_QUEUE` の producer と consumer を置く。
 `backend/warrior/src/scheduled.rs` に、期限を過ぎた予約と lease の回復を追加する。
 `backend/warrior/src/router.rs` に `POST /api/rest/reservations`、`PATCH /api/rest/reservations/:id`、`DELETE /api/rest/reservations/:id`、`POST /api/push/received` を追加する。
+`backend/warrior/tests/e2e_rest_push.rs` に E2E を追加する。
 `frontend/src/screens/record.rs` のセットの完了とタイマーの操作から予約を呼ぶ。
 `mise.toml` に `verify-staging` を追加する。
 `backend/warrior/tests/rest_push.rs` に結合テストを追加する。
