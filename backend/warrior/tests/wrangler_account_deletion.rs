@@ -59,6 +59,11 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
     assert_eq!(count(&server, "elevation_tokens"), 0);
     assert_eq!(count(&server, "user_rate_limits"), 0);
     assert_eq!(count(&server, "ip_rate_limits"), 1);
+    assert_eq!(count(&server, "user_exercises"), 0);
+    assert_eq!(count(&server, "user_exercise_muscles"), 0);
+    assert_eq!(count(&server, "master_exercise_overrides"), 0);
+    assert_eq!(count(&server, "muscles"), 1);
+    assert_eq!(count(&server, "master_exercises"), 1);
     assert_eq!(
         server
             .get_r2_object(&format!("users/{USER_ID}/ai.json"))
@@ -128,6 +133,23 @@ fn seed_user(server: &DevServer, session_hash: &str) {
         "INSERT INTO ip_rate_limits (ip, kind, window_start, count, expires_at) \
          VALUES ('203.0.113.10', 'auth', 0, 1, '2099-01-01T00:00:00Z')"
             .to_owned(),
+        "INSERT INTO muscles (id, body_part, name_ja, display_order) \
+         VALUES ('pectoralis_major_middle', 'chest', '大胸筋中部', 1)"
+            .to_owned(),
+        "INSERT INTO master_exercises (id, name, name_kana, body_part, equipment, record_mode, laterality, grip_mode, other_scope, instructions, cautions, tips, sort_order, grip_options) \
+         VALUES ('master-1', 'ベンチプレス', 'べんちぷれす', 'chest', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '押す', '注意', 'コツ', 1, '[]')"
+            .to_owned(),
+        format!(
+            "INSERT INTO user_exercises (id, user_id, name, name_kana, body_part, equipment, record_mode, laterality, grip_mode, other_scope, instructions, cautions, tips, sort_order, grip_options, created_at, updated_at) \
+             VALUES ('user-1', '{USER_ID}', '独自', 'どくじ', 'chest', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '押す', '注意', 'コツ', 1, '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        "INSERT INTO user_exercise_muscles (exercise_id, muscle_id, role) \
+         VALUES ('user-1', 'pectoralis_major_middle', 'primary')"
+            .to_owned(),
+        format!(
+            "INSERT INTO master_exercise_overrides (user_id, master_exercise_id, deleted, updated_at) \
+             VALUES ('{USER_ID}', 'master-1', 0, '2026-01-01T00:00:00Z')"
+        ),
     ] {
         server
             .execute_d1_json(&sql)

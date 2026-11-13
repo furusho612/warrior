@@ -9,6 +9,7 @@ pub mod account;
 pub mod auth;
 pub mod db;
 pub mod error;
+pub mod exercise;
 pub mod log;
 pub mod random;
 pub mod rate_limit;

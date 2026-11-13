@@ -3683,6 +3683,7 @@ name = "warrior_pbt"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "serde_json",
  "warrior_core",
 ]
 
