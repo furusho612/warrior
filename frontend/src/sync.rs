@@ -23,7 +23,6 @@ pub struct SyncStatus {
     pub failed: usize,
 }
 
-static OUTBOX_REVISION: GlobalSignal<u64> = Signal::global(|| 0);
 thread_local! {
     static FLUSHING: Cell<bool> = const { Cell::new(false) };
     static LISTENING: Cell<bool> = const { Cell::new(false) };
@@ -36,37 +35,24 @@ pub async fn start() {
     flush().await;
 }
 
-/// 端末内の保存のたびに増える世代。
-pub fn outbox_revision() -> u64 {
-    OUTBOX_REVISION()
-}
-
-/// 端末内の保存の後に送信を要求する。flush は App の effect が起動する。
-pub fn request_flush() {
-    *OUTBOX_REVISION.write() += 1;
-}
-
 /// 失敗した操作を再試行する。
 pub async fn retry_operation(operation_id: &str) {
     let Ok(storage) = storage::current().await else {
         return;
     };
     let _ = storage.retry(operation_id).await;
-    request_flush();
 }
 
 /// 失敗した操作とその子孫を破棄する。
 pub async fn discard_operation(operation_id: &str) -> Option<DiscardOutcome> {
     let storage = storage::current().await.ok()?;
     let outcome = storage.discard(operation_id).await.ok()?;
-    request_flush();
     Some(outcome)
 }
 
 /// アカウントの削除で端末内の記録と送信待ちの列を削除する。
 pub async fn clear_account() -> Result<(), StorageError> {
     storage::clear_account().await?;
-    request_flush();
     Ok(())
 }
 
@@ -123,7 +109,6 @@ async fn flush_inner() {
         return;
     }
 
-    let mut changed = false;
     loop {
         if storage::generation() != generation {
             return;
@@ -132,9 +117,6 @@ async fn flush_inner() {
             return;
         };
         let Some(entry) = next_sendable(&entries).cloned() else {
-            if changed {
-                request_flush();
-            }
             return;
         };
         let operation_id = entry.operation.operation_id.clone();
@@ -155,13 +137,11 @@ async fn flush_inner() {
                 if storage.mark_success(&operation_id).await.is_err() {
                     return;
                 }
-                changed = true;
             }
             SendOutcome::Permanent => {
                 if storage.mark_permanent_failure(&operation_id).await.is_err() {
                     return;
                 }
-                changed = true;
             }
             SendOutcome::Unauthorized => {
                 let _ = storage.return_to_pending(&operation_id).await;

@@ -181,6 +181,16 @@ pub fn tab_is_active(current: &Route, tab: Tab) -> bool {
     }
 }
 
+/// 画面を読み込み直して移動する。
+///
+/// Dioxus のルーターの遷移の途中でスコープを破棄すると、runtime が再入することがある。
+/// 記録の開始と復元, 破棄の後はブラウザの読み込みで移動する。
+pub fn navigate(path: &str) {
+    if let Some(window) = web_sys::window() {
+        let _ = window.location().set_href(path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;

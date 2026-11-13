@@ -1,6 +1,6 @@
 //! 記録の開始と、記録中のトレーニングのメモの端末内への保存。
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use dioxus::prelude::*;
@@ -12,7 +12,7 @@ use warrior_core::sync::{
     SessionCreatePayload, SessionRecord, SessionUpdatePayload,
 };
 
-use crate::routes::Route;
+use crate::routes::{navigate, Route};
 use crate::storage::{self, DiscardOutcome, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
@@ -27,14 +27,10 @@ pub fn RecordScreen() -> Element {
             let Ok(storage) = storage::current().await else {
                 return;
             };
-            match storage.active_session().await {
-                Ok(Some(session)) => {
-                    let _ = navigator().push(Route::RecordSession {
-                        training_id: session.id,
-                    });
-                }
-                Ok(None) => {}
-                Err(_) => {}
+            if let Ok(Some(session)) = storage.active_session().await {
+                let _ = navigator().push(Route::RecordSession {
+                    training_id: session.id,
+                });
             }
         });
     });
@@ -73,7 +69,6 @@ async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<b
     match result {
         Ok(session) => {
             error.set(None);
-            sync::request_flush();
             let _ = navigator().push(Route::RecordSession {
                 training_id: session.id,
             });
@@ -90,6 +85,14 @@ struct RecordState {
     failed: Vec<OutboxEntry>,
 }
 
+/// 画面が読む同期の状態の signal。
+#[derive(Clone, Copy, PartialEq)]
+struct StateSignals {
+    status: Signal<SyncStatus>,
+    failed: Signal<Vec<OutboxEntry>>,
+    confirmed: Signal<String>,
+}
+
 #[component]
 pub fn RecordSessionScreen(training_id: String) -> Element {
     let session = use_signal(|| Option::<SessionRecord>::None);
@@ -98,27 +101,34 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let memo_revision = use_signal(|| 0u64);
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
+    let status = use_signal(SyncStatus::default);
+    let failed = use_signal(Vec::<OutboxEntry>::new);
+    let confirmed = use_signal(String::new);
+    let state_signals = StateSignals {
+        status,
+        failed,
+        confirmed,
+    };
     let route_id = training_id.clone();
-    let resource_id = training_id.clone();
 
     use_effect(move || {
         let id = route_id.clone();
         spawn(async move {
-            load(id, session, memo, persisted_memo, load_error).await;
+            load(
+                id,
+                session,
+                memo,
+                persisted_memo,
+                memo_revision,
+                state_signals,
+                load_error,
+            )
+            .await;
         });
     });
 
-    let record_state = use_resource(move || {
-        let id = resource_id.clone();
-        async move {
-            let _ = sync::outbox_revision();
-            sync::flush().await;
-            read_record_state(&id).await
-        }
-    });
-    let state = record_state().unwrap_or_default();
-    let (status_value, status_text) = sync_status_text(state.status, &memo(), &state.confirmed);
-    let failed = state.failed;
+    let (status_value, status_text) = sync_status_text(status(), &memo(), &confirmed());
+    let failed_entries = failed();
 
     rsx! {
         section {
@@ -132,9 +142,15 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 "data-sync-status": status_value,
                 "{status_text}"
             }
-            if session().is_some() {
-                MemoEditor { session, memo, persisted_memo, memo_revision, save_error }
-            } else if let Some(message) = load_error() {
+            MemoEditor {
+                session,
+                memo,
+                persisted_memo,
+                memo_revision,
+                save_error,
+                state_signals,
+            }
+            if let Some(message) = load_error() {
                 p { class: "text-[13px] text-primary", "{message}" }
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
@@ -143,23 +159,31 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                         move |_| {
                             let id = id.clone();
                             spawn(async move {
-                                load(id, session, memo, persisted_memo, load_error).await;
+                                load(
+                                    id,
+                                    session,
+                                    memo,
+                                    persisted_memo,
+                                    memo_revision,
+                                    state_signals,
+                                    load_error,
+                                )
+                                .await;
                             });
                         }
                     },
                     "{text(Key::RecordRetry)}"
                 }
-            } else {
+            } else if session().is_none() {
                 p { class: "text-[13px] text-text-sub", "{text(Key::RecordLoading)}" }
             }
-            if !failed.is_empty() {
-                FailedOperations {
-                    failed,
-                    session,
-                    memo,
-                    persisted_memo,
-                    memo_revision,
-                }
+            FailedOperations {
+                failed: failed_entries,
+                session,
+                memo,
+                persisted_memo,
+                memo_revision,
+                state_signals,
             }
         }
     }
@@ -182,10 +206,9 @@ fn MemoEditor(
     persisted_memo: Signal<String>,
     memo_revision: Signal<u64>,
     save_error: Signal<Option<String>>,
+    state_signals: StateSignals,
 ) -> Element {
-    let mut memo = memo;
     let saving = use_signal(|| false);
-    let saved_revision = use_signal(|| 0u64);
     let in_flight = use_hook(|| Rc::new(Cell::new(false)));
     let dirty = use_hook(|| Rc::new(Cell::new(false)));
     let state = SaveState {
@@ -195,11 +218,14 @@ fn MemoEditor(
     };
     let input_state = state.clone();
     let retry_state = state.clone();
+    let draft = use_hook(|| Rc::new(RefCell::new(memo())));
+    let draft_input = draft.clone();
+    let draft_retry = draft.clone();
+    let draft_reset = draft.clone();
 
     use_effect(move || {
-        if saved_revision() > 0 {
-            sync::request_flush();
-        }
+        let _ = memo_revision();
+        *draft_reset.borrow_mut() = (*memo.peek()).clone();
     });
 
     rsx! {
@@ -212,9 +238,10 @@ fn MemoEditor(
                 class: "min-h-24 border border-line bg-surface p-3 text-[13px] leading-5",
                 "data-memo": "true",
                 initial_value: "{memo}",
+                disabled: session().is_none(),
                 placeholder: "{text(Key::RecordMemoPlaceholder)}",
                 oninput: move |event| {
-                    memo.set(event.value());
+                    *draft_input.borrow_mut() = event.value();
                     input_state.dirty.set(true);
                     if input_state.in_flight.replace(true) {
                         return;
@@ -223,7 +250,8 @@ fn MemoEditor(
                         session,
                         memo,
                         persisted_memo,
-                        saved_revision,
+                        state_signals,
+                        draft.clone(),
                         input_state.clone(),
                         save_error,
                     ));
@@ -246,7 +274,8 @@ fn MemoEditor(
                             session,
                             memo,
                             persisted_memo,
-                            saved_revision,
+                            state_signals,
+                            draft_retry.clone(),
                             retry_state.clone(),
                             save_error,
                         ));
@@ -265,11 +294,16 @@ fn FailedOperations(
     memo: Signal<String>,
     persisted_memo: Signal<String>,
     memo_revision: Signal<u64>,
+    state_signals: StateSignals,
 ) -> Element {
     let mut session = session;
     let mut memo = memo;
     let mut persisted_memo = persisted_memo;
     let mut memo_revision = memo_revision;
+
+    if failed.is_empty() {
+        return rsx! {};
+    }
 
     rsx! {
         div { class: "flex flex-col gap-2 border border-line bg-surface p-3",
@@ -283,10 +317,13 @@ fn FailedOperations(
                             class: "min-h-11 border border-primary px-3 text-[13px] text-primary",
                             onclick: {
                                 let operation_id = entry.operation.operation_id.clone();
+                                let training_id = entry.operation.training_id.clone();
                                 move |_| {
                                     let operation_id = operation_id.clone();
+                                    let training_id = training_id.clone();
                                     spawn(async move {
                                         sync::retry_operation(&operation_id).await;
+                                        refresh_state(&training_id, state_signals).await;
                                     });
                                 }
                             },
@@ -296,19 +333,21 @@ fn FailedOperations(
                             class: "min-h-11 border border-line px-3 text-[13px]",
                             onclick: {
                                 let operation_id = entry.operation.operation_id.clone();
+                                let training_id = entry.operation.training_id.clone();
                                 move |_| {
                                     let operation_id = operation_id.clone();
+                                    let training_id = training_id.clone();
                                     spawn(async move {
                                         match sync::discard_operation(&operation_id).await {
                                             Some(DiscardOutcome::SessionDeleted) => {
-                                                let _ = navigator().push(Route::Record {});
+                                                navigate("/record");
                                             }
                                             Some(DiscardOutcome::MemoReverted(updated)) => {
                                                 memo.set(updated.memo.clone());
                                                 persisted_memo.set(updated.memo.clone());
                                                 memo_revision.set(memo_revision() + 1);
                                                 session.set(Some(updated));
-                                                sync::request_flush();
+                                                refresh_state(&training_id, state_signals).await;
                                             }
                                             _ => {}
                                         }
@@ -329,6 +368,8 @@ async fn load(
     mut session: Signal<Option<SessionRecord>>,
     mut memo: Signal<String>,
     mut persisted_memo: Signal<String>,
+    mut memo_revision: Signal<u64>,
+    state_signals: StateSignals,
     mut error: Signal<Option<String>>,
 ) {
     let Ok(storage) = storage::current().await else {
@@ -339,12 +380,22 @@ async fn load(
         Ok(Some(record)) => {
             memo.set(record.memo.clone());
             persisted_memo.set(record.memo.clone());
+            memo_revision.set(memo_revision() + 1);
             session.set(Some(record));
             error.set(None);
         }
         Ok(None) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
         Err(_) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
     }
+    refresh_state(&training_id, state_signals).await;
+}
+
+async fn refresh_state(training_id: &str, mut state_signals: StateSignals) {
+    sync::flush().await;
+    let state = read_record_state(training_id).await;
+    state_signals.status.set(state.status);
+    state_signals.failed.set(state.failed);
+    state_signals.confirmed.set(state.confirmed);
 }
 
 async fn read_record_state(training_id: &str) -> RecordState {
@@ -374,9 +425,10 @@ async fn read_record_state(training_id: &str) -> RecordState {
 
 async fn save_loop(
     mut session: Signal<Option<SessionRecord>>,
-    memo: Signal<String>,
+    mut memo: Signal<String>,
     mut persisted_memo: Signal<String>,
-    mut saved_revision: Signal<u64>,
+    state_signals: StateSignals,
+    draft: Rc<RefCell<String>>,
     mut state: SaveState,
     mut save_error: Signal<Option<String>>,
 ) {
@@ -388,15 +440,17 @@ async fn save_loop(
             state.in_flight.set(false);
             return;
         };
-        let draft = memo();
-        match save_draft(record, &draft).await {
+        let draft_text = draft.borrow().clone();
+        let training_id = record.id.clone();
+        match save_draft(record, &draft_text).await {
             Ok(updated) => {
-                if memo() == draft {
-                    persisted_memo.set(draft.clone());
+                if *draft.borrow() == draft_text {
+                    persisted_memo.set(draft_text.clone());
                 }
+                memo.set(draft_text);
                 session.set(Some(updated));
                 save_error.set(None);
-                saved_revision.set(saved_revision() + 1);
+                refresh_state(&training_id, state_signals).await;
             }
             Err(_) => {
                 save_error.set(Some(text(Key::RecordSaveFailed).to_owned()));

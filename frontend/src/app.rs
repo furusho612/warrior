@@ -20,16 +20,6 @@ pub fn App() -> Element {
         });
     });
 
-    use_effect(move || {
-        let revision = sync::outbox_revision();
-        if revision == 0 {
-            return;
-        }
-        spawn(async move {
-            sync::flush().await;
-        });
-    });
-
     rsx! {
         PwaBanner {}
         dioxus_router::Router::<Route> {}
