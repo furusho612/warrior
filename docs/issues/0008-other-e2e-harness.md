@@ -51,7 +51,7 @@ D1 は `wrangler d1 execute DB --local --command "<削除する SQL>"` で削除
 Chrome の E2E では ChromeDriver の WebAuthn の拡張コマンドで仮想認証器を付ける。
 プッシュ通知は CDP の `ServiceWorker.deliverPushMessage` で実際の Service Worker にイベントを届ける。
 オフラインは CDP のネットワークのエミュレーションで通信を切る。
-Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないため、Safari の E2E は画面、API、IndexedDB、Service Worker のキャッシュを対象にする。
+Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないため、Safari の E2E は画面、API、IndexedDB、Service Worker のキャッシュを対象にする。この issue では `GET /api/health` のスモークだけを置き、画面、IndexedDB、Service Worker のキャッシュは後続の issue で追加する。
 
 この issue では、テスト用の提供者とハーネスが起動し、`GET /api/health` の JSON を開く 1 本のスモークを置く。ログインからホームまでの E2E は 0015 が持つ。
 各機能の E2E は、その機能の issue で追加する。
@@ -59,7 +59,8 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 ## 完了条件
 
 - [ ] `mise run e2e` が `wrangler dev` とテスト用の OIDC の提供者を起動し、Chrome で `GET /api/health` の JSON を開いて 200 を確認する。これは PRD の要求 ID を持たない基盤の条件である。
-- [ ] `mise run e2e-safari` が macOS の runner で E2E の実行基盤を起動し、0008 時点のスモークが成功する。IndexedDB と Service Worker の E2E は後続の issue で追加する。
+- [ ] `mise run e2e-safari` が macOS の runner で E2E の実行基盤を起動し、`GET /api/health` のスモークが成功する。IndexedDB と Service Worker の E2E は後続の issue で追加する。
+- [ ] `mise run test-browser` が `frontend/tests/browser.rs` の `wasm-bindgen-test` を Chrome と Safari の実ブラウザで実行して成功し、`mise run check` から呼ばれる。これは PRD の要求 ID を持たない基盤の条件である。ADR-022 のランナーの版を `frontend/Cargo.lock` の `wasm-bindgen` と揃える。
 - [ ] テスト用の OIDC の提供者が `/authorize`、`/token`、`/userinfo`、`/test/user` を持ち、Google の応答と同じ形を返す。
 - [ ] 本物の Google のアカウントと外部のサービスに接続しない。
 - [ ] テスト専用の提供者と、その URL を指す vars が本番のビルドに含まれない。
@@ -74,8 +75,8 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 
 `backend/warrior/tests/support/mod.rs` に、`wrangler dev` の起動、health の待機、マイグレーションの適用、テスト用の提供者の起動、利用者の作成、teardown を置く。
 `backend/warrior/tests/e2e_harness_smoke.rs` に、`GET /api/health` のスモークを置く。
-`backend/warrior/tests/support_teardown.rs` に、`users/` と `exports/` のダミーのオブジェクトを置き、teardown で両方が消え、別の利用者の資源が残ることを確かめるテストを置く。
+`backend/warrior/tests/support_teardown.rs` に、`users/` と `exports/` のダミーのオブジェクトを置き、teardown で両方が消え、別の利用者の `users/` と `exports/` の接頭辞、および D1 の行が残ることを確かめるテストを置く。
 `tools/test-oidc/Cargo.toml` と `tools/test-oidc/src/main.rs` に、テスト用の提供者を置く。ワークスペースに追加し、本番の wasm に含めない。HTTP のサーバーは標準ライブラリの `TcpListener` で実装し、本番の依存を増やさない。
 `frontend/tests/browser.rs` に `wasm-bindgen-test` の入口を置く。
 `mise.toml` に `e2e`、`e2e-safari`、`test-browser` を追加し、`check` から Chrome の E2E とブラウザ API のテストを呼ぶ。
-`.github/workflows/ci.yml` に Linux と macOS のジョブを追加する。
+`.github/workflows/ci.yml` に Linux と macOS のジョブを追加し、macOS のジョブが `mise run e2e-safari` を呼ぶ。

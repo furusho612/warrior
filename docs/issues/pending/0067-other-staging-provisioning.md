@@ -60,15 +60,15 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 
 ## 解決方法
 
-Cloudflare のダッシュボードまたは `wrangler` のコマンドで staging の資源を作る。
-`wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、返った ID を `wrangler.toml` の `[env.staging]` に書く。R2 のバケットは staging 用に 1 つだけ作る。
-`wrangler.toml` の `[env.staging.vars]` に Relying Party ID、Origin、Google OAuth のクライアント ID、リダイレクト URI、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を含む staging の vars を置く。
-`[env.staging.ai]` と `[env.staging.triggers]` を staging 用に設定する。
-`wrangler d1 migrations apply DB --remote --env staging` でマイグレーションを適用する。
-`wrangler secret put <GOOGLE_CLIENT_SECRET> --env staging` と `wrangler secret put <VAPID_PRIVATE_KEY> --env staging` で staging の Secret を設定する。
-Google Cloud の OAuth の設定で、staging のリダイレクト URI を追加する。
-R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKET> <NAME> exports/ --expire-days 7` で設定する。
-`mise.toml` に `deploy-staging` を追加する。
+利用者が Cloudflare のダッシュボードまたは `wrangler` のコマンドで staging の資源を作る。
+利用者が `wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、返った ID を `wrangler.toml` の `[env.staging]` に書く。`<DB>`、`<BUCKET>`、`<QUEUE>` は staging 用の別名にし、R2 のバケットは staging 用に 1 つだけ作る。
+利用者が `wrangler.toml` の `[env.staging.vars]` に Relying Party ID、Origin、Google OAuth のクライアント ID、リダイレクト URI、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を含む staging の vars を置く。
+利用者が `[env.staging.ai]` と `[env.staging.triggers]` を staging 用に設定する。
+利用者が `wrangler d1 migrations apply DB --remote --env staging` でマイグレーションを適用する。
+利用者が `wrangler secret put <GOOGLE_CLIENT_SECRET> --env staging` と `wrangler secret put <VAPID_PRIVATE_KEY> --env staging` で staging の Secret を設定する。
+利用者が Google Cloud の OAuth の設定で、staging のリダイレクト URI を追加する。
+利用者が R2 のライフサイクルルールを `wrangler r2 bucket lifecycle add <BUCKET> <NAME> exports/ --expire-days 7` で設定する。
+エージェントが `mise.toml` に `deploy-staging` を追加する。
 利用者が `mise run deploy-staging` で staging にデプロイする。
 `.dev.vars.example` と `.dev.vars` に staging の資格情報の名前を追加する。
 作業の結果は issue に追記し、Secret の値は書かない。

@@ -52,14 +52,14 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 ## 解決方法
 
-Cloudflare のダッシュボードまたは `wrangler` のコマンドで production の資源を作る。
-`wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、返った ID を `wrangler.toml` の `[env.production]` に書く。R2 のバケットは production 用に 1 つだけ作る。
-`wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、Google OAuth のクライアント ID、リダイレクト URI、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を含む production の vars を置く。
-`[env.production.ai]` と `[env.production.triggers]` を production 用に設定する。
-`wrangler d1 migrations apply DB --remote --env production` でマイグレーションを適用する。
-`wrangler secret put <GOOGLE_CLIENT_SECRET> --env production` と `wrangler secret put <VAPID_PRIVATE_KEY> --env production` で production の Secret を設定する。
-Google Cloud の OAuth の設定で、production のリダイレクト URI を追加する。
-R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKET> <NAME> exports/ --expire-days 7` で設定する。
+利用者が Cloudflare のダッシュボードまたは `wrangler` のコマンドで production の資源を作る。
+利用者が `wrangler d1 create <DB>`、`wrangler r2 bucket create <BUCKET>`、`wrangler queues create <QUEUE>` を使い、返った ID を `wrangler.toml` の `[env.production]` に書く。`<DB>`、`<BUCKET>`、`<QUEUE>` は production 用の別名にし、R2 のバケットは production 用に 1 つだけ作る。
+利用者が `wrangler.toml` の `[env.production.vars]` に Relying Party ID、Origin、Google OAuth のクライアント ID、リダイレクト URI、AI のモデル名、VAPID の公開鍵と subject、レート制限の上限値と時間窓を含む production の vars を置く。
+利用者が `[env.production.ai]` と `[env.production.triggers]` を production 用に設定する。
+利用者が `wrangler d1 migrations apply DB --remote --env production` でマイグレーションを適用する。
+利用者が `wrangler secret put <GOOGLE_CLIENT_SECRET> --env production` と `wrangler secret put <VAPID_PRIVATE_KEY> --env production` で production の Secret を設定する。
+利用者が Google Cloud の OAuth の設定で、production のリダイレクト URI を追加する。
+利用者が R2 のライフサイクルルールを `wrangler r2 bucket lifecycle add <BUCKET> <NAME> exports/ --expire-days 7` で設定する。
 作業の結果は issue に追記し、Secret の値は書かない。
 
 ## 止める理由
