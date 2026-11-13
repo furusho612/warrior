@@ -62,7 +62,7 @@ run = "cargo build -p warrior_test_oidc"
 [tasks.e2e]
 description = "Chrome の E2E と、資源の teardown のテストを実行する"
 depends = ["backend:build", "frontend:build", "test-oidc:build"]
-run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke --test e2e_auth --test e2e_passkey --test e2e_account_deletion"
+run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke --test e2e_auth --test e2e_passkey --test e2e_account_deletion --test e2e_pwa"
 
 [tasks."e2e-safari"]
 description = "Safari の E2E のスモークを実行する"
@@ -115,6 +115,7 @@ run = "worker-build --release"
 description = "Service Worker の wasm と JavaScript をビルドして配信物に置く"
 run = """
 set -e
+export WARRIOR_SW_VERSION=$(git rev-parse --short HEAD)
 cargo build -p warrior_service_worker --target wasm32-unknown-unknown --release
 mkdir -p frontend/public/sw
 wasm-bindgen --target no-modules --out-dir frontend/public/sw --out-name warrior_sw target/wasm32-unknown-unknown/release/warrior_service_worker.wasm
