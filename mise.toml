@@ -59,7 +59,7 @@ run = "cargo build -p warrior_test_oidc"
 [tasks.e2e]
 description = "Chrome の E2E と、資源の teardown のテストを実行する"
 depends = ["backend:build", "frontend:build", "test-oidc:build"]
-run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider"
+run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke"
 
 [tasks."e2e-safari"]
 description = "Safari の E2E のスモークを実行する"
@@ -67,7 +67,7 @@ depends = ["backend:build", "frontend:build", "test-oidc:build"]
 run = """
 set -e
 export WARRIOR_E2E_BROWSER=safari
-cargo test -p warrior --test e2e_harness_smoke
+cargo test -p warrior --test e2e_harness_smoke --test wrangler_frontend_smoke
 """
 
 [tasks."test-browser"]
