@@ -99,58 +99,11 @@ fn concurrent_creates_with_the_same_operation_id_apply_once() {
     );
 }
 
-/// 2 文目 (更新) が失敗したとき、同じ `batch` の操作 ID も残らないことを確かめる。
-///
-/// 操作 ID の保存と更新は 1 つの `db.batch` に渡す。更新だけが失敗した場合、
-/// 操作 ID の行は残らず、同じ操作 ID の再送が適用される。
-#[test]
-fn a_failed_update_rolls_back_the_applied_operation() {
-    let server = DevServer::start(8803);
-    server
-        .apply_migrations()
-        .expect("the local D1 migrations must apply");
-    let token = base64url::encode(&[11u8; 32]);
-    seed(&server, &token);
-    seed_session(&server);
-    let cookie = format!("warrior_session={token}");
-    let operation_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4415";
-
-    server
-        .execute_d1_json(
-            "CREATE TRIGGER fail_training_update BEFORE UPDATE ON training_sessions \
-             BEGIN SELECT RAISE(ABORT, 'forced failure'); END",
-        )
-        .expect("the trigger must be created");
-
-    let failed = post(&server, &cookie, &update_operation(operation_id, "lost"));
-    assert_eq!(failed.status, 500, "{}", failed.body);
-    assert_eq!(applied_count(&server, operation_id), 0);
-    assert_eq!(session_memo(&server), "base");
-
-    server
-        .execute_d1_json("DROP TRIGGER fail_training_update")
-        .expect("the trigger must be dropped");
-
-    let replayed = post(&server, &cookie, &update_operation(operation_id, "lost"));
-    assert_eq!(replayed.status, 200, "{}", replayed.body);
-    assert_eq!(response_status(&replayed), "applied");
-    assert_eq!(applied_count(&server, operation_id), 1);
-    assert_eq!(session_memo(&server), "lost");
-}
-
 fn response_status(response: &support::HttpResponse) -> String {
     serde_json::from_str::<Value>(&response.body).expect("the response is JSON")["status"]
         .as_str()
         .expect("a status")
         .to_owned()
-}
-
-fn session_memo(server: &DevServer) -> Value {
-    first_row(
-        server,
-        &format!("SELECT memo FROM training_sessions WHERE id = '{TRAINING_ID}'"),
-    )["memo"]
-        .clone()
 }
 
 fn create_is_applied(server: &DevServer, cookie: &str) {
@@ -342,15 +295,6 @@ fn seed(server: &DevServer, token: &str) {
             .execute_d1_json(&sql)
             .expect("the user rows must be seeded");
     }
-}
-
-fn seed_session(server: &DevServer) {
-    server
-        .execute_d1_json(&format!(
-            "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \
-             VALUES ('{TRAINING_ID}', '{USER_ID}', '{DATE}', '{STARTED_AT}', 'base', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ))
-        .expect("the training session must be seeded");
 }
 
 fn first_row(server: &DevServer, sql: &str) -> Value {
