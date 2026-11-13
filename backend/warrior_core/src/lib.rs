@@ -3,6 +3,8 @@
 pub mod ai;
 pub mod auth;
 pub mod base64url;
+pub mod cbor;
+pub mod cose;
 pub mod cursor;
 pub mod datetime;
 pub mod ids;
@@ -10,6 +12,7 @@ pub mod jst;
 pub mod nutrition;
 pub mod set_calc;
 pub mod sql;
+pub mod webauthn;
 
 /// ヘルスチェックが返す状態の値。
 pub const HEALTH_STATUS: &str = "ok";

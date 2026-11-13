@@ -5,6 +5,32 @@
 /// UUID の文字列表記の長さ (ハイフンを含む 36 文字)。
 pub const UUID_V4_TEXT_LEN: usize = 36;
 
+/// UUID v4 の文字列を 16 バイトに戻す。
+pub fn uuid_bytes(text: &str) -> Option<[u8; 16]> {
+    if !is_valid_uuid_v4(text) {
+        return None;
+    }
+    let mut bytes = [0u8; 16];
+    let mut index = 0;
+    for chunk in text.split('-') {
+        for pair in chunk.as_bytes().chunks(2) {
+            let high = hex_value(pair[0])?;
+            let low = hex_value(pair[1])?;
+            bytes[index] = (high << 4) | low;
+            index += 1;
+        }
+    }
+    Some(bytes)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
 /// 16 バイトの乱数から UUID v4 の文字列を作る。
 pub fn uuid_v4_from_bytes(bytes: [u8; 16]) -> String {
     let mut bytes = bytes;

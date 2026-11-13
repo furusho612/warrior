@@ -16,6 +16,7 @@ pub enum ErrorCode {
     /// 同一オリジンでない、または権限がない。
     Forbidden,
     /// 経路または資源が見つからない。
+    Conflict,
     NotFound,
     /// 経路はあるがメソッドが許可されていない。
     MethodNotAllowed,
@@ -30,6 +31,7 @@ impl ErrorCode {
             ErrorCode::BadRequest => "bad_request",
             ErrorCode::Unauthorized => "unauthorized",
             ErrorCode::Forbidden => "forbidden",
+            ErrorCode::Conflict => "conflict",
             ErrorCode::NotFound => "not_found",
             ErrorCode::MethodNotAllowed => "method_not_allowed",
             ErrorCode::Internal => "internal",
@@ -42,6 +44,7 @@ impl ErrorCode {
             ErrorCode::BadRequest => 400,
             ErrorCode::Unauthorized => 401,
             ErrorCode::Forbidden => 403,
+            ErrorCode::Conflict => 409,
             ErrorCode::NotFound => 404,
             ErrorCode::MethodNotAllowed => 405,
             ErrorCode::Internal => 500,
@@ -56,6 +59,7 @@ pub fn code_for_status(status: u16) -> Option<&'static str> {
         401 => Some(ErrorCode::Unauthorized.code()),
         403 => Some(ErrorCode::Forbidden.code()),
         404 => Some(ErrorCode::NotFound.code()),
+        409 => Some(ErrorCode::Conflict.code()),
         405 => Some(ErrorCode::MethodNotAllowed.code()),
         500..=599 => Some(ErrorCode::Internal.code()),
         _ => None,
@@ -121,6 +125,7 @@ mod tests {
             (ErrorCode::Unauthorized, "unauthorized", 401),
             (ErrorCode::Forbidden, "forbidden", 403),
             (ErrorCode::NotFound, "not_found", 404),
+            (ErrorCode::Conflict, "conflict", 409),
             (ErrorCode::MethodNotAllowed, "method_not_allowed", 405),
             (ErrorCode::Internal, "internal", 500),
         ] {
@@ -136,6 +141,7 @@ mod tests {
         assert_eq!(code_for_status(401), Some("unauthorized"));
         assert_eq!(code_for_status(403), Some("forbidden"));
         assert_eq!(code_for_status(404), Some("not_found"));
+        assert_eq!(code_for_status(409), Some("conflict"));
         assert_eq!(code_for_status(405), Some("method_not_allowed"));
         assert_eq!(code_for_status(500), Some("internal"));
         assert_eq!(code_for_status(599), Some("internal"));

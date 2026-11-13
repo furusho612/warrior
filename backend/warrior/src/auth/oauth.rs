@@ -8,8 +8,9 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use warrior_core::auth::{
-    clear_oauth_state_cookie, is_valid_opaque_token, oauth_state_cookie, sha256_base64url,
-    validate_id_token, validate_userinfo, OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS,
+    clear_oauth_state_cookie, elevation_cookie, is_valid_opaque_token, oauth_state_cookie,
+    sha256_base64url, validate_id_token, validate_userinfo, OAUTH_STATE_COOKIE,
+    OAUTH_STATE_TTL_SECONDS,
 };
 use warrior_core::sql::{SqlStatement, SqlValue};
 use worker::{
@@ -30,6 +31,8 @@ struct OAuthStateRow {
     redirect_uri: String,
     expires_at: String,
     used_at: Option<String>,
+    purpose: String,
+    user_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,10 +48,25 @@ struct UserIdRow {
 
 /// `GET /api/auth/google/start` の処理。
 pub async fn start(_request: Request, context: RouteContext<()>) -> Result<Response> {
+    begin(&context.env, "login", None).await
+}
+
+/// `GET /api/auth/reauthenticate/google/start` の処理。
+pub async fn start_elevation(request: Request, context: RouteContext<()>) -> Result<Response> {
     let env = context.env;
-    let client_id = var(&env, "GOOGLE_CLIENT_ID")?;
-    let authorize_url = var(&env, "GOOGLE_OAUTH_AUTHORIZE_URL")?;
-    let redirect_uri = var(&env, "GOOGLE_OAUTH_REDIRECT_URI")?;
+    let Some(session) = session::resolve(&request, &env).await? else {
+        return Ok(crate::error::response(
+            crate::error::ErrorCode::Unauthorized,
+            "authentication required",
+        ));
+    };
+    begin(&env, "elevation", Some(&session.id)).await
+}
+
+async fn begin(env: &Env, purpose: &str, user_id: Option<&str>) -> Result<Response> {
+    let client_id = var(env, "GOOGLE_CLIENT_ID")?;
+    let authorize_url = var(env, "GOOGLE_OAUTH_AUTHORIZE_URL")?;
+    let redirect_uri = var(env, "GOOGLE_OAUTH_REDIRECT_URI")?;
     let state = crate::random::random_token()?;
     let nonce = crate::random::random_token()?;
     let code_verifier = crate::random::random_token()?;
@@ -61,8 +79,8 @@ pub async fn start(_request: Request, context: RouteContext<()>) -> Result<Respo
     db.run(&cleanup).await?;
     let statement = SqlStatement::new(
         "INSERT INTO oauth_states \
-         (state, nonce, code_verifier, redirect_uri, created_at, expires_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+         (state, nonce, code_verifier, redirect_uri, created_at, expires_at, purpose, user_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         vec![
             SqlValue::Text(state.clone()),
             SqlValue::Text(nonce.clone()),
@@ -72,6 +90,8 @@ pub async fn start(_request: Request, context: RouteContext<()>) -> Result<Respo
             SqlValue::Text(warrior_core::datetime::format_utc(
                 now + OAUTH_STATE_TTL_SECONDS,
             )),
+            SqlValue::Text(purpose.to_owned()),
+            user_id.map_or(SqlValue::Null, |id| SqlValue::Text(id.to_owned())),
         ],
     );
     db.run(&statement).await?;
@@ -119,7 +139,7 @@ pub async fn callback(request: Request, context: RouteContext<()>) -> Result<Res
 
     let db = Db::new(env.d1("DB")?);
     let statement = SqlStatement::new(
-        "SELECT nonce, code_verifier, redirect_uri, expires_at, used_at \
+        "SELECT nonce, code_verifier, redirect_uri, expires_at, used_at, purpose, user_id \
          FROM oauth_states WHERE state = ?",
         vec![SqlValue::Text(state.clone())],
     );
@@ -195,9 +215,28 @@ pub async fn callback(request: Request, context: RouteContext<()>) -> Result<Res
     };
 
     let user_id = upsert_user(&db, &userinfo.sub, &userinfo.email, &userinfo.name).await?;
+    let origin = var(&env, "ORIGIN")?;
+    if row.purpose == "elevation" {
+        let Some(session) = session::resolve(&request, &env).await? else {
+            return Ok(crate::error::response(
+                crate::error::ErrorCode::Unauthorized,
+                "authentication required",
+            ));
+        };
+        if row.user_id.as_deref() != Some(session.id.as_str()) || session.id != user_id {
+            return Ok(crate::error::response(
+                crate::error::ErrorCode::Forbidden,
+                "reauthentication required",
+            ));
+        }
+        let elevation = super::passkey::issue_elevation(&db, &session.id).await?;
+        let url = Url::parse(&format!("{origin}/mypage"))?;
+        let response = redirect(url.as_str())?;
+        let response = append_cookie(response, &elevation_cookie(&elevation))?;
+        return append_cookie(response, &clear_oauth_state_cookie());
+    }
     let session_token = crate::random::random_token()?;
     let session_cookie = session::create(&db, &user_id, &session_token, now).await?;
-    let origin = var(&env, "ORIGIN")?;
     let url = Url::parse(&format!("{origin}/"))?;
     let response = redirect(url.as_str())?;
     let response = append_cookie(response, &session_cookie)?;
