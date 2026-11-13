@@ -16,7 +16,7 @@ Status が Accepted になった ADR を実装の前提にする。
 | [ADR-006](006-record-snapshots-independent-of-master.md) | 過去の記録は種目と身体情報のスナップショットを持つ | Accepted |
 | [ADR-007](007-rest-timer-absolute-end-time.md) | レストタイマーは終了予定時刻から残り時間を計算する | Accepted |
 | [ADR-008](008-server-scheduled-rest-push.md) | レスト終了のプッシュ通知はサーバーが予約する | Accepted |
-| [ADR-009](009-ai-proposals-generated-at-session-end.md) | AI の評価と次回セットの提案はトレーニング終了時に生成して保存する | Accepted |
+| [ADR-009](009-ai-proposals-generated-at-session-end.md) | AI の評価と次回セットの提案はトレーニングの終了時に生成して保存する | Accepted |
 | [ADR-010](010-ai-context-data-boundary.md) | AI に渡す情報はサーバーで組み立て、必要な項目に限る | Accepted |
 | [ADR-011](011-design-tokens-as-source-of-truth.md) | デザイントークンを色と寸法の唯一の定義にする | Accepted |
 | [ADR-012](012-inline-svg-body-figure.md) | 人体図はインライン SVG と筋肉単位の属性で描く | Accepted |

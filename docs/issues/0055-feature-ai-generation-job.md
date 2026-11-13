@@ -9,7 +9,7 @@
 ## 目的
 
 AI の評価と提案の生成を、リクエストの中で待たずに Queue で実行する。
-生成の状態を D1 の行で持ち、再試行と失敗の扱いを固定し、入出力のスナップショットを R2 に保存して、生成に使った入力とプロンプトの版をたどれるようにする。
+生成の状態を D1 の行で持ち、再試行と失敗の扱いを固定し、入出力スナップショットを R2 に保存して、生成に使った入力とプロンプトの版をたどれるようにする。
 AI の応答を待つ間も記録の操作を止めず、応答が得られない場合は提案なしで記録を続けられるようにする。
 
 ## 優先度根拠
@@ -27,7 +27,7 @@ AI の評価と提案は段階 3 の機能であり、記録と分析の後に�
 AI の生成は `ai_generation` の行で状態を持つ。
 ADR-009 は、日の評価と次回セットの提案をトレーニングの終了時に生成して保存すると決めている。
 ADR-021 は、AI の生成とレスト通知の予約を Cloudflare Queues と Cron Triggers で実行すると決めている。
-ADR-017 は、AI の入出力のスナップショットを R2 に保存し、D1 にはメタデータだけを置くと決めている。
+ADR-017 は、AI の入出力スナップショットを R2 に保存し、D1 にはメタデータだけを置くと決めている。
 この issue はこれらの決定に従う。
 状態は `pending`、`enqueued`、`generated`、`failed` とする。
 行は、生成の種別、利用者 ID、対象のトレーニング ID または期間、種目 ID、一意キー、試行回数、lease の期限、next_attempt_at、生成した出力の ID を持つ。
@@ -36,7 +36,7 @@ ADR-017 は、AI の入出力のスナップショットを R2 に保存し、D1
 記録のない種目には提案の行を作らない。
 週と月の評価の `pending` の行は、0057 の Cron が作る。
 
-Cron は `pending` の行だけを `JOBS_QUEUE` へ送り、送信時に `enqueued` と lease の期限を記録する。送る対象には、トレーニング終了時に作る日の評価と次回セットの提案、週と月の評価を含む。
+Cron は `pending` の行だけを `JOBS_QUEUE` へ送り、送信時に `enqueued` と lease の期限を記録する。送る対象には、トレーニングの終了時に作る日の評価と次回セットの提案、週と月の評価を含む。
 Queue のメッセージには生成の ID だけを入れ、記録の本文を入れない。
 
 消費側は、次の順に処理する。
@@ -45,7 +45,7 @@ Queue のメッセージには生成の ID だけを入れ、記録の本文を�
 - D1 と R2 から入力を作り、0014 のコンテキストを組み立てる。
 - Workers AI の `AI` バインディングを呼ぶ。モデル名は環境ごとの `AI_MODEL` から読む。
 - 0014 の検証を通す。
-- 出力を D1 に保存し、入力と出力のスナップショットを R2 に保存する。プロンプトの版とモデルの識別子も保存する。
+- 出力を D1 に保存し、入出力スナップショットを R2 に保存する。プロンプトの版とモデルの識別子も保存する。
 R2 のスナップショットにはメモと身体情報が含まれるため、バケットを公開せず、Worker の認証済みの経路からだけ読む。
 アカウントの削除で削除する。
 - 状態を `generated` にする。
@@ -103,7 +103,7 @@ Queue と生成のログには、ジョブの種別、生成の ID、試行回�
 `backend/warrior_core/src/ai_job.rs` に、状態、再試行の分類、lease の期限、`next_attempt_at`、一意キーの規則を置く。
 `backend/warrior/src/ai_job.rs` に、Queue への投入、消費側の処理、Workers AI の呼び出し、R2 のスナップショットを置く。
 `backend/warrior/src/router.rs` に `GET /api/ai/jobs/:id` を追加する。
-`backend/warrior/tests/fixtures/ai_outputs/` に、画面の確認に使う固定の AI 出力を置く。実モデルの品質は 0069 で確認する。
+`backend/warrior/tests/fixtures/ai_outputs/` に、画面の確認に使う固定の AI の出力を置く。実モデルの品質は 0069 で確認する。
 `backend/warrior/src/router.rs` と `backend/warrior/src/scheduled.rs` に、生成の行の作成と `pending` の送信を追加する。
 `backend/warrior/src/training_session.rs` の終了の処理に、生成の行の作成を追加する。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `ai_generation` と `ai_outputs` を追加する。

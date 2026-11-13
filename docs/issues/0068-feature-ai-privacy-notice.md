@@ -37,7 +37,7 @@ AI の画面ができた後に、リリース前に必ず入れる。
 - 送らない情報: アカウントの識別子、メールアドレス、端末の識別子、プッシュ購読。
 - AI の提供者: Cloudflare の Workers AI。
 - 学習の扱い: Cloudflare は Workers AI で処理したコンテンツを AI モデルの学習に使わない。
-- 保存の扱い: Workers AI の標準推論では、入力と出力を処理に必要な期間だけ保持する。アプリは AI の入力と出力のスナップショットを、アカウントの削除まで保存する。
+- 保存の扱い: Workers AI の標準推論では、入力と出力を処理に必要な期間だけ保持する。アプリは AI の入出力スナップショットを、アカウントの削除まで保存する。
 
 通知の文面は、Cloudflare の「Your Data and Workers AI」の記載に合わせる。
 参照: `https://developers.cloudflare.com/workers-ai/platform/data-usage/`。

@@ -37,7 +37,7 @@ Service Worker 自身の wasm と JS の版を揃え、キャッシュの版に�
 Service Worker 自身の wasm は install のときに Cache API に保存し、ローダーは起動時にキャッシュから読む。Service Worker 自身の wasm がキャッシュにない場合、ローダーはネットワークから取得して Cache API に保存する。
 ネットワークからの取得に失敗しても、キャッシュから起動できるようにする。
 
-記録中の入力の端末内への保存、IndexedDB のスキーマの移行、送信待ちの列、再読み込み後の復元は ADR-002 に従う。
+記録中の入力の端末内への保存、IndexedDB のスキーマの移行、送信待ちの列、再読み込みの後の復元は ADR-002 に従う。
 この ADR は、Service Worker のキャッシュとプッシュ通知を扱う。
 
 Service Worker は、アプリの静的なファイル、アプリの wasm、CSS、アイコンをキャッシュする。
