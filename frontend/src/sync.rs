@@ -29,6 +29,7 @@ pub struct SyncStatus {
 pub static SYNC_STATUS: GlobalSignal<SyncStatus> = Signal::global(SyncStatus::default);
 static SYNC_OUTBOX: GlobalSignal<Vec<OutboxEntry>> = Signal::global(Vec::new);
 static SYNC_CONFIRMED: GlobalSignal<Vec<ConfirmedMemo>> = Signal::global(Vec::new);
+static OUTBOX_REVISION: GlobalSignal<u64> = Signal::global(|| 0);
 
 /// サーバーが受理したトレーニングごとのメモと順序。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,10 +112,14 @@ pub fn failed_operations() -> Vec<OutboxEntry> {
         .collect()
 }
 
-/// 端末内の保存の後に状態を読み直し、送信を始める。
-pub async fn after_local_save() {
-    refresh_status().await;
-    flush().await;
+/// 端末内の保存のたびに増える世代。
+pub fn outbox_revision() -> u64 {
+    OUTBOX_REVISION()
+}
+
+/// 端末内の保存の後に送信を要求する。flush は App の effect が起動する。
+pub fn request_flush() {
+    *OUTBOX_REVISION.write() += 1;
 }
 
 /// 失敗した操作を再試行する。

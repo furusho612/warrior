@@ -1,5 +1,8 @@
 //! 記録の開始と、記録中のトレーニングのメモの端末内への保存。
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use dioxus::prelude::*;
 use dioxus_router::navigator;
 use warrior_core::datetime;
@@ -21,7 +24,6 @@ pub fn RecordScreen() -> Element {
 
     use_effect(move || {
         spawn(async move {
-            sync::start().await;
             let Ok(storage) = storage::current().await else {
                 return;
             };
@@ -71,7 +73,7 @@ async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<b
     match result {
         Ok(session) => {
             error.set(None);
-            sync::after_local_save().await;
+            sync::request_flush();
             let _ = navigator().push(Route::RecordSession {
                 training_id: session.id,
             });
@@ -145,6 +147,16 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     }
 }
 
+#[derive(Clone)]
+struct SaveState {
+    /// 保存中の表示。
+    saving: Signal<bool>,
+    /// 保存タスクが走っているか。
+    in_flight: Rc<Cell<bool>>,
+    /// 保存中に新しい入力があったか。
+    dirty: Rc<Cell<bool>>,
+}
+
 #[component]
 fn MemoEditor(
     session: Signal<Option<SessionRecord>>,
@@ -153,8 +165,16 @@ fn MemoEditor(
     save_error: Signal<Option<String>>,
 ) -> Element {
     let mut memo = memo;
-    let mut saving = use_signal(|| false);
-    let mut dirty = use_signal(|| false);
+    let saving = use_signal(|| false);
+    let in_flight = use_hook(|| Rc::new(Cell::new(false)));
+    let dirty = use_hook(|| Rc::new(Cell::new(false)));
+    let state = SaveState {
+        saving,
+        in_flight,
+        dirty,
+    };
+    let input_state = state.clone();
+    let retry_state = state.clone();
 
     rsx! {
         label { class: "text-[13px] font-bold", r#for: "record-memo", "{text(Key::RecordMemoLabel)}" }
@@ -166,22 +186,20 @@ fn MemoEditor(
             placeholder: "{text(Key::RecordMemoPlaceholder)}",
             oninput: move |event| {
                 memo.set(event.value());
-                if saving() {
-                    dirty.set(true);
+                input_state.dirty.set(true);
+                if input_state.in_flight.replace(true) {
                     return;
                 }
-                saving.set(true);
                 spawn(save_loop(
                     session,
                     memo,
                     persisted_memo,
-                    saving,
-                    dirty,
+                    input_state.clone(),
                     save_error,
                 ));
             },
         }
-        if saving() {
+        if (state.saving)() {
             p { class: "text-[13px] text-text-sub", "{text(Key::RecordSaving)}" }
         }
         if let Some(message) = save_error() {
@@ -189,16 +207,16 @@ fn MemoEditor(
             button {
                 class: "min-h-11 border border-line px-3 text-[13px]",
                 onclick: move |_| {
-                    if saving() {
+                    if retry_state.in_flight.get() {
                         return;
                     }
-                    saving.set(true);
+                    retry_state.in_flight.set(true);
+                    retry_state.dirty.set(true);
                     spawn(save_loop(
                         session,
                         memo,
                         persisted_memo,
-                        saving,
-                        dirty,
+                        retry_state.clone(),
                         save_error,
                     ));
                 },
@@ -282,7 +300,6 @@ async fn load(
     mut persisted_memo: Signal<String>,
     mut error: Signal<Option<String>>,
 ) {
-    sync::start().await;
     let Ok(storage) = storage::current().await else {
         error.set(Some(text(Key::RecordLoadFailed).to_owned()));
         return;
@@ -309,14 +326,15 @@ async fn save_loop(
     mut session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     mut persisted_memo: Signal<String>,
-    mut saving: Signal<bool>,
-    mut dirty: Signal<bool>,
+    mut state: SaveState,
     mut save_error: Signal<Option<String>>,
 ) {
+    state.saving.set(true);
     loop {
-        dirty.set(false);
+        state.dirty.set(false);
         let Some(record) = session() else {
-            saving.set(false);
+            state.saving.set(false);
+            state.in_flight.set(false);
             return;
         };
         let draft = memo();
@@ -327,18 +345,19 @@ async fn save_loop(
                 }
                 session.set(Some(updated));
                 save_error.set(None);
-                sync::after_local_save().await;
+                sync::request_flush();
             }
             Err(_) => {
                 save_error.set(Some(text(Key::RecordSaveFailed).to_owned()));
                 break;
             }
         }
-        if !dirty() {
+        if !state.dirty.get() {
             break;
         }
     }
-    saving.set(false);
+    state.saving.set(false);
+    state.in_flight.set(false);
 }
 
 async fn create_session() -> Result<SessionRecord, StorageError> {
