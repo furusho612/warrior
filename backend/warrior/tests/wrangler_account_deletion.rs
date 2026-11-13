@@ -62,6 +62,13 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
     assert_eq!(count(&server, "user_exercises"), 0);
     assert_eq!(count(&server, "user_exercise_muscles"), 0);
     assert_eq!(count(&server, "master_exercise_overrides"), 0);
+    assert_eq!(count(&server, "training_sessions"), 0);
+    assert_eq!(count(&server, "training_exercises"), 0);
+    assert_eq!(count(&server, "sets"), 0);
+    assert_eq!(count(&server, "set_segments"), 0);
+    assert_eq!(count(&server, "supersets"), 0);
+    assert_eq!(count(&server, "superset_members"), 0);
+    assert_eq!(count(&server, "applied_operations"), 0);
     assert_eq!(count(&server, "muscles"), 1);
     assert_eq!(count(&server, "master_exercises"), 1);
     assert_eq!(
@@ -149,6 +156,34 @@ fn seed_user(server: &DevServer, session_hash: &str) {
         format!(
             "INSERT INTO master_exercise_overrides (user_id, master_exercise_id, deleted, updated_at) \
              VALUES ('{USER_ID}', 'master-1', 0, '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \
+             VALUES ('training-1', '{USER_ID}', '2026-01-01', '2026-01-01T00:00:00Z', 'メモ', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO training_exercises (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
+             VALUES ('training-exercise-1', '{USER_ID}', 'training-1', 'master-1', '{{}}', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO sets (id, user_id, training_exercise_id, position, kind, completed, created_at, updated_at) \
+             VALUES ('set-1', '{USER_ID}', 'training-exercise-1', 0, 'normal', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO set_segments (id, user_id, set_id, position, weight_kg, reps, created_at, updated_at) \
+             VALUES ('segment-1', '{USER_ID}', 'set-1', 0, 100.0, 5, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO supersets (id, user_id, training_id, position, created_at, updated_at) \
+             VALUES ('superset-1', '{USER_ID}', 'training-1', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO superset_members (user_id, superset_id, training_exercise_id, position) \
+             VALUES ('{USER_ID}', 'superset-1', 'training-exercise-1', 0)"
+        ),
+        format!(
+            "INSERT INTO applied_operations (operation_id, user_id, training_id, kind, applied_at) \
+             VALUES ('operation-1', '{USER_ID}', 'training-1', 'training_session_create', '2026-01-01T00:00:00Z')"
         ),
     ] {
         server

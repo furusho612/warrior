@@ -16,6 +16,7 @@ pub mod rate_limit;
 pub mod router;
 pub mod scheduled;
 pub mod security;
+pub mod sync;
 
 use error::ErrorCode;
 

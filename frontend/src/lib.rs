@@ -9,5 +9,7 @@ pub mod passkey;
 pub mod pwa;
 pub mod routes;
 pub mod screens;
+pub mod storage;
+pub mod sync;
 pub mod text;
 pub mod theme;

@@ -7,6 +7,7 @@ use worker::{Request, Response, Result, RouteContext, Router};
 
 use crate::account;
 use crate::auth::{oauth, passkey, session};
+use crate::sync;
 
 /// ヘルスチェックの経路の名前。
 pub const HEALTH_ROUTE_NAME: &str = "health";
@@ -18,6 +19,8 @@ pub const GOOGLE_CALLBACK_ROUTE_NAME: &str = "auth_google_callback";
 pub const LOGOUT_ROUTE_NAME: &str = "auth_logout";
 /// 現在の利用者を返す経路の名前。
 pub const ME_ROUTE_NAME: &str = "me";
+/// 同期の操作を適用する経路の名前。
+pub const SYNC_OPERATION_ROUTE_NAME: &str = "sync_operation";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -31,6 +34,7 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/me", session::me)
         .get_async("/api/me/passkeys", passkey::list)
         .delete_async("/api/account", account::delete)
+        .post_async("/api/sync/operations", sync::apply_operation)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
         .get_async(
             "/api/auth/reauthenticate/google/start",
@@ -64,6 +68,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/auth/google/callback" => GOOGLE_CALLBACK_ROUTE_NAME,
         "/api/auth/logout" => LOGOUT_ROUTE_NAME,
         "/api/me" => ME_ROUTE_NAME,
+        "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
         "/api/me/passkeys" => "passkeys_list",
         "/api/me/passkeys/:id" => "passkeys_delete",
         "/api/account" => "account_delete",
@@ -86,7 +91,7 @@ async fn health(_request: Request, _context: RouteContext<()>) -> Result<Respons
 mod tests {
     use super::{
         route_name, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME,
-        LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME,
+        LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
     };
 
     #[test]
@@ -106,6 +111,14 @@ mod tests {
         );
         assert_eq!(route_name("/api/auth/logout"), LOGOUT_ROUTE_NAME);
         assert_eq!(route_name("/api/me"), ME_ROUTE_NAME);
+    }
+
+    #[test]
+    fn names_the_sync_operation_route() {
+        assert_eq!(
+            route_name("/api/sync/operations"),
+            SYNC_OPERATION_ROUTE_NAME
+        );
     }
 
     #[test]

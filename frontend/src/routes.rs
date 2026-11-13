@@ -181,6 +181,20 @@ pub fn tab_is_active(current: &Route, tab: Tab) -> bool {
     }
 }
 
+/// 画面をブラウザの読み込みで切り替える。
+///
+/// Home の復元と、破棄の後の `/record` への移動で使う。どちらも Dioxus の runtime の外で
+/// 起動した処理の途中で経路が変わるため、ルーターの push では runtime が再入して panic
+/// することがある。ブラウザの読み込みで起動し直せば、未接続でも Service Worker の
+/// キャッシュからアプリを開いて記録を続けられる。記録の開始 (`/record` から
+/// `/record/:training_id`) と `/record` の復元は、画面の effect からルーターの push で
+/// 遷移する。
+pub fn navigate(path: &str) {
+    if let Some(window) = web_sys::window() {
+        let _ = window.location().set_href(path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
