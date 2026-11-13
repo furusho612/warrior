@@ -8,8 +8,8 @@ use dioxus_router::navigator;
 use warrior_core::datetime;
 use warrior_core::ids::uuid_v4_from_bytes;
 use warrior_core::sync::{
-    Operation, OperationKind, OutboxEntry, SessionCreatePayload, SessionRecord,
-    SessionUpdatePayload,
+    failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
+    SessionCreatePayload, SessionRecord, SessionUpdatePayload,
 };
 
 use crate::routes::Route;
@@ -82,6 +82,14 @@ async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<b
     }
 }
 
+/// 画面が読む記録の状態。
+#[derive(Clone, PartialEq, Default)]
+struct RecordState {
+    status: SyncStatus,
+    confirmed: String,
+    failed: Vec<OutboxEntry>,
+}
+
 #[component]
 pub fn RecordSessionScreen(training_id: String) -> Element {
     let session = use_signal(|| Option::<SessionRecord>::None);
@@ -91,6 +99,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let route_id = training_id.clone();
+    let resource_id = training_id.clone();
 
     use_effect(move || {
         let id = route_id.clone();
@@ -99,10 +108,17 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         });
     });
 
-    let status = sync::status();
-    let confirmed = sync::confirmed(&training_id).0;
-    let (status_value, status_text) = sync_status_text(status, &memo(), &confirmed);
-    let failed = sync::failed_operations();
+    let record_state = use_resource(move || {
+        let id = resource_id.clone();
+        async move {
+            let _ = sync::outbox_revision();
+            sync::flush().await;
+            read_record_state(&id).await
+        }
+    });
+    let state = record_state().unwrap_or_default();
+    let (status_value, status_text) = sync_status_text(state.status, &memo(), &state.confirmed);
+    let failed = state.failed;
 
     rsx! {
         section {
@@ -169,6 +185,7 @@ fn MemoEditor(
 ) -> Element {
     let mut memo = memo;
     let saving = use_signal(|| false);
+    let saved_revision = use_signal(|| 0u64);
     let in_flight = use_hook(|| Rc::new(Cell::new(false)));
     let dirty = use_hook(|| Rc::new(Cell::new(false)));
     let state = SaveState {
@@ -178,6 +195,12 @@ fn MemoEditor(
     };
     let input_state = state.clone();
     let retry_state = state.clone();
+
+    use_effect(move || {
+        if saved_revision() > 0 {
+            sync::request_flush();
+        }
+    });
 
     rsx! {
         div {
@@ -200,6 +223,7 @@ fn MemoEditor(
                         session,
                         memo,
                         persisted_memo,
+                        saved_revision,
                         input_state.clone(),
                         save_error,
                     ));
@@ -222,6 +246,7 @@ fn MemoEditor(
                             session,
                             memo,
                             persisted_memo,
+                            saved_revision,
                             retry_state.clone(),
                             save_error,
                         ));
@@ -281,13 +306,9 @@ fn FailedOperations(
                                             Some(DiscardOutcome::MemoReverted(updated)) => {
                                                 memo.set(updated.memo.clone());
                                                 persisted_memo.set(updated.memo.clone());
-                                                sync::set_confirmed(
-                                                    &updated.id,
-                                                    &updated.confirmed_memo,
-                                                    updated.confirmed_sequence,
-                                                );
                                                 memo_revision.set(memo_revision() + 1);
                                                 session.set(Some(updated));
+                                                sync::request_flush();
                                             }
                                             _ => {}
                                         }
@@ -318,24 +339,44 @@ async fn load(
         Ok(Some(record)) => {
             memo.set(record.memo.clone());
             persisted_memo.set(record.memo.clone());
-            sync::set_confirmed(
-                &record.id,
-                &record.confirmed_memo,
-                record.confirmed_sequence,
-            );
             session.set(Some(record));
             error.set(None);
         }
         Ok(None) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
         Err(_) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
     }
-    sync::refresh_status().await;
+}
+
+async fn read_record_state(training_id: &str) -> RecordState {
+    let Ok(storage) = storage::current().await else {
+        return RecordState::default();
+    };
+    let entries = storage.outbox_entries().await.unwrap_or_default();
+    let confirmed = storage
+        .session(training_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|session| session.confirmed_memo)
+        .unwrap_or_default();
+    RecordState {
+        status: SyncStatus {
+            unsaved: unsaved_count(&entries),
+            failed: failed_count(&entries),
+        },
+        confirmed,
+        failed: entries
+            .into_iter()
+            .filter(|entry| entry.state == OutboxState::Failed)
+            .collect(),
+    }
 }
 
 async fn save_loop(
     mut session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     mut persisted_memo: Signal<String>,
+    mut saved_revision: Signal<u64>,
     mut state: SaveState,
     mut save_error: Signal<Option<String>>,
 ) {
@@ -355,7 +396,7 @@ async fn save_loop(
                 }
                 session.set(Some(updated));
                 save_error.set(None);
-                sync::request_flush();
+                saved_revision.set(saved_revision() + 1);
             }
             Err(_) => {
                 save_error.set(Some(text(Key::RecordSaveFailed).to_owned()));

@@ -278,10 +278,12 @@ pub async fn wait_for_attribute(
         if attribute(driver, selector, attribute_name).await == expected {
             return;
         }
-        assert!(
-            Instant::now() < deadline,
-            "the attribute {attribute_name} of {selector} did not become {expected}"
-        );
+        if Instant::now() >= deadline {
+            let logs = driver.get_log("browser").await.unwrap_or_default();
+            panic!(
+                "the attribute {attribute_name} of {selector} did not become {expected}: {logs:?}"
+            );
+        }
         std::thread::sleep(POLL_INTERVAL);
     }
 }
