@@ -73,6 +73,8 @@ Cron Triggers で、期限を過ぎた予約と、lease の期限を過ぎた Qu
 - [ ] レストを途中で切り上げたときと、トレーニングを終了したときは、予約済みのプッシュ通知が届かない。レストを延長または短縮したときは、変更後の終了予定時刻にだけ通知が届く。これは REQ-TMR-010 の受入基準に対応する。
 - [ ] 通信できない状態でセットを完了すると、プッシュ通知は予約されず、レストの終了を音と画面表示だけで知らせる。これは REQ-TMR-011 の受入基準に対応する。
 - [ ] 通知が、トレーニングを開始した端末の購読にだけ送られる。同じアカウントのほかの端末には送られない。これは `REQ-TMR-008` の受入基準のうち、通知が開始した端末にだけ届くことに対応する。
+- [ ] 別のアカウントの予約 ID を指定した変更と取り消しが 404 になる。0015 の所有者検査を使う。
+- [ ] `rest_push_reservations` がアカウントの削除の対象の表一覧に含まれ、削除のテストで行が残らない。
 - [ ] 同じ予約 ID と版のメッセージを複数回処理しても、通知が最大 1 回である。
 - [ ] 古い版のメッセージが届いても、通知を送らない。
 - [ ] 終了予定時刻から 30 秒を過ぎたメッセージを送らない。
@@ -87,6 +89,7 @@ Cron Triggers で、期限を過ぎた予約と、lease の期限を過ぎた Qu
 ## 解決方法
 
 `migrations/` に `rest_push_reservations` の表を追加し、`push_subscriptions` に端末の ID を追加する。
+`backend/warrior_core/src/account_deletion.rs` の表の一覧に `rest_push_reservations` を追加する。
 `backend/warrior_core/src/rest_push.rs` に、送信の条件と予約の版の規則を置く。
 `backend/warrior/src/push.rs` に、予約の作成、取り消し、再予約、消費側の処理を置く。
 `backend/warrior/src/queue.rs` に、`JOBS_QUEUE` の producer と consumer を置く。

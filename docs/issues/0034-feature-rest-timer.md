@@ -1,6 +1,6 @@
 # レストタイマーと画面の消灯防止を実装する
 
-- Requirements: REQ-TMR-001, REQ-TMR-002, REQ-TMR-003, REQ-TMR-004, REQ-TMR-005, REQ-TMR-006
+- Requirements: REQ-TMR-001, REQ-TMR-002, REQ-TMR-003, REQ-TMR-004, REQ-TMR-005, REQ-TMR-006, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017

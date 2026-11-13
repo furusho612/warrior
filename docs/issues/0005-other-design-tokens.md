@@ -24,7 +24,7 @@ ADR-011 の生成の手順をビルドに組み込む。
 
 ## 設計方針
 
-ビルド用のクレート `tools/token-gen` をワークスペースに追加し、`docs/design/tokens.json` を読んで次の 2 つを生成する。
+ビルド用のクレート `tools/token-gen` をワークスペースに追加し、`docs/design/tokens.json` を原本として読んで次の 2 つを生成する。原本は `docs/design/` に置き、生成物だけを `frontend/` に置く。
 
 - `frontend/src/generated/tokens.rs`: 色、フォント、寸法、筋肉の単位の識別子を型付きの定数にする。
 - `frontend/public/generated/tokens.css`: ライトとダークの CSS カスタムプロパティを出力する。

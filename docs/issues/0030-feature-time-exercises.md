@@ -1,6 +1,6 @@
 # 時間で記録する種目を実装する
 
-- Requirements: REQ-SET-010
+- Requirements: REQ-SET-010, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017

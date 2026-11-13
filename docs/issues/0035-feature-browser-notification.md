@@ -29,8 +29,7 @@
 
 レストの終了予定時刻になったとき、画面が隠れている場合はブラウザ通知を出す。
 画面が見えている場合は、画面の終了の表示だけを出す。
-通知は Service Worker の登録から `showNotification` を呼ぶ。
-Service Worker が使えない場合は、ページの `Notification` を使う。
+通知はページの `Notification` を使う。Service Worker の `push` 通知と `notificationclick` は 0036 が担う。
 
 通知の本文には、種目名、重量、回数などの記録の内容を含めない。
 レストが終了したことだけを伝える。

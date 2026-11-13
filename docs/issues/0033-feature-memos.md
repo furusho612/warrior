@@ -1,6 +1,6 @@
 # トレーニングと種目のメモを実装する
 
-- Requirements: REQ-REC-007
+- Requirements: REQ-REC-007, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017

@@ -24,7 +24,7 @@ PWA の manifest と Service Worker は、レスト通知の受信とアプリ�
 ## 設計方針
 
 PWA の manifest を JSON で `frontend/public/` に置く。
-ADR-001 は、単一の Web アプリを PWA として提供し、Service Worker がプッシュ通知の受信と静的なファイルの配信を担うと決めている。
+ADR-001 は、単一の Web アプリを PWA として提供し、Service Worker がプッシュ通知の受信と静的なファイルの配信を担うと決めている。この issue は Service Worker の器とキャッシュを置き、プッシュ通知の受信と表示、通知のクリックの処理は 0036 が加える。
 ADR-020 は、Service Worker のロジックを Rust で書き、Service Worker 自身の wasm と JS の版を揃えてキャッシュの版に使うと決めている。
 この issue はこれらの決定に従う。
 `name`、`short_name`、`start_url`、`display`、`background_color`、`theme_color`、アイコンを含める。
@@ -74,7 +74,7 @@ iOS の Safari で、ホーム画面に追加していない状態を検出し�
 ## 解決方法
 
 `frontend/public/manifest.webmanifest` とアイコンを追加する。
-`service-worker/Cargo.toml` と `service-worker/src/lib.rs` に、`install`、`activate`、`fetch`、`push`、`notificationclick` の処理を置く。
+`service-worker/Cargo.toml` と `service-worker/src/lib.rs` に、`install`、`activate`、`fetch` の処理を置く。`push` と `notificationclick` の処理は 0036 が追加する。
 `frontend/public/sw.js` に、生成された JS を読み込む最小のローダーを置く。
 `frontend/src/pwa.rs` に、Service Worker の登録、更新の検出、再読み込み、iOS の追加の案内を置く。
 `frontend/src/text.rs` に、更新とホーム画面への追加の文言を追加する。

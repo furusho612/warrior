@@ -31,10 +31,10 @@ D1 のカウンタの表も、Cron Triggers の期限切れの削除もない。
 表は 2 つに分ける。
 
 - `user_rate_limits`: 認証済みの利用者のカウンタ。`user_id`、`kind`、`window_start`、`count` を持つ。
-- `ip_rate_limits`: 認証の前の利用者のカウンタ。`ip`、`kind`、`window_start`、`count` を持つ。
+- `ip_rate_limits`: 認証の開始とコールバック、パスキーの登録とログインのカウンタ。`ip`、`kind`、`window_start`、`count` を持つ。
 
-認証の前の経路は IP ごとに数える。
-認証済みの経路は利用者ごとに数える。
+認証の開始とコールバック、パスキーの登録とログインは IP ごとに数える。
+AI とプッシュ購読は利用者ごとに数える。
 IP は `CF-Connecting-IP` ヘッダから取る。
 `X-Forwarded-For` は使わない。
 `CF-Connecting-IP` がない要求は、レート制限の対象の経路では 400 で拒否する。

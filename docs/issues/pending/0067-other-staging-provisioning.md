@@ -1,7 +1,7 @@
 # staging の資源を必要になった時点で用意する
 
 - Requirements: REQ-NFR-001, REQ-NFR-003, REQ-NFR-004, REQ-NFR-005, REQ-NFR-009, REQ-NFR-013, REQ-NFR-014, REQ-NFR-017 (staging の用意は ADR-023)
-- Priority: Low
+- Priority: Medium
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-staging-provisioning
