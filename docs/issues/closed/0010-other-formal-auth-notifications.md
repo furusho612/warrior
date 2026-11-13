@@ -3,6 +3,7 @@
 - Requirements: REQ-NFR-006, REQ-NFR-013, REQ-NFR-014, REQ-TMR-008, REQ-TMR-009, REQ-TMR-010, REQ-TMR-011
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-formal-auth-notifications
 
@@ -64,3 +65,8 @@ TLC を 0009 と同じ仕組みで CI で実行する。
 `formal/Auth.tla`、`formal/RestNotification.tla` を追加し、`formal/README.md` を更新する。
 `mise.toml` の `formal` タスクに 4 つのモデルの実行を追加する。
 `.github/workflows/ci.yml` の TLC のジョブが 4 つのモデルを実行するようにする。
+
+## 結果
+
+`mise run formal` で 4 つのモデルを検査し、いずれも違反なしで終了した。`Auth` は 128305 states / 11664 distinct、`RestNotification` は 73985 states / 4096 distinct を検査した。
+ガードを外したコピーでは、チャレンジと OAuth の二重消費、ログアウト後のセッション利用、パスキー削除による Google ログインの喪失、取り消し済み・古い終了予定時刻の通知で `Invariant Inv is violated` を確認した。詳細は `formal/README.md` に記録した。
