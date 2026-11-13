@@ -7,6 +7,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use thirtyfour::prelude::*;
+use thirtyfour::{ChromiumLikeCapabilities, LoggingPrefsLogLevel};
 
 const DRIVER_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -99,6 +100,9 @@ pub async fn open(browser: Browser, driver: &DriverProcess) -> WebDriver {
     let capabilities: thirtyfour::Capabilities = match browser {
         Browser::Chrome => {
             let mut capabilities = DesiredCapabilities::chrome();
+            capabilities
+                .set_browser_log_level(LoggingPrefsLogLevel::Info)
+                .expect("browser logging");
             for argument in [
                 "--headless=new",
                 "--no-sandbox",

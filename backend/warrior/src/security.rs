@@ -6,7 +6,7 @@
 use worker::{Headers, Method, Request, Response, Result, Url};
 
 /// 外部スクリプトを許可しない CSP。WASM の実行と Google Fonts だけを許可する。
-pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; manifest-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
 /// HSTS。
 pub const STRICT_TRANSPORT_SECURITY: &str = "max-age=31536000; includeSubDomains";

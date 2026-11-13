@@ -8,4 +8,22 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+warrior_core = { path = "../backend/warrior_core" }
 wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Cache",
+    "CacheStorage",
+    "Clients",
+    "Event",
+    "EventTarget",
+    "ExtendableEvent",
+    "FetchEvent",
+    "MessageEvent",
+    "Request",
+    "Response",
+    "ServiceWorkerGlobalScope",
+    "Url",
+    "WorkerGlobalScope",
+] }
