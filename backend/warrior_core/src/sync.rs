@@ -143,6 +143,9 @@ pub struct SessionRecord {
     #[serde(default)]
     pub set_count: Option<u32>,
     /// 終了時に更新した自己ベスト。
+    ///
+    /// サーバーの `training_sessions.personal_bests` はセッションのベスト全部を持つため、
+    /// 端末のこの値とは意味が異なる。端末は応答で受け取った更新分だけを保存する。
     #[serde(default)]
     pub personal_bests: Vec<PersonalBestItem>,
     /// 作成した時刻。

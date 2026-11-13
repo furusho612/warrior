@@ -519,8 +519,13 @@ impl PersonalBest {
     }
 
     /// セットを完了した時点の自己ベストを判定し、更新した項目を返す。
+    ///
+    /// ウォームアップセットは、時間で記録する種目でも自己ベストの対象にしない。
     pub fn update(&mut self, record: &SetRecord, achieved_on: JstDate) -> BestUpdates {
         if record.key() != &self.key {
+            return BestUpdates::default();
+        }
+        if record.kind() == SetKind::Warmup {
             return BestUpdates::default();
         }
 
@@ -771,6 +776,34 @@ mod tests {
         assert_eq!(record.max_weight_kg(), None);
         assert_eq!(record.estimated_one_rep_max(), None);
         assert_eq!(record.counted_sets(), 0.0);
+    }
+
+    #[test]
+    fn warmup_weight_does_not_update_the_personal_best() {
+        let mut best = PersonalBest::new(key());
+        let updates = best.update(&record(SetKind::Warmup, vec![segment(100.0, 10)]), date(12));
+        assert_eq!(updates, Default::default());
+        assert!(best.max_weight().is_none());
+        assert!(best.estimated_one_rep_max().is_none());
+        assert!(best.total_weight().is_none());
+        assert!(best.longest_duration().is_none());
+    }
+
+    #[test]
+    fn warmup_time_does_not_update_the_longest_duration_best() {
+        let mut best = PersonalBest::new(key());
+        let record = SetRecord::new(
+            key(),
+            SetKind::Warmup,
+            Vec::new(),
+            None,
+            Some(90),
+            RecordMode::Time,
+        )
+        .unwrap();
+        let updates = best.update(&record, date(12));
+        assert_eq!(updates, Default::default());
+        assert!(best.longest_duration().is_none());
     }
 
     #[test]

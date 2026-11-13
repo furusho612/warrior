@@ -270,13 +270,18 @@ async fn finish_training(
     error.set(None);
     // 送信待ちが残ったまま終了すると、サーバーの記録とサマリーが食い違う。
     sync::flush().await;
-    match pending_operations(&record.id).await {
-        Ok(true) => {
+    match finish_blocker(&record.id).await {
+        Ok(Some(FinishBlocker::Pending)) => {
             finishing.set(false);
             error.set(Some(text(Key::RecordPendingOperations).to_owned()));
             return;
         }
-        Ok(false) => {}
+        Ok(Some(FinishBlocker::Failed)) => {
+            finishing.set(false);
+            error.set(Some(text(Key::RecordFailedOperationsRemain).to_owned()));
+            return;
+        }
+        Ok(None) => {}
         Err(_) => {
             finishing.set(false);
             error.set(Some(text(Key::RecordFinishFailed).to_owned()));
@@ -643,12 +648,33 @@ async fn save_loop(mut signals: RecordSignals, mut state: SaveState) {
     state.in_flight.set(false);
 }
 
-async fn pending_operations(training_id: &str) -> Result<bool, StorageError> {
+/// 終了を止める送信待ちの種別。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinishBlocker {
+    /// 送信中の操作が残っている。
+    Pending,
+    /// 恒久的に失敗した操作が残っている。
+    Failed,
+}
+
+async fn finish_blocker(training_id: &str) -> Result<Option<FinishBlocker>, StorageError> {
     let storage = storage::current().await?;
     let entries = storage.outbox_entries().await?;
-    Ok(entries
+    Ok(blocker(&entries, training_id))
+}
+
+fn blocker(entries: &[OutboxEntry], training_id: &str) -> Option<FinishBlocker> {
+    let mut blocker = None;
+    for entry in entries
         .iter()
-        .any(|entry| entry.operation.training_id == training_id))
+        .filter(|entry| entry.operation.training_id == training_id)
+    {
+        if entry.state == OutboxState::Failed {
+            return Some(FinishBlocker::Failed);
+        }
+        blocker = Some(FinishBlocker::Pending);
+    }
+    blocker
 }
 
 async fn create_session() -> Result<SessionRecord, StorageError> {
@@ -778,4 +804,52 @@ fn new_uuid() -> Result<String, StorageError> {
 fn now_iso() -> String {
     let seconds = (js_sys::Date::now() / 1000.0) as i64;
     datetime::format_utc(seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    use warrior_core::sync::{Operation, OperationKind, OutboxEntry, OutboxState};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::{blocker, FinishBlocker};
+
+    #[wasm_bindgen_test]
+    fn blocker_separates_pending_and_failed_operations() {
+        assert_eq!(blocker(&[], "training-1"), None);
+        assert_eq!(
+            blocker(&[entry("training-1", OutboxState::Pending)], "training-1"),
+            Some(FinishBlocker::Pending)
+        );
+        assert_eq!(
+            blocker(&[entry("training-2", OutboxState::Failed)], "training-1"),
+            None
+        );
+        assert_eq!(
+            blocker(
+                &[
+                    entry("training-1", OutboxState::Pending),
+                    entry("training-1", OutboxState::Failed),
+                ],
+                "training-1"
+            ),
+            Some(FinishBlocker::Failed),
+            "a failed operation must take precedence over a pending operation"
+        );
+    }
+
+    fn entry(training_id: &str, state: OutboxState) -> OutboxEntry {
+        OutboxEntry {
+            operation: Operation {
+                operation_id: format!("operation-{training_id}-{state:?}"),
+                training_id: training_id.to_owned(),
+                sequence: 1,
+                kind: OperationKind::TrainingSessionUpdate,
+                parent_operation_id: None,
+                payload: serde_json::json!({}),
+            },
+            state,
+            attempts: 0,
+            attempted: false,
+        }
+    }
 }

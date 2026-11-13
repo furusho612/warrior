@@ -85,7 +85,7 @@ fn SummaryBody(summary: TrainingSessionSummary) -> Element {
             }
             SummaryRow {
                 label: text(Key::SummaryTotalWeight).to_owned(),
-                value: format!("{} kg", summary.total_weight_kg),
+                value: format!("{:.1} kg", summary.total_weight_kg),
             }
             SummaryRow {
                 label: text(Key::SummaryExerciseCount).to_owned(),
@@ -125,13 +125,27 @@ fn PersonalBestRow(item: PersonalBestItem) -> Element {
     let name = item.exercise_name.clone();
     rsx! {
         li {
-            class: "flex min-h-11 items-center justify-between border-b border-line",
+            class: "flex min-h-11 items-center gap-2 border-b border-line",
             "data-personal-best": "{item.kind.as_str()}",
             "data-personal-best-value": "{item.value}",
             if let Some(name) = name {
-                span { class: "text-[13px]", "{name} — {label} — {value}" }
+                span {
+                    class: "min-w-0 flex-1 truncate text-[13px]",
+                    "data-personal-best-name": "true",
+                    "{name}"
+                }
             } else {
-                span { class: "text-[13px]", "{label} — {value}" }
+                span { class: "min-w-0 flex-1" }
+            }
+            span {
+                class: "shrink-0 text-[11px] text-text-sub",
+                "data-personal-best-kind": "true",
+                "{label}"
+            }
+            span {
+                class: "shrink-0 text-right text-[15px] font-bold",
+                "data-personal-best-amount": "true",
+                "{value}"
             }
         }
     }
@@ -147,10 +161,12 @@ fn best_label(kind: BestKind) -> &'static str {
 }
 
 fn best_value(item: &PersonalBestItem) -> String {
-    if item.kind == BestKind::LongestDuration {
-        format_duration(item.value as i64)
-    } else {
-        format!("{} kg", item.value)
+    match item.kind {
+        BestKind::LongestDuration => format_duration(item.value as i64),
+        BestKind::EstimatedOneRepMax | BestKind::TotalWeight => {
+            format!("{:.1} kg", item.value)
+        }
+        BestKind::MaxWeight => format!("{} kg", item.value),
     }
 }
 
@@ -170,10 +186,12 @@ fn format_duration(seconds: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use warrior_core::training_session::BestKind;
+    use warrior_core::exercise::Laterality;
+    use warrior_core::set_calc::RecordMode;
+    use warrior_core::training_session::{BestKind, PersonalBestItem};
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use super::{best_label, format_duration};
+    use super::{best_label, best_value, format_duration};
 
     #[wasm_bindgen_test]
     fn format_duration_uses_hours_minutes_and_seconds() {
@@ -191,5 +209,35 @@ mod tests {
         assert_eq!(best_label(BestKind::EstimatedOneRepMax), "推定 1RM");
         assert_eq!(best_label(BestKind::TotalWeight), "種目別の総重量");
         assert_eq!(best_label(BestKind::LongestDuration), "最長時間");
+    }
+
+    #[wasm_bindgen_test]
+    fn estimated_max_and_total_weight_are_rounded_to_one_decimal() {
+        assert_eq!(best_value(&item(BestKind::MaxWeight, 100.0)), "100 kg");
+        assert_eq!(
+            best_value(&item(BestKind::EstimatedOneRepMax, 116.58)),
+            "116.6 kg"
+        );
+        assert_eq!(
+            best_value(&item(BestKind::TotalWeight, 1_640.0)),
+            "1640.0 kg"
+        );
+        assert_eq!(
+            best_value(&item(BestKind::LongestDuration, 90.0)),
+            "1分30秒"
+        );
+    }
+
+    fn item(kind: BestKind, value: f64) -> PersonalBestItem {
+        PersonalBestItem {
+            exercise_id: "bench-press".to_owned(),
+            exercise_name: Some("ベンチプレス".to_owned()),
+            record_mode: RecordMode::WeightAndReps,
+            laterality: Laterality::Bilateral,
+            grip: None,
+            attachment: None,
+            kind,
+            value,
+        }
     }
 }

@@ -1,5 +1,6 @@
 -- トレーニングの開始元と、終了時にサーバーが計算して保存するサマリー。
-ALTER TABLE training_sessions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'empty';
+ALTER TABLE training_sessions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'empty'
+    CHECK (source_kind IN ('empty', 'routine', 'program', 'custom_program'));
 ALTER TABLE training_sessions ADD COLUMN routine_id TEXT;
 ALTER TABLE training_sessions ADD COLUMN program_day_id TEXT;
 ALTER TABLE training_sessions ADD COLUMN custom_program_day_id TEXT;

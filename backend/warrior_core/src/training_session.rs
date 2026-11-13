@@ -368,6 +368,25 @@ mod tests {
         assert!(summary.personal_bests.is_empty());
     }
 
+    /// 対応する要求: `REQ-REC-005`。
+    /// ウォームアップの時間セットは、最長時間の自己ベストの対象にしない。
+    #[test]
+    fn req_rec_005_a_warmup_time_set_does_not_create_a_session_best() {
+        let record = SetRecord::new(
+            key("plank"),
+            SetKind::Warmup,
+            Vec::new(),
+            None,
+            Some(90),
+            RecordMode::Time,
+        )
+        .expect("a valid warmup time set");
+        let summary = summary_from_sets(date(), 60, &[session_set("プランク", record)]);
+        assert_eq!(summary.exercise_count, 1);
+        assert_eq!(summary.set_count, 0);
+        assert!(summary.personal_bests.is_empty());
+    }
+
     #[test]
     fn an_updated_best_needs_to_exceed_the_past_value() {
         let session = vec![
@@ -390,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn an_updated_best_ignores_a_different_grip_or_laterality() {
+    fn an_updated_best_ignores_a_different_grip() {
         let session = vec![grip_best(
             "bench",
             Some("pronated_medium"),
@@ -416,6 +435,19 @@ mod tests {
                 100.0
             )]
         );
+    }
+
+    #[test]
+    fn the_best_key_includes_laterality_and_record_mode() {
+        let base = best("bench", BestKind::MaxWeight, 100.0);
+        let mut unilateral = base.clone();
+        unilateral.laterality = Laterality::Unilateral;
+        let mut time = base.clone();
+        time.record_mode = RecordMode::Time;
+
+        assert!(super::same_best_key(&base, &base));
+        assert!(!super::same_best_key(&base, &unilateral));
+        assert!(!super::same_best_key(&base, &time));
     }
 
     #[test]

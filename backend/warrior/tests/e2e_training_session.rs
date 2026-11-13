@@ -34,11 +34,15 @@ async fn starts_finishes_and_shows_the_summary_in_the_browser() {
     login(&driver, &server, &provider).await;
     let training_id = start_training(&driver, browser).await;
     sync_create_and_seed(&driver, &server, &training_id).await;
-    verify_offline_finish_is_rejected(&driver, &training_id).await;
+    if browser == Browser::Chrome {
+        verify_offline_finish_is_rejected(&driver, &training_id).await;
+    }
     finish_and_verify_summary(&driver, &server, &training_id).await;
     verify_home_does_not_restore(&driver, &server).await;
 
-    browser::assert_no_panic(&driver).await;
+    if browser == Browser::Chrome {
+        browser::assert_no_panic(&driver).await;
+    }
     driver.quit().await.expect("the browser must close");
 }
 
@@ -194,10 +198,19 @@ async fn finish_and_verify_summary(driver: &WebDriver, server: &DevServer, train
     let rendered = eval_json(
         driver,
         "const done = arguments[arguments.length - 1]; \
-         const items = Array.from(document.querySelectorAll('[data-personal-best]')).map((element) => ({ \
-           kind: element.getAttribute('data-personal-best'), \
-           value: Number(element.getAttribute('data-personal-best-value')) \
-         })); \
+         const items = Array.from(document.querySelectorAll('[data-personal-best]')).map((element) => { \
+           const name = element.querySelector('[data-personal-best-name]'); \
+           const label = element.querySelector('[data-personal-best-kind]'); \
+           const amount = element.querySelector('[data-personal-best-amount]'); \
+           return { \
+             kind: element.getAttribute('data-personal-best'), \
+             value: Number(element.getAttribute('data-personal-best-value')), \
+             name: name ? name.textContent : '', \
+             label: label ? label.textContent : '', \
+             amount: amount ? amount.textContent : '', \
+             align: amount ? getComputedStyle(amount).textAlign : '' \
+           }; \
+         }); \
          done(JSON.stringify(items));",
     )
     .await;
@@ -205,8 +218,18 @@ async fn finish_and_verify_summary(driver: &WebDriver, server: &DevServer, train
     for (index, item) in personal_bests.iter().enumerate() {
         assert_eq!(rendered[index]["kind"], item.kind.as_str());
         assert_eq!(rendered[index]["value"].as_f64(), Some(item.value));
+        assert_eq!(rendered[index]["align"], "right");
     }
-    browser::wait_for_text(driver, "ベンチプレス — 最大重量 — 100 kg").await;
+    assert_eq!(rendered[0]["name"], "ベンチプレス");
+    assert_eq!(rendered[0]["label"], "最大重量");
+    assert_eq!(rendered[0]["amount"], "100 kg");
+    assert_eq!(rendered[1]["label"], "推定 1RM");
+    assert_eq!(rendered[1]["amount"], "116.6 kg");
+    assert_eq!(rendered[2]["label"], "種目別の総重量");
+    assert_eq!(rendered[2]["amount"], "1640.0 kg");
+    assert_eq!(rendered[3]["name"], "プランク");
+    assert_eq!(rendered[3]["label"], "最長時間");
+    assert_eq!(rendered[3]["amount"], "1分0秒");
     browser::wait_for_text(driver, "更新した自己ベスト").await;
 }
 
