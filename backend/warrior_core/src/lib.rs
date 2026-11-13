@@ -5,6 +5,7 @@ pub mod cursor;
 pub mod datetime;
 pub mod ids;
 pub mod jst;
+pub mod set_calc;
 pub mod sql;
 
 /// ヘルスチェックが返す状態の値。
