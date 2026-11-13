@@ -79,4 +79,4 @@ i18n の汎用クレートは追加しない。
 `frontend/src/theme.rs` にテーマの属性を設定する関数を置く。
 `frontend/tailwind.css` に 44px と 11px の最小値、角の丸めがないことを反映する。
 `frontend/src/routes.rs` と `frontend/src/text.rs` の単体テストを `frontend/src/` の `#[cfg(test)]` に置く。
-ブラウザの E2E は 0008 の基盤で `frontend/tests/` に置く。
+ブラウザの E2E は 0008 の基盤で `backend/warrior/tests/` に置く。

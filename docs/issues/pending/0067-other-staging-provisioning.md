@@ -39,7 +39,7 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 
 ## 完了条件
 
-- [ ] staging の D1、R2、Queues が作成され、Workers AI のバインディングと Cron Triggers の設定が `[env.staging]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision と Consequences に対応する。
+- [ ] staging の D1、R2、Queues が作成され、staging の D1 の `database_id`、R2 のバケット名、Queues の名前が production と異なり、Workers AI のバインディングと Cron Triggers の設定が `[env.staging]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision と Consequences に対応する。
 - [ ] staging の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list DB --remote --env staging` に未適用がない。適用済みの版は production と同じか、それより新しい。これは ADR-023 の Decision に対応する。
 - [ ] staging の vars にある Relying Party ID と Origin が staging のホスト名である。これは ADR-023 の Decision に対応する。
 - [ ] staging のレート制限の上限値と時間窓が staging の vars にある。これは `REQ-NFR-017` の受入基準「上限と時間窓は環境ごとの設定で変えられる」に対応する。
@@ -48,7 +48,7 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 - [ ] VAPID の公開鍵と subject が staging の vars に、Google のクライアントシークレットと VAPID の秘密鍵が staging の Secret に設定されている。これは ADR-023 の Decision に対応する。
 - [ ] `wrangler deploy --dry-run --env staging` が成功する。これはデプロイ設定の検証の内部条件である。
 - [ ] `mise` の `deploy-staging` が `--env staging` を付けて実行する。これは ADR-023 の Decision に対応する。
-- [ ] `mise run deploy-staging` で staging にデプロイされ、staging の URL の `GET /api/health` が 200 を返す。これは staging の起動の内部条件である。
+- [ ] 利用者が `mise run deploy-staging` を実行し、`warrior-staging.<アカウントのサブドメイン>.workers.dev` の `GET /api/health` が 200 を返す。これは staging の起動の内部条件である。
 - [ ] ローカルの `.dev.vars` に staging の資格情報だけがあり、production の資格情報がない。これは ADR-023 の Decision に対応する。
 - [ ] staging の `AI_MODEL` が production と同じである。これは 0061 と 0069 の判断に対応する。
 - [ ] 0006 の HTTPS と実環境の暗号化 (REQ-NFR-009 の受入基準「すべての通信が暗号化された経路で行われる」) を staging で確かめる。
@@ -69,7 +69,7 @@ Cloudflare のダッシュボードまたは `wrangler` のコマンドで stagi
 Google Cloud の OAuth の設定で、staging のリダイレクト URI を追加する。
 R2 のライフサイクルルールは `wrangler r2 bucket lifecycle add <BUCKET> <NAME> exports/ --expire-days 7` で設定する。
 `mise.toml` に `deploy-staging` を追加する。
-`mise run deploy-staging` で staging にデプロイする。
+利用者が `mise run deploy-staging` で staging にデプロイする。
 `.dev.vars.example` と `.dev.vars` に staging の資格情報の名前を追加する。
 作業の結果は issue に追記し、Secret の値は書かない。
 利用者が staging で iPhone の Safari のパスキーとすべての画面、iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、Android の Chrome のすべての画面、HTTPS と暗号化を確認し、結果を issue に追記する。
