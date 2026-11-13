@@ -7,4 +7,5 @@ members = [
     "frontend",
     "service-worker",
     "tools/token-gen",
+    "tools/test-oidc",
 ]
