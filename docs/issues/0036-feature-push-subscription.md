@@ -65,7 +65,7 @@ iOS でホーム画面に追加していない場合、プッシュ通知が届�
 - [ ] 許可するホストを追加するときは、ADR と許可リストを同じ変更で更新する。
 - [ ] ログアウトでその端末の購読が削除され、アカウントの削除で利用者の全ての購読が削除される。
 - [ ] 結合テストで、endpoint の許可と拒否、同じ endpoint の重複、ログアウトとアカウントの削除を確かめる。
-- [ ] ブラウザのテストで、許可の状態、購読の作成、Service Worker の `push` の表示、通知を押したときの画面の移動を確かめる。`push` のイベントは CDP の `ServiceWorker.deliverPushMessage` で届ける。
+- [ ] E2E で、許可の状態、購読の作成、Service Worker の `push` の表示、通知を押したときの画面の移動を確かめる。`push` のイベントは CDP の `ServiceWorker.deliverPushMessage` で届ける。
 - [ ] ローカルのテストは、許可リストと Service Worker の表示を対象にする。実際のプッシュサービスへの購読は 0067 の staging と 0038 の実機計測で確かめる。
 - [ ] PBT で、endpoint の検証が、HTTPS で許可されたホストの endpoint だけを受理することを確かめる。
 

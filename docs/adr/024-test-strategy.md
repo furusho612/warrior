@@ -205,7 +205,7 @@ issue の `Requirements` に挙げた受入基準ごとに、少なくとも 1 �
 
 ### CI とローカル実行
 
-`mise run check` で、整形、lint、フロントエンドのビルドと lint、形式手法、単体テスト、PBT、結合テスト、ブラウザのテスト、E2E、Fuzzing の型検査を実行する。
+`mise run check` で、整形、lint、フロントエンドのビルドと lint、形式手法、単体テスト、PBT、結合テスト、ブラウザのテスト、E2E、Fuzzing の型検査を実行する。Safari のブラウザテストと E2E は macOS のジョブで `mise run test-browser-safari` と `mise run e2e-safari` を実行する。
 Fuzzing の実行は nightly の CI で行い、`mise run fuzz` に時間の上限を置く。
 `mise run verify-staging` は、利用者が staging にデプロイした後に、Workers AI の正常系と実機のプッシュ通知を確かめる。
 `verify-staging` は、レスト終了時刻と Service Worker の受信時刻の差を 10 回集計し、5 秒以内が 9 回以上かを判定する。通知が届かなかった試行も失敗として数える。
@@ -238,7 +238,7 @@ Service Worker 自身の wasm は `wasm-bindgen-test` で直接テストしに�
 テスト専用のクレートは開発の依存に限り、本番の wasm に含めない。
 
 テストの数が増えるため、テスト名と要求 ID の対応を保つ運用が必要になる。
-`mise run check` を CI と手元の共通の入口にし、テストの実行方法を分散させない。
+`mise run check` を CI と手元の共通の入口にし、テストの実行方法を分散させない。Safari のブラウザテストと E2E だけは macOS のジョブで実行する。
 
 ## References
 

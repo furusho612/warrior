@@ -27,8 +27,7 @@ E2E は `backend/warrior/tests/` に置き、`thirtyfour` で Chrome と Safari 
 `wrangler dev` でローカルの D1、R2、Queues、Cron Triggers を起動し、`migrations/` を適用し、Dioxus のビルドを Static Assets として配信する。
 起動の完了は `GET /api/health` の応答を条件に待つ。固定の `sleep` を書かない。
 
-ブラウザの API を直接使う部品のテストは `wasm-bindgen-test` で書き、Chrome と Safari の実ブラウザで実行する。Safari は Push と WebAuthn を対象外とし、Chrome で確かめる。
-対象は IndexedDB、Service Worker、Push、WebAuthn、通知である。
+ブラウザの API を直接使う部品のテストは `wasm-bindgen-test` で書き、Chrome と Safari の実ブラウザで実行する。対象は IndexedDB、Service Worker、通知である。Push と WebAuthn は Chrome の E2E で、CDP と仮想認証器を使って確かめる。
 
 テスト用の OIDC の提供者は `tools/test-oidc` の別のプロセスで起動する。
 提供者は Google のトークンエンドポイントと UserInfo エンドポイントと同じ形の応答を返す。
@@ -59,7 +58,7 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 ## 完了条件
 
 - [ ] `mise run e2e` が `wrangler dev` とテスト用の OIDC の提供者を起動し、Chrome で `GET /api/health` の JSON を開いて 200 を確認する。これは PRD の要求 ID を持たない基盤の条件である。
-- [ ] `mise run e2e-safari` が macOS の runner で E2E の実行基盤を起動し、`GET /api/health` のスモークが成功する。IndexedDB と Service Worker の E2E は後続の issue で追加する。
+- [ ] `mise run e2e-safari` が macOS の runner で E2E の実行基盤を起動し、`GET /api/health` のスモークが成功する。画面、IndexedDB、Service Worker のキャッシュの E2E は後続の issue で追加する。
 - [ ] `mise run test-browser` が `frontend/tests/browser.rs` の `wasm-bindgen-test` を Chrome の実ブラウザで実行して成功し、`mise run check` から呼ばれる。これは PRD の要求 ID を持たない基盤の条件である。ADR-022 のランナーの版を `frontend/Cargo.lock` の `wasm-bindgen` と揃える。
 - [ ] `mise run test-browser-safari` が `frontend/tests/browser.rs` の `wasm-bindgen-test` を Safari の実ブラウザで実行して成功し、macOS のジョブから呼ばれる。これは PRD の要求 ID を持たない基盤の条件である。ADR-022 のランナーの版を `frontend/Cargo.lock` の `wasm-bindgen` と揃える。
 - [ ] テスト用の OIDC の提供者が `/authorize`、`/token`、`/userinfo`、`/test/user` を持ち、Google の応答と同じ形を返す。
@@ -80,4 +79,4 @@ Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たないた�
 `tools/test-oidc/Cargo.toml` と `tools/test-oidc/src/main.rs` に、テスト用の提供者を置く。ワークスペースに追加し、本番の wasm に含めない。HTTP のサーバーは標準ライブラリの `TcpListener` で実装し、本番の依存を増やさない。
 `frontend/tests/browser.rs` に `wasm-bindgen-test` の入口を置く。
 `mise.toml` に `e2e`、`e2e-safari`、`test-browser`、`test-browser-safari` を追加し、`check` から Chrome の E2E と `test-browser` を呼び、macOS のジョブから `e2e-safari` と `test-browser-safari` を呼ぶ。
-`.github/workflows/ci.yml` に Linux と macOS のジョブを追加し、macOS のジョブが `mise run e2e-safari` と `mise run test-browser-safari` を呼ぶ。
+`.github/workflows/ci.yml` に Linux と macOS のジョブを追加し、macOS のジョブが `safaridriver --enable` を実行した後に `mise run e2e-safari` と `mise run test-browser-safari` を呼ぶ。

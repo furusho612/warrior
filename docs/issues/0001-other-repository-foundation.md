@@ -46,7 +46,7 @@ Rust は 1.99.0、`wasm32-unknown-unknown` のターゲット、clippy、rustfmt
 `frontend:build-service-worker` を `frontend:build` の依存に置く。
 `check` は整形、lint、単体テスト、PBT、フロントエンドのビルド、Service Worker のビルドを順に実行する。
 Fuzzing の型検査は 0065 で `check` に加える。
-Chrome のブラウザテストはそれぞれの issue で `check` に加える。Safari のブラウザテストと E2E は、macOS のジョブで実行するタスクに加える。
+Chrome のブラウザテストはそれぞれの issue で `check` に加える。Safari のブラウザテストと Safari の E2E は、macOS のジョブで実行するタスクに加える。
 各 issue は、追加したテストを `mise run check` か、CI で実行するタスクに含める。
 
 CI は GitHub Actions を前提にし、Linux の runner で `mise run check` を実行するジョブを置く。
