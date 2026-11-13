@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 /// 日本時間と UTC の差 (秒)。
 pub const JAPAN_OFFSET_SECONDS: i64 = 9 * 60 * 60;
 
-const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+pub(crate) const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 /// UTC の時刻を epoch 秒から `YYYY-MM-DDTHH:MM:SSZ` の文字列にする。
 pub fn format_utc(epoch_seconds: i64) -> String {
@@ -106,11 +106,11 @@ fn parse_digits(text: &str) -> Option<u32> {
     Some(value)
 }
 
-fn is_leap_year(year: i64) -> bool {
+pub(crate) fn is_leap_year(year: i64) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-fn days_in_month(year: i64, month: u32) -> Option<u32> {
+pub(crate) fn days_in_month(year: i64, month: u32) -> Option<u32> {
     let days = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -121,7 +121,7 @@ fn days_in_month(year: i64, month: u32) -> Option<u32> {
     Some(days)
 }
 
-fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
+pub(crate) fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
     let last_day = days_in_month(year, month)?;
     if day == 0 || day > last_day {
         return None;
@@ -140,7 +140,7 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
     Some(era * 146_097 + day_of_era - 719_468)
 }
 
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let shifted = days + 719_468;
     let era = if shifted >= 0 {
         shifted

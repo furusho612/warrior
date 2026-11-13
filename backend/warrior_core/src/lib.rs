@@ -4,6 +4,7 @@ pub mod base64url;
 pub mod cursor;
 pub mod datetime;
 pub mod ids;
+pub mod jst;
 pub mod sql;
 
 /// ヘルスチェックが返す状態の値。
