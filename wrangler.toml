@@ -1,0 +1,120 @@
+# トップレベルはローカル開発専用にする (ADR-023)。
+# リモートへデプロイするときは必ず `--env` を付ける。
+name = "warrior-local"
+main = "backend/warrior/build/worker/shim.mjs"
+compatibility_date = "2026-09-21"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "target/dx/warrior_frontend/release/web/public"
+run_worker_first = ["/api/*"]
+not_found_handling = "single-page-application"
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "warrior-local"
+migrations_dir = "migrations"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "warrior-local"
+
+[[queues.producers]]
+binding = "JOBS_QUEUE"
+queue = "warrior-jobs-local"
+
+[[queues.consumers]]
+queue = "warrior-jobs-local"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+
+[ai]
+binding = "AI"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+RP_ID = "localhost"
+ORIGIN = "http://localhost:8787"
+GOOGLE_OAUTH_AUTHORIZE_URL = "http://localhost:8788/authorize"
+GOOGLE_OAUTH_TOKEN_URL = "http://localhost:8788/token"
+GOOGLE_OAUTH_USERINFO_URL = "http://localhost:8788/userinfo"
+GOOGLE_CLIENT_ID = "warrior-local"
+GOOGLE_OAUTH_REDIRECT_URI = "http://localhost:8787/api/auth/google/callback"
+AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
+VAPID_PUBLIC_KEY = "REPLACE_WITH_LOCAL_VAPID_PUBLIC_KEY"
+VAPID_SUBJECT = "mailto:owner@example.com"
+RATE_LIMIT_AUTH_PER_IP = "20"
+RATE_LIMIT_AI_PER_USER = "20"
+RATE_LIMIT_PUSH_PER_USER = "20"
+RATE_LIMIT_WINDOW_SECONDS = "60"
+
+# 本番の値は 0003 で、作成した資源の値に置き換える。
+[env.production]
+name = "warrior"
+
+[env.production.observability]
+enabled = true
+
+[env.production.observability.logs]
+enabled = true
+invocation_logs = true
+
+[env.production.observability.traces]
+enabled = true
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "warrior"
+migrations_dir = "migrations"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[env.production.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "warrior"
+
+[[env.production.queues.producers]]
+binding = "JOBS_QUEUE"
+queue = "warrior-jobs"
+
+[[env.production.queues.consumers]]
+queue = "warrior-jobs"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+
+[env.production.ai]
+binding = "AI"
+
+[env.production.triggers]
+crons = ["* * * * *"]
+
+[env.production.vars]
+RP_ID = "warrior.example.workers.dev"
+ORIGIN = "https://warrior.example.workers.dev"
+GOOGLE_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_OAUTH_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+GOOGLE_CLIENT_ID = "REPLACE_WITH_PRODUCTION_GOOGLE_CLIENT_ID"
+GOOGLE_OAUTH_REDIRECT_URI = "https://warrior.example.workers.dev/api/auth/google/callback"
+AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
+VAPID_PUBLIC_KEY = "REPLACE_WITH_PRODUCTION_VAPID_PUBLIC_KEY"
+VAPID_SUBJECT = "mailto:owner@example.com"
+RATE_LIMIT_AUTH_PER_IP = "20"
+RATE_LIMIT_AI_PER_USER = "20"
+RATE_LIMIT_PUSH_PER_USER = "20"
+RATE_LIMIT_WINDOW_SECONDS = "60"

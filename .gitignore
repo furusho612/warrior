@@ -1,0 +1,18 @@
+/target
+**/target
+.DS_Store
+
+# ローカルの Worker の状態と資格情報
+.wrangler
+.dev.vars
+
+# ビルド時に生成するデザイントークン
+frontend/src/generated/tokens.rs
+frontend/public/generated/
+frontend/public/tailwind.css
+
+# ビルド時に生成する Service Worker の wasm と JavaScript
+frontend/public/sw/
+
+# Dioxus CLI の成果物
+frontend/dist/

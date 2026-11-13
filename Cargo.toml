@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+    "backend/warrior",
+    "backend/warrior_core",
+    "backend/pbt",
+    "frontend",
+    "service-worker",
+    "tools/token-gen",
+    "tools/test-oidc",
+]

@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* docs/design/tokens.json から生成した CSS のカスタムプロパティを読む。
+   色の値はこの生成物だけが持ち、Tailwind の設定には書かない (ADR-011)。 */
+@import "./public/generated/tokens.css";
+
+@source "./src/**/*.{rs,html,css}";
+
+/* 生成したカスタムプロパティを Tailwind のユーティリティに結び付ける。
+   @theme inline は値を変数へ直接展開するため、テーマ属性の切り替えに追随する。 */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-text-sub: var(--text-sub);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-mark: var(--mark);
+  --color-timer-digits: var(--timer-digits);
+  --color-saved: var(--saved);
+  --color-part-chest: var(--part-chest);
+  --color-part-back: var(--part-back);
+  --color-part-shoulders: var(--part-shoulders);
+  --color-part-biceps-forearm: var(--part-biceps-forearm);
+  --color-part-triceps: var(--part-triceps);
+  --color-part-legs: var(--part-legs);
+  --color-part-abs: var(--part-abs);
+  --color-part-other: var(--part-other);
+  --font-sans: var(--font-ui);
+  --font-condensed: var(--font-numeric);
+}

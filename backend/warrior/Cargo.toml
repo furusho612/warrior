@@ -1,0 +1,21 @@
+[package]
+name = "warrior"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+warrior_core = { path = "../warrior_core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+worker = { version = "=0.8.6", features = ["d1", "queue"] }
+
+[dev-dependencies]
+# ブラウザを操作する E2E のクライアント。
+thirtyfour = { version = "0.37", default-features = false, features = ["reqwest", "rustls", "cdp"] }
+# thirtyfour の非同期の API をテストから実行するためのランタイム。
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -1,0 +1,9 @@
+[package]
+name = "warrior_pbt"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+warrior_core = { path = "../warrior_core" }
+proptest = { version = "1", default-features = false, features = ["std"] }
