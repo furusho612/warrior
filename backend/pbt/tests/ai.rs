@@ -58,14 +58,17 @@ fn evaluation(evidence: &str) -> Evaluation {
         good: vec![EvaluationItem {
             text: "重量が伸びた".to_owned(),
             evidence: evidence.to_owned(),
+            reference_reason: None,
         }],
         improvements: vec![EvaluationItem {
             text: "量を増やす".to_owned(),
             evidence: "胸は週 10 セット".to_owned(),
+            reference_reason: None,
         }],
         next_actions: vec![EvaluationItem {
             text: "続ける".to_owned(),
             evidence: "前回 70 kg".to_owned(),
+            reference_reason: None,
         }],
     }
 }
@@ -80,6 +83,7 @@ fn proposal() -> SetProposal {
         duration_seconds: None,
         sets: 3,
         reason: "前回 70 kg から増やす".to_owned(),
+        reference_reason: None,
     }
 }
 
@@ -115,7 +119,7 @@ proptest! {
     }
 
     #[test]
-    fn an_evidence_number_not_in_the_context_is_rejected(number in 1000u32..=9999) {
+    fn an_evidence_number_not_in_the_context_is_rejected(number in 10_000u32..=99_999) {
         let context = context(None);
         let output = AiOutput {
             evaluation: Some(evaluation(&format!("{number} kg を扱えた"))),
@@ -136,14 +140,17 @@ proptest! {
                 good: vec![EvaluationItem {
                     text: "重量が伸びた".to_owned(),
                     evidence: format!("{number} kg を扱えた"),
+                    reference_reason: None,
                 }],
                 improvements: vec![EvaluationItem {
                     text: "量を増やす".to_owned(),
                     evidence: "胸は週 10 セット".to_owned(),
+                    reference_reason: None,
                 }],
                 next_actions: vec![EvaluationItem {
                     text: "続ける".to_owned(),
                     evidence: format!("体重 {number} kg"),
+                    reference_reason: None,
                 }],
             }),
             ..AiOutput::default()
@@ -152,7 +159,7 @@ proptest! {
     }
 
     #[test]
-    fn reference_mismatch_requires_a_note(mismatch in 1u32..=10) {
+    fn reference_mismatch_requires_a_reason_on_an_item(mismatch in 1u32..=10) {
         let mut context = context(None);
         context.assisted_set_reference[0].sets_with_assisted += f64::from(mismatch);
         let output = AiOutput {
@@ -164,7 +171,16 @@ proptest! {
             Err(OutputError::MissingReferenceExplanation)
         );
         let mut output = output;
-        output.reference_note = Some("補助筋を含めるとセット数が増える".to_owned());
+        if let Some(evaluation) = output.evaluation.as_mut() {
+            for item in evaluation
+                .good
+                .iter_mut()
+                .chain(evaluation.improvements.iter_mut())
+                .chain(evaluation.next_actions.iter_mut())
+            {
+                item.reference_reason = Some("補助筋を含めるとセット数が増える".to_owned());
+            }
+        }
         prop_assert!(AiOutput::validate(output, &context).is_ok());
     }
 
@@ -189,6 +205,7 @@ proptest! {
             evaluation.good.push(EvaluationItem {
                 text: "追加".to_owned(),
                 evidence: "70 kg".to_owned(),
+                reference_reason: None,
             });
         }
         let output = AiOutput {

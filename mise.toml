@@ -43,9 +43,12 @@ run = [
 ]
 
 [tasks.test]
-description = "wrangler dev を起動するテスト以外の自動テストを実行する"
+description = "結合テストと E2E 以外の自動テストを実行する"
 depends = ["tokens"]
-run = "cargo test --workspace -- --skip wrangler_"
+run = [
+  "cargo test --workspace --exclude warrior --exclude warrior_pbt",
+  "cargo test -p warrior --lib",
+]
 
 [tasks."test-integration"]
 description = "wrangler dev を起動する結合テストを実行する"

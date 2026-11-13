@@ -102,6 +102,7 @@ mod tests {
                 duration_seconds: None,
                 sets: 3,
                 reason: "前回よりも重量を増やす".to_owned(),
+                reference_reason: None,
             }],
             menu_changes: vec![MenuChange {
                 kind: MenuChangeKind::SetIncrease,

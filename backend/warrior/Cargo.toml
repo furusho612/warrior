@@ -15,7 +15,6 @@ wasm-bindgen = "0.2"
 worker = { version = "=0.8.6", features = ["d1", "queue"] }
 
 [dev-dependencies]
-libc = "0.2"
 # ブラウザを操作する E2E のクライアント。
 thirtyfour = { version = "0.37", default-features = false, features = ["reqwest", "rustls", "cdp"] }
 # thirtyfour の非同期の API をテストから実行するためのランタイム。

@@ -1,7 +1,7 @@
 //! 目標カロリーと PFC の計算の性質テスト。
 //!
 //! 対応する要求: `REQ-PRG-006`、`REQ-PRG-008`、`REQ-PRG-009`、`REQ-PRG-012`、
-//! `REQ-PRG-015`、`REQ-PRG-016`、`REQ-PRG-018`。
+//! `REQ-PRG-013`、`REQ-PRG-015`、`REQ-PRG-016`、`REQ-PRG-018`。
 
 use proptest::prelude::*;
 use warrior_core::jst::JstDate;

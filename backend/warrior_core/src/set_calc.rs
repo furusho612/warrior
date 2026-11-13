@@ -71,6 +71,15 @@ impl SideValue {
     }
 }
 
+/// 推定 1RM と、10 回を超えるセットの参考値の印。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OneRepMax {
+    /// 推定 1RM (kg)。
+    pub value_kg: f64,
+    /// 10 回を超えるセットの参考値か。
+    pub is_reference: bool,
+}
+
 /// セットの 1 つの段。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetSegment {
@@ -129,6 +138,7 @@ impl SetSegment {
                 .into_iter()
                 .flatten()
                 .map(|side| side.weight_kg)
+                .filter(|weight| *weight > 0.0)
                 .reduce(f64::max)
         } else if self.weight_kg > 0.0 {
             Some(self.weight_kg)
@@ -137,22 +147,32 @@ impl SetSegment {
         }
     }
 
-    /// 推定 1RM。左右別なら左右の推定 1RM の大きい方。
-    pub fn estimated_one_rep_max(&self) -> Option<f64> {
+    /// 推定 1RM と参考値の印。左右別なら左右の推定 1RM の大きい方。
+    pub fn one_rep_max(&self) -> Option<OneRepMax> {
         if self.has_sides() {
             [self.left.as_ref(), self.right.as_ref()]
                 .into_iter()
                 .flatten()
                 .filter_map(|side| {
-                    estimated_one_rep_max(
-                        side.weight_kg,
-                        side.strict_reps(self.momentum_reps, self.assisted_reps),
-                    )
+                    let strict = side.strict_reps(self.momentum_reps, self.assisted_reps);
+                    estimated_one_rep_max(side.weight_kg, strict).map(|value_kg| OneRepMax {
+                        value_kg,
+                        is_reference: is_reference_one_rep_max(strict),
+                    })
                 })
-                .reduce(f64::max)
+                .max_by(|first, second| first.value_kg.total_cmp(&second.value_kg))
         } else {
-            estimated_one_rep_max(self.weight_kg, self.strict_reps())
+            let strict = self.strict_reps();
+            estimated_one_rep_max(self.weight_kg, strict).map(|value_kg| OneRepMax {
+                value_kg,
+                is_reference: is_reference_one_rep_max(strict),
+            })
         }
+    }
+
+    /// 推定 1RM。左右別なら左右の推定 1RM の大きい方。
+    pub fn estimated_one_rep_max(&self) -> Option<f64> {
+        self.one_rep_max().map(|one_rep_max| one_rep_max.value_kg)
     }
 
     /// 時間で記録する段の最長時間。左右別なら左右の大きい方。
@@ -312,14 +332,17 @@ impl SetRecord {
         self.segments.first().and_then(SetSegment::max_weight_kg)
     }
 
-    /// 推定 1RM。ウォームアップと時間で記録する種目は None。ドロップセットは最初の段だけ。
-    pub fn estimated_one_rep_max(&self) -> Option<f64> {
+    /// 推定 1RM と参考値の印。ウォームアップと時間で記録する種目は None。ドロップセットは最初の段だけ。
+    pub fn one_rep_max(&self) -> Option<OneRepMax> {
         if self.kind == SetKind::Warmup || self.mode == RecordMode::Time {
             return None;
         }
-        self.segments
-            .first()
-            .and_then(SetSegment::estimated_one_rep_max)
+        self.segments.first().and_then(SetSegment::one_rep_max)
+    }
+
+    /// 推定 1RM。ウォームアップと時間で記録する種目は None。ドロップセットは最初の段だけ。
+    pub fn estimated_one_rep_max(&self) -> Option<f64> {
+        self.one_rep_max().map(|one_rep_max| one_rep_max.value_kg)
     }
 
     /// 時間で記録するセットの最長時間。左右別なら左右の大きい方。
@@ -397,6 +420,8 @@ pub enum SetValidationError {
     InvalidDuration,
     /// 時間のセットに時間が無い。
     MissingDuration,
+    /// 時間を記録するセットの親と段の両方に時間がある。
+    ConflictingDuration,
 }
 
 /// ストリクト回数。回数から反動と補助を引き、0 を下回らない。
@@ -588,6 +613,9 @@ fn validate_time(
     segments: &[SetSegment],
     duration_seconds: Option<u32>,
 ) -> Result<(), SetValidationError> {
+    if duration_seconds.is_some() && !segments.is_empty() {
+        return Err(SetValidationError::ConflictingDuration);
+    }
     if let Some(duration) = duration_seconds {
         validate_duration(duration)?;
     }
@@ -595,8 +623,10 @@ fn validate_time(
         return Err(SetValidationError::MissingDuration);
     }
     for segment in segments {
+        let mut has_duration = false;
         if let Some(duration) = segment.duration_seconds {
             validate_duration(duration)?;
+            has_duration = true;
         }
         for side in [segment.left.as_ref(), segment.right.as_ref()]
             .into_iter()
@@ -604,7 +634,11 @@ fn validate_time(
         {
             if let Some(duration) = side.duration_seconds {
                 validate_duration(duration)?;
+                has_duration = true;
             }
+        }
+        if !has_duration {
+            return Err(SetValidationError::MissingDuration);
         }
     }
     Ok(())
@@ -676,6 +710,39 @@ mod tests {
     fn one_rep_max_marks_more_than_ten_reps_as_reference() {
         assert!(!is_reference_one_rep_max(10));
         assert!(is_reference_one_rep_max(11));
+    }
+
+    #[test]
+    fn record_one_rep_max_carries_the_reference_flag() {
+        let ten = record(SetKind::Normal, vec![segment(100.0, 10)]);
+        assert!(!ten.one_rep_max().unwrap().is_reference);
+        let eleven = record(SetKind::Normal, vec![segment(100.0, 11)]);
+        assert!(eleven.one_rep_max().unwrap().is_reference);
+    }
+
+    #[test]
+    fn unilateral_zero_weight_does_not_create_a_personal_best() {
+        let record = record(
+            SetKind::Normal,
+            vec![SetSegment {
+                weight_kg: 0.0,
+                reps: 0,
+                momentum_reps: 0,
+                assisted_reps: 0,
+                left: Some(SideValue {
+                    weight_kg: 0.0,
+                    reps: 5,
+                    duration_seconds: None,
+                }),
+                right: Some(SideValue {
+                    weight_kg: 0.0,
+                    reps: 5,
+                    duration_seconds: None,
+                }),
+                duration_seconds: None,
+            }],
+        );
+        assert_eq!(record.max_weight_kg(), None);
     }
 
     #[test]
@@ -796,6 +863,27 @@ mod tests {
         assert_eq!(record.max_weight_kg(), None);
         assert_eq!(record.longest_duration_seconds(), Some(60));
         assert_eq!(record.part_set_count(PartRole::Primary), 1.0);
+    }
+
+    #[test]
+    fn time_cannot_store_duration_on_both_the_record_and_a_segment() {
+        let result = SetRecord::new(
+            key(),
+            SetKind::Normal,
+            vec![SetSegment {
+                weight_kg: 0.0,
+                reps: 0,
+                momentum_reps: 0,
+                assisted_reps: 0,
+                left: None,
+                right: None,
+                duration_seconds: Some(30),
+            }],
+            None,
+            Some(60),
+            RecordMode::Time,
+        );
+        assert_eq!(result, Err(SetValidationError::ConflictingDuration));
     }
 
     #[test]

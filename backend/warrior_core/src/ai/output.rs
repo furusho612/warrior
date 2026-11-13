@@ -16,6 +16,9 @@ pub struct EvaluationItem {
     pub text: String,
     /// 根拠。記録の数値を含む。
     pub evidence: String,
+    /// 補助筋の参考値と画面のセット数が食い違う理由。
+    #[serde(default)]
+    pub reference_reason: Option<String>,
 }
 
 /// 評価。良かった点、改善点、次に取る行動を持つ。
@@ -56,6 +59,9 @@ pub struct SetProposal {
     pub sets: u32,
     /// 理由 (1 文)。
     pub reason: String,
+    /// 補助筋の参考値と画面のセット数が食い違う理由。
+    #[serde(default)]
+    pub reference_reason: Option<String>,
 }
 
 /// メニューの変更の種類。
@@ -128,9 +134,6 @@ pub struct AiOutput {
     /// 栄養の提案。
     #[serde(default)]
     pub nutrition_advice: Option<NutritionAdvice>,
-    /// 補助筋の参考値と画面のセット数が食い違う理由。
-    #[serde(default)]
-    pub reference_note: Option<String>,
     /// 安全ガードの案内。モデルの出力ではなくサーバーが入れる。
     #[serde(default)]
     pub safety_advice: Option<String>,
@@ -164,10 +167,15 @@ impl AiOutput {
     /// 型付きの出力を検証し、安全ガードを通す。
     pub fn validate(output: AiOutput, context: &AiContext) -> Result<Self, OutputError> {
         let known_numbers = context.known_numbers();
+        let requires_reference = context.reference_mismatch();
         let mut output = output;
 
         if let Some(evaluation) = output.evaluation.take() {
-            output.evaluation = Some(validate_evaluation(evaluation, &known_numbers)?);
+            output.evaluation = Some(validate_evaluation(
+                evaluation,
+                &known_numbers,
+                requires_reference,
+            )?);
         }
 
         if output.proposals.len() > MAX_ITEMS {
@@ -175,7 +183,7 @@ impl AiOutput {
         }
         output
             .proposals
-            .retain(|proposal| valid_proposal(proposal, &known_numbers));
+            .retain(|proposal| valid_proposal(proposal, &known_numbers, requires_reference));
         if output.menu_changes.len() > MAX_ITEMS {
             return Err(OutputError::TooManyMenuChanges);
         }
@@ -187,12 +195,7 @@ impl AiOutput {
             .nutrition_advice
             .filter(|advice| valid_nutrition_advice(advice, context));
 
-        if context.reference_mismatch()
-            && output
-                .reference_note
-                .as_deref()
-                .is_none_or(|note| note.trim().is_empty())
-        {
+        if requires_reference && !has_reference_explanation(&output) {
             return Err(OutputError::MissingReferenceExplanation);
         }
 
@@ -216,6 +219,7 @@ impl AiOutput {
 fn validate_evaluation(
     mut evaluation: Evaluation,
     known_numbers: &std::collections::HashSet<String>,
+    requires_reference: bool,
 ) -> Result<Evaluation, OutputError> {
     if evaluation.good.len() > MAX_ITEMS_PER_SECTION
         || evaluation.improvements.len() > MAX_ITEMS_PER_SECTION
@@ -225,17 +229,20 @@ fn validate_evaluation(
     }
     evaluation
         .good
-        .retain(|item| valid_evaluation_item(item, known_numbers));
+        .retain(|item| valid_evaluation_item(item, known_numbers, requires_reference));
     evaluation
         .improvements
-        .retain(|item| valid_evaluation_item(item, known_numbers));
+        .retain(|item| valid_evaluation_item(item, known_numbers, requires_reference));
     evaluation
         .next_actions
-        .retain(|item| valid_evaluation_item(item, known_numbers));
+        .retain(|item| valid_evaluation_item(item, known_numbers, requires_reference));
     if evaluation.good.is_empty()
         || evaluation.improvements.is_empty()
         || evaluation.next_actions.is_empty()
     {
+        if requires_reference {
+            return Ok(evaluation);
+        }
         return Err(OutputError::NoDisplayableContent);
     }
     Ok(evaluation)
@@ -244,8 +251,17 @@ fn validate_evaluation(
 fn valid_evaluation_item(
     item: &EvaluationItem,
     known_numbers: &std::collections::HashSet<String>,
+    requires_reference: bool,
 ) -> bool {
     if !valid_text(&item.text) || !valid_text(&item.evidence) {
+        return false;
+    }
+    if requires_reference
+        && item
+            .reference_reason
+            .as_deref()
+            .is_none_or(|reason| reason.trim().is_empty())
+    {
         return false;
     }
     let numbers = numeric_tokens(&item.evidence);
@@ -260,10 +276,20 @@ fn valid_text(text: &str) -> bool {
 fn valid_proposal(
     proposal: &SetProposal,
     known_numbers: &std::collections::HashSet<String>,
+    requires_reference: bool,
 ) -> bool {
+    let _ = known_numbers;
     if proposal.exercise_id.trim().is_empty()
         || !valid_text(&proposal.reason)
         || !(1..=20).contains(&proposal.sets)
+    {
+        return false;
+    }
+    if requires_reference
+        && proposal
+            .reference_reason
+            .as_deref()
+            .is_none_or(|reason| reason.trim().is_empty())
     {
         return false;
     }
@@ -288,10 +314,29 @@ fn valid_proposal(
     {
         return false;
     }
-    // 理由に数値がある場合は、入力に存在する数値だけを使う。
-    numeric_tokens(&proposal.reason)
-        .iter()
-        .all(|number| known_numbers.contains(number))
+    true
+}
+
+fn has_reference_explanation(output: &AiOutput) -> bool {
+    let evaluation_has_reason = output.evaluation.as_ref().is_some_and(|evaluation| {
+        evaluation
+            .good
+            .iter()
+            .chain(evaluation.improvements.iter())
+            .chain(evaluation.next_actions.iter())
+            .any(|item| {
+                item.reference_reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty())
+            })
+    });
+    let proposal_has_reason = output.proposals.iter().any(|proposal| {
+        proposal
+            .reference_reason
+            .as_deref()
+            .is_some_and(|reason| !reason.trim().is_empty())
+    });
+    evaluation_has_reason || proposal_has_reason
 }
 
 fn valid_menu_change(change: &MenuChange) -> bool {
@@ -377,6 +422,7 @@ mod tests {
         EvaluationItem {
             text: text.to_owned(),
             evidence: evidence.to_owned(),
+            reference_reason: None,
         }
     }
 
@@ -398,6 +444,7 @@ mod tests {
             duration_seconds: None,
             sets: 3,
             reason: reason.to_owned(),
+            reference_reason: None,
         }
     }
 
@@ -440,11 +487,11 @@ mod tests {
     }
 
     #[test]
-    fn reference_mismatch_requires_a_note() {
+    fn reference_mismatch_requires_a_reason_on_an_item() {
         let mut context = context();
         context.assisted_set_reference[0].sets_with_assisted = 12.0;
         let output = AiOutput {
-            evaluation: Some(evaluation()),
+            proposals: vec![proposal("前回 70 kg から増やす")],
             ..AiOutput::default()
         };
         assert_eq!(
@@ -452,9 +499,10 @@ mod tests {
             Err(OutputError::MissingReferenceExplanation)
         );
 
+        let mut proposal = proposal("前回 70 kg から増やす");
+        proposal.reference_reason = Some("補助筋を含めると 12 セットになる".to_owned());
         let output = AiOutput {
-            evaluation: Some(evaluation()),
-            reference_note: Some("補助筋を含めると 12 セットになる".to_owned()),
+            proposals: vec![proposal],
             ..AiOutput::default()
         };
         assert!(AiOutput::validate(output, &context).is_ok());

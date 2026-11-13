@@ -22,8 +22,11 @@ async fn wrangler_frontend_smoke_opens_every_route_and_the_record_shell() {
         ("/login", "/login"),
         ("/", "/"),
         ("/record", "/record"),
+        ("/record/abc", "/record/:training_id"),
         ("/calendar", "/calendar"),
         ("/library", "/library"),
+        ("/library/abc", "/library/:exercise_id"),
+        ("/summary/abc", "/summary/:training_id"),
         ("/analysis", "/analysis"),
         ("/routines", "/routines"),
         ("/mypage", "/mypage"),
@@ -61,6 +64,20 @@ async fn wrangler_frontend_smoke_opens_every_route_and_the_record_shell() {
     .await;
     assert_eq!(
         sizes,
+        serde_json::json!({ "overflow": 0, "shortTargets": 0, "smallText": 0 })
+    );
+
+    driver
+        .set_window_rect(0, 0, 1280, 800)
+        .await
+        .expect("the desktop window must be sized");
+    let desktop_sizes = eval_json(
+        &driver,
+        "return JSON.stringify({overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, shortTargets: Array.from(document.querySelectorAll('a,button')).filter((el) => el.offsetParent !== null && el.getBoundingClientRect().height < 44).length, smallText: Array.from(document.querySelectorAll('body *')).filter((el) => el.offsetParent !== null && el.textContent.trim() !== '' && parseFloat(getComputedStyle(el).fontSize) < 11).length})",
+    )
+    .await;
+    assert_eq!(
+        desktop_sizes,
         serde_json::json!({ "overflow": 0, "shortTargets": 0, "smallText": 0 })
     );
 

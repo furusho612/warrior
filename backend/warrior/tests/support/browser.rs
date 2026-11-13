@@ -82,13 +82,15 @@ impl DriverProcess {
 impl Drop for DriverProcess {
     fn drop(&mut self) {
         let group = -(self.child.id() as i32);
-        unsafe {
-            libc::kill(group, libc::SIGTERM);
-        }
+        let _ = Command::new("kill")
+            .args(["-TERM", "--", &group.to_string()])
+            .stderr(Stdio::null())
+            .status();
         let _ = self.child.wait();
-        unsafe {
-            libc::kill(group, libc::SIGKILL);
-        }
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &group.to_string()])
+            .stderr(Stdio::null())
+            .status();
     }
 }
 

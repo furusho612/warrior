@@ -70,7 +70,8 @@ pub struct UserScopedStatement {
 impl UserScopedStatement {
     /// 利用者 ID の条件を持つクエリを検証して作る。
     pub fn new(user_id: &str, statement: SqlStatement) -> Result<Self, SqlAssemblyError> {
-        if !statement.sql.contains("user_id = ?") {
+        let condition = format!("{USER_ID_COLUMN} = ?");
+        if !statement.sql.contains(&condition) {
             return Err(SqlAssemblyError::MissingUserIdCondition);
         }
         match statement.bindings.first() {
@@ -95,9 +96,10 @@ impl UserScopedStatement {
         }
 
         let sql = format!(
-            "SELECT {} FROM {} WHERE user_id = ?",
+            "SELECT {} FROM {} WHERE {} = ?",
             columns.join(", "),
-            table
+            table,
+            USER_ID_COLUMN
         );
         Self::new(
             user_id,

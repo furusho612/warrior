@@ -35,6 +35,14 @@ proptest! {
     }
 
     #[test]
+    fn japan_dates_are_monotonic_in_utc_time(first in epoch_seconds(), second in epoch_seconds()) {
+        let (earlier, later) = if first <= second { (first, second) } else { (second, first) };
+        let earlier_date = UtcInstant::from_epoch_seconds(earlier).jst_date().unwrap();
+        let later_date = UtcInstant::from_epoch_seconds(later).jst_date().unwrap();
+        prop_assert!(earlier_date <= later_date);
+    }
+
+    #[test]
     fn japan_dates_round_trip(date in jst_date()) {
         prop_assert_eq!(JstDate::parse(&date.to_string()), Some(date));
         prop_assert_eq!(UtcInstant::parse(&date.start_utc().to_iso8601()).unwrap().jst_date(), Some(date));

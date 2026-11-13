@@ -26,6 +26,7 @@ pub struct DevServer {
     child: Child,
     port: u16,
     persist_dir: PathBuf,
+    log_path: PathBuf,
 }
 
 impl DevServer {
@@ -34,6 +35,9 @@ impl DevServer {
         let persist_dir = unique_persist_dir();
         fs::create_dir_all(&persist_dir).expect("the persistence directory must be created");
         let root = repository_root();
+        let log_path = persist_dir.join("wrangler.log");
+        let log_file = fs::File::create(&log_path).expect("the log file must be created");
+        let log_error = log_file.try_clone().expect("the log file must be cloned");
         let child = Command::new("wrangler")
             .args([
                 "dev",
@@ -47,14 +51,15 @@ impl DevServer {
             ])
             .current_dir(root)
             .process_group(0)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_error))
             .spawn()
             .expect("wrangler dev must start");
         let server = Self {
             child,
             port,
             persist_dir,
+            log_path,
         };
         server.wait_until_healthy();
         server
@@ -68,6 +73,30 @@ impl DevServer {
     /// ヘッダを指定してリクエストを送る。
     pub fn request(&self, method: &str, path: &str, headers: &[(&str, &str)]) -> HttpResponse {
         http_request(self.port, method, path, headers, None).expect("HTTP request")
+    }
+
+    /// `wrangler dev` の出力を読む。
+    pub fn log_lines(&self) -> Vec<String> {
+        fs::read_to_string(&self.log_path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// 出力に指定した文字列が現れるまで待つ。
+    pub fn wait_for_log(&self, needle: &str) -> Vec<String> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let lines = self.log_lines();
+            if lines.iter().any(|line| line.contains(needle)) {
+                return lines;
+            }
+            if Instant::now() >= deadline {
+                panic!("the log did not contain {needle} within 10 seconds: {lines:?}");
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
     }
 
     /// マイグレーションをローカルの D1 に適用する。
@@ -282,13 +311,15 @@ impl Drop for TestOidc {
 fn stop_process_group(child: &mut Child) {
     let group = -(child.id() as i32);
     // wrangler は workerd を、safaridriver は Safari を別のプロセスとして起動する。
-    unsafe {
-        libc::kill(group, libc::SIGTERM);
-    }
+    let _ = Command::new("kill")
+        .args(["-TERM", "--", &group.to_string()])
+        .stderr(Stdio::null())
+        .status();
     let _ = child.wait();
-    unsafe {
-        libc::kill(group, libc::SIGKILL);
-    }
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &group.to_string()])
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn wait_for_http(port: u16, path: &str) {

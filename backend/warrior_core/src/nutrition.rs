@@ -593,6 +593,18 @@ mod tests {
     }
 
     #[test]
+    fn a_birth_date_that_makes_bmr_negative_is_rejected() {
+        let mut input = sample_input();
+        input.height_cm = Some(100.0);
+        input.weight_kg = Some(20.0);
+        input.birth_date = Some(date(1000, 1, 1));
+        assert_eq!(
+            calculate(&input, date(2026, 11, 12)),
+            Err(NutritionError::InvalidBasalMetabolism)
+        );
+    }
+
+    #[test]
     fn invalid_height_weight_and_days_are_rejected() {
         let mut input = sample_input();
         input.height_cm = Some(0.0);

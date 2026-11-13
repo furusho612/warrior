@@ -70,6 +70,33 @@ fn wrangler_http_foundation_api_responses_have_security_headers_and_the_shared_e
     assert_eq!(static_page.status, 200);
     assert_security_headers(&static_page);
     assert_eq!(static_page.header("access-control-allow-origin"), None);
+
+    let logs = server.wait_for_log("\"route\":\"health\"");
+    let health_log = logs
+        .iter()
+        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .find(|value| value["route"] == "health" && value["status"] == 200)
+        .expect("a health request log line");
+    assert_eq!(health_log["event"], "request");
+    assert_eq!(health_log["method"], "GET");
+    assert!(health_log["duration_ms"].is_number());
+    assert_eq!(health_log["error_code"], Value::Null);
+    assert!(health_log["request_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    for private in [
+        "email",
+        "memo",
+        "token",
+        "push_subscription",
+        "ai_input",
+        "ai_output",
+    ] {
+        assert!(
+            health_log.get(private).is_none(),
+            "{private} must not be logged"
+        );
+    }
 }
 
 fn assert_security_headers(response: &support::HttpResponse) {

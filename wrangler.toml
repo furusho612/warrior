@@ -67,6 +67,16 @@ RATE_LIMIT_WINDOW_SECONDS = "60"
 [env.production]
 name = "warrior"
 
+[env.production.observability]
+enabled = true
+
+[env.production.observability.logs]
+enabled = true
+invocation_logs = true
+
+[env.production.observability.traces]
+enabled = true
+
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "warrior"
