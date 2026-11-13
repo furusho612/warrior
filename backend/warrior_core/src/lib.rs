@@ -8,6 +8,7 @@ pub mod cbor;
 pub mod cose;
 pub mod cursor;
 pub mod datetime;
+pub mod exercise;
 pub mod ids;
 pub mod jst;
 pub mod nutrition;

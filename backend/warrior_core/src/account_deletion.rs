@@ -63,6 +63,36 @@ pub const TABLES: &[Table] = &[
         reason: "IP ごとのレート制限のカウンタ。利用者に紐づかない。",
     },
     Table {
+        name: "user_exercises",
+        class: TableClass::Owned,
+        reason: "利用者の独自種目。",
+    },
+    Table {
+        name: "user_exercise_muscles",
+        class: TableClass::Owned,
+        reason: "独自種目の筋肉。親の user_exercises から所有される。",
+    },
+    Table {
+        name: "master_exercise_overrides",
+        class: TableClass::Owned,
+        reason: "利用者ごとのマスター種目の上書き。",
+    },
+    Table {
+        name: "muscles",
+        class: TableClass::Master,
+        reason: "筋肉の単位。利用者に紐づかない。",
+    },
+    Table {
+        name: "master_exercises",
+        class: TableClass::Master,
+        reason: "種目マスター。利用者に紐づかない。",
+    },
+    Table {
+        name: "master_exercise_muscles",
+        class: TableClass::Master,
+        reason: "種目マスターの筋肉。利用者に紐づかない。",
+    },
+    Table {
         name: "oauth_states",
         class: TableClass::Temporary,
         reason: "5 分で失効する OAuth の状態。セッションを無効にすれば残っても認証に使えない。",
@@ -74,6 +104,9 @@ pub const TABLES: &[Table] = &[
 /// `users` を最後に置き、外部キーの子を先に消す。
 pub const USER_OWNED_TABLES: &[&str] = &[
     "webauthn_challenges",
+    "user_exercise_muscles",
+    "user_exercises",
+    "master_exercise_overrides",
     "user_rate_limits",
     "elevation_tokens",
     "passkeys",
@@ -108,6 +141,12 @@ mod tests {
             "elevation_tokens",
             "user_rate_limits",
             "ip_rate_limits",
+            "muscles",
+            "master_exercises",
+            "master_exercise_muscles",
+            "user_exercises",
+            "user_exercise_muscles",
+            "master_exercise_overrides",
             "oauth_states",
         ] {
             assert!(classify(name).is_some(), "{name} must be classified");

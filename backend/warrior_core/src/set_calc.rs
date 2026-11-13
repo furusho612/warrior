@@ -29,6 +29,7 @@ pub enum Side {
 
 /// セットの記録方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RecordMode {
     /// 重量と回数で記録する。
     WeightAndReps,

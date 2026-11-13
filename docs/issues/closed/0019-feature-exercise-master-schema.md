@@ -3,6 +3,7 @@
 - Requirements: REQ-LIB-002, REQ-LIB-004, REQ-LIB-010, REQ-LIB-011, REQ-LIB-012
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-exercise-master-schema
 
@@ -87,3 +88,12 @@ PRD の「種目ライブラリ」と「筋肉の単位」が項目を定めて�
 `backend/pbt/tests/exercise.rs` に性質テストを置く。
 `backend/warrior_core/src/exercise.rs` の `#[cfg(test)]` に例示テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に利用者に属する表を追加する。
+
+## 結果
+
+`muscles`、`master_exercises`、`master_exercise_muscles`、`user_exercises`、`user_exercise_muscles`、`master_exercise_overrides` を追加した。
+24 個の筋肉の単位、8 つの部位区分、使用器具、記録方式、左右別、グリップの 10 種のアタッチメントと握り方・手幅、その他の全身・下半身を型にした。
+名称、かな、部位と筋肉の対応、その他の筋肉なし、時間種目のグリップなし、アタッチメントの順手・逆手を検証する。
+`ExerciseSnapshot` の Serde 往復、検証の例示テスト、筋肉とグリップの PBT を追加した。
+D1 のマスター・独自種目の読み書き、マスター種目の利用者ごとの上書き、アカウント削除の対象表の分類を追加した。
+種目マスターの初期データは 0042 で投入する。
