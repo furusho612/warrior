@@ -6,5 +6,6 @@ publish = false
 
 [dependencies]
 dioxus = { version = "=0.7.10", default-features = false, features = ["web", "minimal", "document"] }
+dioxus-router = "=0.7.10"
 # dioxus-web は host のビルドでも履歴の API を使うため、Location を明示する。
-web-sys = { version = "0.3", features = ["Document", "Location", "Window"] }
+web-sys = { version = "0.3", features = ["Document", "Element", "Location", "Window"] }

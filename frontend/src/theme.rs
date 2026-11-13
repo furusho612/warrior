@@ -1,6 +1,4 @@
 //! テーマ属性の値。
-//!
-//! 実際の DOM の属性の変更と利用者の選択の保存は、テーマの設定を担う変更で実装する。
 
 /// 画面のテーマ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +25,17 @@ impl Theme {
         } else {
             Theme::Light
         }
+    }
+}
+
+/// ルート要素のテーマ属性を切り替える。
+#[cfg(target_arch = "wasm32")]
+pub fn apply_theme(theme: Theme) {
+    if let Some(element) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.document_element())
+    {
+        let _ = element.set_attribute("data-theme", theme.as_str());
     }
 }
 

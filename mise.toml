@@ -25,6 +25,7 @@ run = [
   "rg --version",
   "! rg -n --glob '!generated/**' --pcre2 '#[0-9A-Fa-f]{3,8}\\b' frontend/src",
   "! rg -n --pcre2 '#[0-9A-Fa-f]{3,8}\\b' frontend/tailwind.css",
+  "! rg -n --pcre2 'class: \"[^\"]*(rounded|shadow)' frontend/src",
 ]
 
 [tasks.fmt]
