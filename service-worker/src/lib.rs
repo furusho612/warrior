@@ -10,7 +10,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::{future_to_promise, JsFuture};
 use web_sys::{
     Cache, CacheStorage, Event, ExtendableEvent, FetchEvent, Request, Response,
-    ServiceWorkerGlobalScope, Url,
+    ServiceWorkerGlobalScope,
 };
 
 /// Service Worker のキャッシュの版。wasm と JS のビルドごとに更新する。
@@ -84,14 +84,9 @@ fn connect_activate(scope: &ServiceWorkerGlobalScope) {
 
 fn connect_fetch(scope: &ServiceWorkerGlobalScope) {
     let closure = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
-        let Ok(event) = event.dyn_into::<FetchEvent>() else {
-            return;
-        };
+        let event: FetchEvent = event.unchecked_into();
         let request = event.request();
-        let Ok(url) = Url::new(&request.url()) else {
-            return;
-        };
-        if !is_cacheable_path(&url.pathname()) {
+        if !is_cacheable_path(&request.url()) {
             return;
         }
         let promise = future_to_promise(async move {
@@ -152,7 +147,8 @@ async fn activate(scope: &ServiceWorkerGlobalScope) -> Result<(), JsValue> {
 
 async fn fetch_and_cache(request: &Request) -> Result<Response, JsValue> {
     let cache = open_cache().await?;
-    if let Ok(cached) = JsFuture::from(cache.match_with_request(request))
+    let key = request.url();
+    if let Ok(cached) = JsFuture::from(cache.match_with_str(&key))
         .await?
         .dyn_into::<Response>()
     {
@@ -162,8 +158,7 @@ async fn fetch_and_cache(request: &Request) -> Result<Response, JsValue> {
     let response = JsFuture::from(global.fetch_with_request(request)).await?;
     let response = response.dyn_into::<Response>()?;
     if response.ok() {
-        let copy = response.clone()?;
-        JsFuture::from(cache.put_with_request(request, &copy)).await?;
+        let _ = JsFuture::from(cache.add_with_str(&key)).await;
     }
     Ok(response)
 }

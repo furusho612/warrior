@@ -16,6 +16,10 @@ pub fn cache_key(version: &str, path: &str) -> String {
 /// 経路をキャッシュのキー用に正規化する。クエリとフラグメントは落とす。
 pub fn normalize_path(path: &str) -> String {
     let path = path.split(['?', '#']).next().unwrap_or(path);
+    let path = path
+        .split_once("://")
+        .map(|(_, rest)| rest.find('/').map_or("/", |index| &rest[index..]))
+        .unwrap_or(path);
     if path.starts_with('/') {
         path.to_owned()
     } else {

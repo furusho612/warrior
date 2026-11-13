@@ -41,6 +41,11 @@ async fn chrome_registers_the_service_worker_and_caches_static_assets() {
     )
     .await;
     assert_eq!(ready, "ready");
+    driver
+        .goto(server.origin())
+        .await
+        .expect("the app must reload under the service worker");
+    wait_for_route(&driver, "/").await;
 
     let cached = eval_json(
         &driver,
