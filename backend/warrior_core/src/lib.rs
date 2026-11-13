@@ -1,5 +1,6 @@
 //! バインディングに依存しない純粋なロジック。
 
+pub mod account_deletion;
 pub mod ai;
 pub mod auth;
 pub mod base64url;

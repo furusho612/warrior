@@ -3,6 +3,7 @@
 - Requirements: REQ-MYP-007, REQ-NFR-010
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-13
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-account-deletion
 
@@ -81,3 +82,10 @@ D1 の削除の対象の表の一覧は、`backend/warrior_core` の 1 つの定
 `backend/warrior/src/router.rs` に経路を追加する。
 `backend/warrior/tests/e2e_account_deletion.rs` に E2E を追加する。
 `backend/warrior/tests/account_deletion_tables.rs` に、`migrations/` を読む分類のテストを置く。
+
+## 結果
+
+`DELETE /api/account` を追加し、認証、確認値、R2 の 2 接頭辞、D1 の batch の順で削除するようにした。成功時は 204 とセッション Cookie の失効を返す。
+現在の migrations の表を「利用者に属する」「マスター」「一時」に分類し、migrations の SQL を読むテストで全表の分類を双方向に確認した。
+結合テストで R2 と D1 の利用者の行の削除、2 回目の 401、同じ削除の再実行を確認した。Chrome の E2E では Google でログインした利用者を削除し、同じ Google アカウントの再ログインで新しい利用者 ID になることを確認した。
+R2 の削除が失敗した場合は D1 を変更しない経路を実装した。

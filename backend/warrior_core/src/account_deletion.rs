@@ -1,0 +1,130 @@
+//! アカウント削除の対象の表の分類と、R2 の接頭辞。
+//!
+//! 表は「利用者に属する」「マスター」「一時」のいずれかに分類する。
+//! 利用者に属する表は、削除の対象の一覧と双方向に一致させる (issue 0017)。
+
+/// 表の分類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableClass {
+    /// 利用者に属する行を持つ表。
+    Owned,
+    /// 利用者に紐づかない参照データ。
+    Master,
+    /// 短期の状態を持ち、利用者に紐づかない表。
+    Temporary,
+}
+
+/// 1 つの表の分類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Table {
+    /// 表の名前。
+    pub name: &'static str,
+    /// 分類。
+    pub class: TableClass,
+    /// 分類の理由。
+    pub reason: &'static str,
+}
+
+/// 現在の migrations に存在する表の分類。
+pub const TABLES: &[Table] = &[
+    Table {
+        name: "users",
+        class: TableClass::Owned,
+        reason: "利用者自身の行。",
+    },
+    Table {
+        name: "auth_sessions",
+        class: TableClass::Owned,
+        reason: "利用者のセッション。",
+    },
+    Table {
+        name: "passkeys",
+        class: TableClass::Owned,
+        reason: "利用者のパスキー。",
+    },
+    Table {
+        name: "webauthn_challenges",
+        class: TableClass::Owned,
+        reason: "登録と再認証のチャレンジ。利用者 ID を持つ行を削除する。",
+    },
+    Table {
+        name: "elevation_tokens",
+        class: TableClass::Owned,
+        reason: "利用者の再認証トークン。",
+    },
+    Table {
+        name: "oauth_states",
+        class: TableClass::Temporary,
+        reason: "5 分で失効する OAuth の状態。セッションを無効にすれば残っても認証に使えない。",
+    },
+];
+
+/// 利用者に属する表を、子から親の順に並べた削除の対象。
+///
+/// `users` を最後に置き、外部キーの子を先に消す。
+pub const USER_OWNED_TABLES: &[&str] = &[
+    "webauthn_challenges",
+    "elevation_tokens",
+    "passkeys",
+    "auth_sessions",
+    "users",
+];
+
+/// 利用者の R2 の接頭辞。
+pub fn r2_prefixes(user_id: &str) -> [String; 2] {
+    [format!("users/{user_id}/"), format!("exports/{user_id}/")]
+}
+
+/// 表を分類する。未知の表は None。
+pub fn classify(name: &str) -> Option<TableClass> {
+    TABLES
+        .iter()
+        .find(|table| table.name == name)
+        .map(|table| table.class)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify, r2_prefixes, TableClass, TABLES, USER_OWNED_TABLES};
+
+    #[test]
+    fn every_current_table_is_classified_once() {
+        for name in [
+            "users",
+            "auth_sessions",
+            "passkeys",
+            "webauthn_challenges",
+            "elevation_tokens",
+            "oauth_states",
+        ] {
+            assert!(classify(name).is_some(), "{name} must be classified");
+        }
+        let owned = TABLES
+            .iter()
+            .filter(|table| table.class == TableClass::Owned)
+            .map(|table| table.name)
+            .collect::<Vec<_>>();
+        assert_eq!(owned.len(), USER_OWNED_TABLES.len());
+        for name in USER_OWNED_TABLES {
+            assert!(owned.contains(name), "{name} must be owned");
+        }
+    }
+
+    #[test]
+    fn the_users_row_is_deleted_last() {
+        assert_eq!(USER_OWNED_TABLES.last(), Some(&"users"));
+    }
+
+    #[test]
+    fn oauth_states_are_temporary_even_though_they_can_carry_a_user_id() {
+        assert_eq!(classify("oauth_states"), Some(TableClass::Temporary));
+    }
+
+    #[test]
+    fn r2_prefixes_are_scoped_to_the_user() {
+        assert_eq!(
+            r2_prefixes("user-1"),
+            ["users/user-1/".to_owned(), "exports/user-1/".to_owned()]
+        );
+    }
+}

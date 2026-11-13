@@ -5,6 +5,7 @@
 use warrior_core::{HEALTH_PATH, HEALTH_STATUS};
 use worker::{Request, Response, Result, RouteContext, Router};
 
+use crate::account;
 use crate::auth::{oauth, passkey, session};
 
 /// ヘルスチェックの経路の名前。
@@ -29,6 +30,7 @@ pub fn build_router() -> Router<'static, ()> {
         .post_async("/api/auth/logout", session::logout)
         .get_async("/api/me", session::me)
         .get_async("/api/me/passkeys", passkey::list)
+        .delete_async("/api/account", account::delete)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
         .get_async(
             "/api/auth/reauthenticate/google/start",
@@ -64,6 +66,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/me" => ME_ROUTE_NAME,
         "/api/me/passkeys" => "passkeys_list",
         "/api/me/passkeys/:id" => "passkeys_delete",
+        "/api/account" => "account_delete",
         "/api/auth/reauthenticate/google/start" => "reauth_google_start",
         "/api/auth/reauthenticate/passkey/start" => "reauth_passkey_start",
         "/api/auth/reauthenticate/passkey/finish" => "reauth_passkey_finish",
