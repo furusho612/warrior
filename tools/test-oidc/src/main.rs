@@ -12,17 +12,17 @@ use serde_json::{json, Value};
 use warrior_core::base64url;
 
 const DEFAULT_PORT: u16 = 8788;
-const ISSUER: &str = "http://localhost:8788";
 
 fn main() {
     let port = parse_port();
+    let issuer = format!("http://localhost:{port}");
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("test OIDC provider must bind");
     let mut state = State::default();
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
         };
-        let _ = handle(stream, &mut state);
+        let _ = handle(stream, &mut state, &issuer);
     }
 }
 
@@ -66,7 +66,7 @@ struct Request {
     body: String,
 }
 
-fn handle(mut stream: TcpStream, state: &mut State) -> std::io::Result<()> {
+fn handle(mut stream: TcpStream, state: &mut State, issuer: &str) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let Some(request) = read_request(&mut stream)? else {
@@ -77,7 +77,7 @@ fn handle(mut stream: TcpStream, state: &mut State) -> std::io::Result<()> {
         ("GET", "/health") => json_response(200, json!({ "status": "ok" })),
         ("GET", "/test/user") => test_user(state, &request),
         ("GET", "/authorize") => authorize(state, &request),
-        ("POST", "/token") => token(state, &request),
+        ("POST", "/token") => token(state, &request, issuer),
         ("GET", "/userinfo") => userinfo(state, &request),
         _ => json_response(404, json!({ "error": "not found" })),
     };
@@ -126,7 +126,7 @@ fn authorize(state: &mut State, request: &Request) -> Vec<u8> {
     response(302, "text/plain", &[("Location", &location)], "")
 }
 
-fn token(state: &mut State, request: &Request) -> Vec<u8> {
+fn token(state: &mut State, request: &Request, issuer: &str) -> Vec<u8> {
     let form = parse_query(&request.body);
     let Some(code) = form.get("code") else {
         return json_response(400, json!({ "error": "missing code" }));
@@ -145,6 +145,7 @@ fn token(state: &mut State, request: &Request) -> Vec<u8> {
     state.tokens.insert(access_token.clone(), user);
 
     let id_token = id_token(
+        issuer,
         &authorization.sub,
         &authorization.nonce,
         &authorization.client_id,
@@ -160,7 +161,7 @@ fn token(state: &mut State, request: &Request) -> Vec<u8> {
     )
 }
 
-fn id_token(sub: &str, nonce: &str, client_id: &str) -> String {
+fn id_token(issuer: &str, sub: &str, nonce: &str, client_id: &str) -> String {
     let header = json!({ "alg": "none", "typ": "JWT" });
     let expiry = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -168,7 +169,7 @@ fn id_token(sub: &str, nonce: &str, client_id: &str) -> String {
         .as_secs()
         + 3600;
     let payload = json!({
-        "iss": ISSUER,
+        "iss": issuer,
         "aud": client_id,
         "sub": sub,
         "email": format!("{sub}@example.test"),

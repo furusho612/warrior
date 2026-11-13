@@ -5,6 +5,7 @@
 //! 共有しない。開始した端末だけが編集でき、ほかの端末は閲覧のみになり、引き継いだ端末が
 //! 編集できること、元の端末が閲覧のみになることを確かめる。
 //! SafariDriver は 1 つのブラウザを共有し、プロファイルを分けられないため対象外とする。
+//! ほかの E2E と同時に走れるよう、Worker は 8805、テスト専用の OIDC の提供者は 8806 を使う。
 
 mod support;
 
@@ -16,14 +17,32 @@ use warrior_core::auth::hash_terminal_token;
 
 const SUB: &str = "ownership";
 const OTHER_SUB: &str = "ownership-other";
+const SERVER_PORT: u16 = 8805;
+const PROVIDER_PORT: u16 = 8806;
 
 #[tokio::test]
 async fn the_starting_terminal_edits_and_the_other_terminal_takes_over() {
-    let server = DevServer::start(8787);
+    let origin = format!("http://localhost:{SERVER_PORT}");
+    let provider_origin = format!("http://localhost:{PROVIDER_PORT}");
+    let authorize_url = format!("{provider_origin}/authorize");
+    let token_url = format!("{provider_origin}/token");
+    let userinfo_url = format!("{provider_origin}/userinfo");
+    let redirect_uri = format!("{origin}/api/auth/google/callback");
+    let server = DevServer::start_with_vars(
+        SERVER_PORT,
+        &[
+            ("ORIGIN", origin.as_str()),
+            ("GOOGLE_OAUTH_AUTHORIZE_URL", authorize_url.as_str()),
+            ("GOOGLE_OAUTH_ISSUER", provider_origin.as_str()),
+            ("GOOGLE_OAUTH_TOKEN_URL", token_url.as_str()),
+            ("GOOGLE_OAUTH_USERINFO_URL", userinfo_url.as_str()),
+            ("GOOGLE_OAUTH_REDIRECT_URI", redirect_uri.as_str()),
+        ],
+    );
     server
         .apply_migrations()
         .expect("the local D1 migrations must apply");
-    let provider = TestOidc::start(8788);
+    let provider = TestOidc::start(PROVIDER_PORT);
     let driver_port = browser::free_port();
     let driver_process = browser::DriverProcess::start(Browser::Chrome, driver_port);
     let driver_a = browser::open(Browser::Chrome, &driver_process).await;
