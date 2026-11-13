@@ -6,6 +6,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Serialize, Serializer};
+
 use crate::datetime::{self, SECONDS_PER_DAY};
 
 pub use crate::datetime::JAPAN_OFFSET_SECONDS;
@@ -248,6 +250,15 @@ impl JstDate {
         )
         .expect("a validated date has epoch days");
         UtcInstant::from_epoch_seconds(days * SECONDS_PER_DAY - JAPAN_OFFSET_SECONDS)
+    }
+}
+
+impl Serialize for JstDate {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 

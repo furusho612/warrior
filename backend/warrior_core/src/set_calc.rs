@@ -3,10 +3,12 @@
 //! 推定 1RM、総重量、ストリクト回数、部位別のセット数、自己ベストの判定をここに集める。
 //! 記録、分析、AI、CSV はこのモジュールの関数だけを使い、計算を再実装しない。
 
+use serde::{Deserialize, Serialize};
+
 use crate::jst::JstDate;
 
 /// セットの種別。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SetKind {
     /// 通常のセット。
     Normal,
@@ -17,7 +19,7 @@ pub enum SetKind {
 }
 
 /// 左右別の種目で使う側。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
     /// 左。
     Left,
@@ -26,7 +28,7 @@ pub enum Side {
 }
 
 /// セットの記録方式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecordMode {
     /// 重量と回数で記録する。
     WeightAndReps,
@@ -368,7 +370,7 @@ impl SetRecord {
 }
 
 /// 種目にとっての部位の役割。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PartRole {
     /// 主働筋の部位。
     Primary,
@@ -379,7 +381,7 @@ pub enum PartRole {
 }
 
 /// セットの入力の誤り。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SetValidationError {
     /// 重量と回数のセットに段が無い。
     EmptySegments,

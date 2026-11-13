@@ -1,5 +1,6 @@
 //! バインディングに依存しない純粋なロジック。
 
+pub mod ai;
 pub mod base64url;
 pub mod cursor;
 pub mod datetime;

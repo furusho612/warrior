@@ -3,11 +3,13 @@
 //! 年齢は日本時間の日付で満年齢を求める。2 月 29 日生まれの利用者は、閏年でない年の
 //! 2 月 28 日に年を取るものとして扱う。
 
+use serde::Serialize;
+
 use crate::datetime;
 use crate::jst::JstDate;
 
 /// 性別。基礎代謝の係数に使う。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Sex {
     /// 男性。
     Male,
@@ -29,7 +31,7 @@ impl Sex {
 }
 
 /// 目的。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Goal {
     /// 筋肥大。
     Hypertrophy,
@@ -55,7 +57,7 @@ impl Goal {
 }
 
 /// 日常の活動量。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ActivityLevel {
     /// 低い。
     Low,
@@ -134,7 +136,7 @@ impl MacroTarget {
 }
 
 /// 入力の項目。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum MissingField {
     /// 身長。
     Height,

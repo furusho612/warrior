@@ -55,6 +55,8 @@ text_keys! {
     MyPageDescription => "プロフィール、栄養、表示、データ、アカウントの設定をここに表示します。",
     NotFoundTitle => "画面が見つかりません",
     NotFoundDescription => "ホームへ戻って操作を続けてください。",
+    AiMedicalDisclaimer => "AI の評価と提案は医療上の助言ではありません。持病がある場合や妊娠中の場合は、医師などの専門家に相談してください。",
+    AiSafetyAdvice => "負荷を下げるか休んでください。記述が続く場合は、医師などの専門家に相談してください。",
 }
 
 #[cfg(test)]
