@@ -15,7 +15,6 @@ use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
-use warrior_frontend::screens::record::apply_confirmed;
 use warrior_frontend::storage::{
     request_persistence, DiscardOutcome, Storage, StorageError, Store,
 };
@@ -1306,18 +1305,28 @@ async fn records_are_limited_to_record_stores() {
 }
 
 #[wasm_bindgen_test]
-fn refreshing_confirmed_does_not_change_the_draft() {
-    let mut current = session("draft");
-    current.confirmed_memo = "old".to_owned();
-    current.confirmed_sequence = 1;
-    let mut stored = session("saved");
-    stored.confirmed_memo = "new".to_owned();
-    stored.confirmed_sequence = 3;
+async fn refreshing_confirmed_does_not_change_the_draft() {
+    let name = database_name("refresh-confirmed");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, "base").await;
+    storage
+        .save_session_update(&session("draft"), &update_operation(UPDATE_ID, "draft"))
+        .await
+        .expect("the draft must be saved");
 
-    let merged = apply_confirmed(&current, &stored);
-    assert_eq!(merged.memo, "draft");
-    assert_eq!(merged.confirmed_memo, "new");
-    assert_eq!(merged.confirmed_sequence, 3);
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "draft");
+    assert_eq!(stored.confirmed_memo, "base");
+    assert_eq!(stored.confirmed_sequence, 1);
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
 }
 
 async fn raw_open(name: &str) -> web_sys::IdbDatabase {

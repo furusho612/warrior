@@ -28,7 +28,18 @@ pub struct SyncStatus {
 /// 画面が読む同期の状態。
 pub static SYNC_STATUS: GlobalSignal<SyncStatus> = Signal::global(SyncStatus::default);
 static SYNC_OUTBOX: GlobalSignal<Vec<OutboxEntry>> = Signal::global(Vec::new);
-static SYNC_REVISION: GlobalSignal<u64> = Signal::global(|| 0);
+static SYNC_CONFIRMED: GlobalSignal<Vec<ConfirmedMemo>> = Signal::global(Vec::new);
+
+/// サーバーが受理したトレーニングごとのメモと順序。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmedMemo {
+    /// トレーニングの UUID v4。
+    pub training_id: String,
+    /// サーバーが受理したメモ。
+    pub memo: String,
+    /// サーバーが受理した操作の順序。
+    pub sequence: u64,
+}
 
 thread_local! {
     static FLUSHING: Cell<bool> = const { Cell::new(false) };
@@ -48,9 +59,47 @@ pub fn status() -> SyncStatus {
     SYNC_STATUS()
 }
 
-/// サーバーが操作を受理するたびに増える世代。
-pub fn revision() -> u64 {
-    SYNC_REVISION()
+/// サーバーが受理したメモと順序を返す。
+pub fn confirmed(training_id: &str) -> (String, u64) {
+    SYNC_CONFIRMED()
+        .iter()
+        .find(|entry| entry.training_id == training_id)
+        .map(|entry| (entry.memo.clone(), entry.sequence))
+        .unwrap_or_default()
+}
+
+/// サーバーが受理したメモと順序を記録する。
+pub fn set_confirmed(training_id: &str, memo: &str, sequence: u64) {
+    let mut entries = SYNC_CONFIRMED.write();
+    if let Some(entry) = entries
+        .iter_mut()
+        .find(|entry| entry.training_id == training_id)
+    {
+        entry.memo = memo.to_owned();
+        entry.sequence = sequence;
+        return;
+    }
+    entries.push(ConfirmedMemo {
+        training_id: training_id.to_owned(),
+        memo: memo.to_owned(),
+        sequence,
+    });
+}
+
+/// ストレージのセッションから受理済みのメモと順序を読み直す。
+pub async fn refresh_confirmed(
+    storage: &storage::Storage,
+    training_id: &str,
+) -> Result<(), StorageError> {
+    let Some(session) = storage.session(training_id).await? else {
+        return Ok(());
+    };
+    set_confirmed(
+        training_id,
+        &session.confirmed_memo,
+        session.confirmed_sequence,
+    );
+    Ok(())
 }
 
 /// 失敗した操作の一覧。
@@ -90,6 +139,7 @@ pub async fn discard_operation(operation_id: &str) -> Option<DiscardOutcome> {
 pub async fn clear_account() -> Result<(), StorageError> {
     storage::clear_account().await?;
     set_outbox(Vec::new());
+    SYNC_CONFIRMED.write().clear();
     Ok(())
 }
 
@@ -193,7 +243,13 @@ async fn flush_inner() {
                 if storage.mark_success(&operation_id).await.is_err() {
                     return;
                 }
-                *SYNC_REVISION.write() += 1;
+                if refresh_confirmed(&storage, &entry.operation.training_id)
+                    .await
+                    .is_err()
+                {
+                    refresh_status().await;
+                    return;
+                }
             }
             SendOutcome::Permanent => {
                 if storage.mark_permanent_failure(&operation_id).await.is_err() {

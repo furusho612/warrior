@@ -89,7 +89,6 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let route_id = training_id.clone();
-    let confirmed_id = training_id.clone();
 
     use_effect(move || {
         let id = route_id.clone();
@@ -98,18 +97,8 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         });
     });
 
-    use_effect(move || {
-        let _revision = sync::revision();
-        let id = confirmed_id.clone();
-        spawn(async move {
-            refresh_confirmed(id, session).await;
-        });
-    });
-
     let status = sync::status();
-    let confirmed = session()
-        .map(|record| record.confirmed_memo)
-        .unwrap_or_default();
+    let confirmed = sync::confirmed(&training_id).0;
     let (status_value, status_text) = sync_status_text(status, &memo(), &confirmed);
     let failed = sync::failed_operations();
 
@@ -242,6 +231,11 @@ fn FailedOperations(
                                             Some(DiscardOutcome::MemoReverted(updated)) => {
                                                 memo.set(updated.memo.clone());
                                                 persisted_memo.set(updated.memo.clone());
+                                                sync::set_confirmed(
+                                                    &updated.id,
+                                                    &updated.confirmed_memo,
+                                                    updated.confirmed_sequence,
+                                                );
                                                 session.set(Some(updated));
                                             }
                                             _ => {}
@@ -274,6 +268,11 @@ async fn load(
         Ok(Some(record)) => {
             memo.set(record.memo.clone());
             persisted_memo.set(record.memo.clone());
+            sync::set_confirmed(
+                &record.id,
+                &record.confirmed_memo,
+                record.confirmed_sequence,
+            );
             session.set(Some(record));
             error.set(None);
         }
@@ -283,38 +282,8 @@ async fn load(
     sync::refresh_status().await;
 }
 
-async fn refresh_confirmed(training_id: String, mut session: Signal<Option<SessionRecord>>) {
-    let Ok(storage) = storage::current().await else {
-        return;
-    };
-    let Ok(Some(stored)) = storage.session(&training_id).await else {
-        return;
-    };
-    let current = match session.try_read() {
-        Ok(current) => current.as_ref().cloned(),
-        Err(_) => None,
-    };
-    let Some(current) = current else {
-        return;
-    };
-    if current.confirmed_memo == stored.confirmed_memo
-        && current.confirmed_sequence == stored.confirmed_sequence
-    {
-        return;
-    }
-    session.set(Some(apply_confirmed(&current, &stored)));
-}
-
-/// サーバーが受理したメモと順序だけを写す。draft は変えない。
-pub fn apply_confirmed(current: &SessionRecord, stored: &SessionRecord) -> SessionRecord {
-    let mut merged = current.clone();
-    merged.confirmed_memo = stored.confirmed_memo.clone();
-    merged.confirmed_sequence = stored.confirmed_sequence;
-    merged
-}
-
 async fn save_current(
-    session: Signal<Option<SessionRecord>>,
+    mut session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
     mut persisted_memo: Signal<String>,
     mut saving: Signal<bool>,
@@ -328,7 +297,8 @@ async fn save_current(
     let result = save_draft(record, &draft).await;
     saving.set(false);
     match result {
-        Ok(_) => {
+        Ok(updated) => {
+            session.set(Some(updated));
             if memo() == draft {
                 persisted_memo.set(draft);
             }
