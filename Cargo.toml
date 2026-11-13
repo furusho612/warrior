@@ -6,4 +6,5 @@ members = [
     "backend/pbt",
     "frontend",
     "service-worker",
+    "tools/token-gen",
 ]

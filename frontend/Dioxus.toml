@@ -1,2 +1,6 @@
+[application]
+tailwind_input = "tailwind.css"
+tailwind_output = "public/tailwind.css"
+
 [web.app]
 title = "Warrior"

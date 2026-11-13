@@ -15,12 +15,26 @@ java = "temurin-25.0.4+101.0.LTS"
 description = "開発に必要な依存を取得する"
 run = "cargo fetch"
 
+[tasks.tokens]
+description = "docs/design/tokens.json から CSS と Rust の定数を生成する"
+run = "cargo run -q -p warrior_token_gen"
+
+[tasks."tokens:lint-colors"]
+description = "frontend の生成物の外に色のリテラル値が無いことを検査する"
+run = [
+  "rg --version",
+  "! rg -n --glob '!generated/**' --pcre2 '#[0-9A-Fa-f]{3,8}\\b' frontend/src",
+  "! rg -n --pcre2 '#[0-9A-Fa-f]{3,8}\\b' frontend/tailwind.css",
+]
+
 [tasks.fmt]
 description = "Rust の整形を検査する"
+depends = ["tokens"]
 run = "cargo fmt --all --check"
 
 [tasks.lint]
-description = "Rust の lint と、絵文字を使わない規約の検査を実行する"
+description = "Rust の lint と、絵文字と色のリテラル値を使わない規約の検査を実行する"
+depends = ["tokens", "tokens:lint-colors"]
 run = [
   "cargo clippy --workspace --all-targets -- -D warnings",
   "rg --version",
@@ -29,6 +43,7 @@ run = [
 
 [tasks.test]
 description = "全ての自動テストを実行する"
+depends = ["tokens"]
 run = "cargo test --workspace"
 
 [tasks."test-pbt"]
@@ -51,7 +66,7 @@ wasm-bindgen --target no-modules --out-dir frontend/public/sw --out-name warrior
 
 [tasks."frontend:build"]
 description = "Frontend (Dioxus) を Web 向けにリリースビルドする"
-depends = ["frontend:build-service-worker"]
+depends = ["tokens", "frontend:build-service-worker"]
 dir = "frontend"
 run = """
 set -e
@@ -88,4 +103,4 @@ run = "wrangler d1 migrations apply DB --local"
 
 [tasks.check]
 description = "静的検査と全ての自動テスト、ビルドを実行する (CI と手元の共通の入口)"
-depends = ["fmt", "lint", "test", "test-pbt", "backend:build", "frontend:build"]
+depends = ["tokens", "fmt", "lint", "test", "test-pbt", "backend:build", "frontend:build"]
