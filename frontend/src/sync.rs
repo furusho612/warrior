@@ -5,7 +5,6 @@
 
 use std::cell::Cell;
 
-use dioxus::prelude::*;
 use warrior_core::sync::{next_sendable, Operation};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -65,7 +64,7 @@ fn listen_online() {
         return;
     };
     let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-        spawn(async move {
+        wasm_bindgen_futures::spawn_local(async move {
             flush().await;
         });
     });

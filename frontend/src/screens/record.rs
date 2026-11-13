@@ -127,6 +127,18 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         });
     });
 
+    let poll_id = training_id.clone();
+    use_future(move || {
+        let id = poll_id.clone();
+        async move {
+            loop {
+                sleep_ms(200).await;
+                let state = read_record_state(&id).await;
+                apply_state(state_signals, state);
+            }
+        }
+    });
+
     let (status_value, status_text) = sync_status_text(status(), &memo(), &confirmed());
     let failed_entries = failed();
 
@@ -396,6 +408,28 @@ async fn refresh_state(training_id: &str, mut state_signals: StateSignals) {
     state_signals.status.set(state.status);
     state_signals.failed.set(state.failed);
     state_signals.confirmed.set(state.confirmed);
+}
+
+fn apply_state(mut state_signals: StateSignals, state: RecordState) {
+    if *state_signals.status.peek() != state.status {
+        state_signals.status.set(state.status);
+    }
+    if *state_signals.failed.peek() != state.failed {
+        state_signals.failed.set(state.failed);
+    }
+    if *state_signals.confirmed.peek() != state.confirmed {
+        state_signals.confirmed.set(state.confirmed);
+    }
+}
+
+async fn sleep_ms(milliseconds: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        if let Some(window) = web_sys::window() {
+            let _ = window
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, milliseconds);
+        }
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
 async fn read_record_state(training_id: &str) -> RecordState {
