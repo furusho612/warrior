@@ -154,6 +154,66 @@ async fn saves_a_session_and_its_operations_and_lists_the_outbox_in_order() {
 }
 
 #[wasm_bindgen_test]
+async fn active_session_ignores_a_missing_start_time_and_returns_the_latest_start() {
+    let name = database_name("active-session");
+    let storage = open(&name).await;
+
+    for (id, started_at, updated_at) in [
+        (
+            "3f2504e0-4f89-41d3-9a0c-0305e82c4310",
+            Some("2026-11-12T03:00:00Z"),
+            "2026-11-12T03:00:00Z",
+        ),
+        (
+            "3f2504e0-4f89-41d3-9a0c-0305e82c4311",
+            None,
+            "2026-11-14T03:00:00Z",
+        ),
+        (
+            "3f2504e0-4f89-41d3-9a0c-0305e82c4312",
+            Some("2026-11-11T03:00:00Z"),
+            "2026-11-11T03:00:00Z",
+        ),
+        (
+            "3f2504e0-4f89-41d3-9a0c-0305e82c4313",
+            Some("2026-11-13T03:00:00Z"),
+            "2026-11-13T03:00:00Z",
+        ),
+    ] {
+        storage
+            .put_record(
+                Store::TrainingSessions,
+                &json!({
+                    "id": id,
+                    "date": "2026-11-12",
+                    "started_at": started_at,
+                    "memo": id,
+                    "confirmed_memo": "",
+                    "confirmed_sequence": 0,
+                    "created_at": updated_at,
+                    "updated_at": updated_at
+                }),
+            )
+            .await
+            .expect("the session must be saved");
+    }
+
+    let active = storage
+        .active_session()
+        .await
+        .expect("the sessions must be readable")
+        .expect("an active session");
+    assert_eq!(active.id, "3f2504e0-4f89-41d3-9a0c-0305e82c4313");
+    assert_eq!(active.started_at.as_deref(), Some("2026-11-13T03:00:00Z"));
+    assert_eq!(active.memo, "3f2504e0-4f89-41d3-9a0c-0305e82c4313");
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
 async fn a_duplicate_operation_id_aborts_and_does_not_write_the_session() {
     let name = database_name("duplicate");
     let storage = open(&name).await;
@@ -701,7 +761,7 @@ async fn a_failed_save_keeps_the_session_and_confirmed_memo() {
 }
 
 #[wasm_bindgen_test]
-async fn review_retrying_an_older_failed_update_does_not_regress_the_confirmed_memo() {
+async fn retrying_a_superseded_failed_update_keeps_the_confirmed_memo() {
     let name = database_name("retry-confirmed");
     let storage = open(&name).await;
     create_and_confirm(&storage, "c").await;
@@ -827,7 +887,7 @@ async fn a_confirmed_update_is_not_retried() {
 }
 
 #[wasm_bindgen_test]
-async fn review_discarding_an_older_failed_update_keeps_the_newer_pending_memo() {
+async fn discarding_an_older_failed_update_keeps_the_newer_pending_memo() {
     let name = database_name("discard-older");
     let storage = open(&name).await;
     create_and_confirm(&storage, "c").await;

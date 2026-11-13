@@ -1,6 +1,7 @@
-//! オフラインの記録、失敗した作成の破棄、通信の復帰、再読み込みの E2E。
+//! オフラインの記録、失敗した作成の破棄、通信の復帰、遅延した送信の間の入力、
+//! メモの上限、再読み込みの E2E。
 //!
-//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`。
+//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-007`。
 //! Chrome の CDP で通信を切り、IndexedDB への保存、復帰後の同期、未保存の表示を確かめる。
 
 mod support;
@@ -9,6 +10,7 @@ use serde_json::{json, Value};
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
+use warrior_core::sync::MEMO_MAX_CHARS;
 
 const MEMO: &str = "オフラインのメモ";
 const DELAYED_MEMO: &str = "遅延のメモ";
@@ -36,6 +38,10 @@ async fn chrome_records_offline_discards_a_failed_create_and_syncs_after_reconne
     discard_failed_create_scenario(&driver, &server).await;
     offline_memo_scenario(&driver, &server).await;
     delayed_memo_scenario(&driver, &server).await;
+    slow_network_memo_scenario(&driver, &server).await;
+    memo_length_scenario(&driver).await;
+
+    browser::assert_no_panic(&driver).await;
 
     driver.quit().await.expect("the browser must close");
 }
@@ -84,6 +90,17 @@ async fn offline_memo_scenario(driver: &WebDriver, server: &DevServer) {
     browser::wait_for_route(driver, "/record/:training_id").await;
     let training_id = browser::attribute(driver, "[data-session-id]", "data-session-id").await;
 
+    driver
+        .goto(format!("{}/record", server.origin()))
+        .await
+        .expect("the record page must open directly");
+    browser::wait_for_route(driver, "/record/:training_id").await;
+    assert_eq!(
+        browser::attribute(driver, "[data-session-id]", "data-session-id").await,
+        training_id,
+        "the record page must restore the active session"
+    );
+
     offline(driver, true).await;
     let textarea = driver
         .find(By::Css("textarea[data-memo]"))
@@ -98,6 +115,9 @@ async fn offline_memo_scenario(driver: &WebDriver, server: &DevServer) {
     browser::wait_for_attribute(driver, "[data-persisted-memo]", "data-persisted-memo", MEMO).await;
 
     offline(driver, false).await;
+    wait_for_d1_memo(server, &training_id, MEMO).await;
+    browser::wait_for_attribute(driver, "[data-sync-status]", "data-sync-status", "saved").await;
+
     driver
         .goto(format!("{}/", server.origin()))
         .await
@@ -178,6 +198,95 @@ async fn delayed_memo_scenario(driver: &WebDriver, server: &DevServer) {
     set_network(driver, false, 0).await;
     wait_for_d1_memo(server, &training_id, &expected).await;
     browser::wait_for_value(driver, "textarea[data-memo]", &expected).await;
+    wait_for_outbox_empty(driver).await;
+}
+
+async fn slow_network_memo_scenario(driver: &WebDriver, server: &DevServer) {
+    let training_id = browser::attribute(driver, "[data-session-id]", "data-session-id").await;
+    let base = browser::value(driver, "textarea[data-memo]").await;
+
+    set_network(driver, false, 5000).await;
+    let textarea = driver
+        .find(By::Css("textarea[data-memo]"))
+        .await
+        .expect("the memo must exist");
+    textarea.click().await.expect("the memo must be focusable");
+
+    let first = format!("{base}あ");
+    textarea
+        .send_keys("あ")
+        .await
+        .expect("the first character must be typed");
+    browser::wait_for_attribute(
+        driver,
+        "[data-persisted-memo]",
+        "data-persisted-memo",
+        &first,
+    )
+    .await;
+    wait_for_sending_update(driver, &first).await;
+
+    let second = format!("{first}い");
+    textarea
+        .send_keys("い")
+        .await
+        .expect("the second character must be typed");
+    browser::wait_for_attribute_within(
+        driver,
+        "[data-persisted-memo]",
+        "data-persisted-memo",
+        &second,
+        std::time::Duration::from_secs(1),
+    )
+    .await;
+
+    set_network(driver, false, 0).await;
+    wait_for_d1_memo(server, &training_id, &second).await;
+    wait_for_outbox_empty(driver).await;
+}
+
+async fn memo_length_scenario(driver: &WebDriver) {
+    assert_eq!(
+        browser::attribute(driver, "textarea[data-memo]", "maxlength").await,
+        MEMO_MAX_CHARS.to_string(),
+        "the textarea must cap the memo at the server limit"
+    );
+
+    let current = browser::value(driver, "textarea[data-memo]").await;
+    let current_length = current.chars().count();
+    assert!(
+        current_length < MEMO_MAX_CHARS,
+        "the memo must leave room for the boundary characters"
+    );
+    let mut expected = current.clone();
+    expected.push_str(&"x".repeat(MEMO_MAX_CHARS - current_length));
+    let typed = "x".repeat(MEMO_MAX_CHARS - current_length + 1);
+
+    let textarea = driver
+        .find(By::Css("textarea[data-memo]"))
+        .await
+        .expect("the memo must exist");
+    textarea.click().await.expect("the memo must be focusable");
+    textarea
+        .send_keys(typed)
+        .await
+        .expect("the boundary characters must be typed");
+    browser::wait_for_value(driver, "textarea[data-memo]", &expected).await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-persisted-memo]",
+        "data-persisted-memo",
+        &expected,
+    )
+    .await;
+    assert_eq!(
+        browser::value(driver, "textarea[data-memo]")
+            .await
+            .chars()
+            .count(),
+        MEMO_MAX_CHARS,
+        "the memo must stop at the maximum length"
+    );
 }
 
 async fn type_memo(driver: &WebDriver, textarea: &WebElement, current: &mut String, text: &str) {
@@ -263,6 +372,41 @@ async fn wait_for_transient_update(driver: &WebDriver) {
         assert!(
             std::time::Instant::now() < deadline,
             "the update did not fail transiently: {entries:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+async fn wait_for_outbox_empty(driver: &WebDriver) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let entries = outbox_entries(driver).await;
+        if entries.is_empty() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the outbox did not empty: {entries:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+async fn wait_for_sending_update(driver: &WebDriver, expected_memo: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let entries = outbox_entries(driver).await;
+        let sending = entries.iter().any(|entry| {
+            entry["kind"] == "training_session_update"
+                && entry["state"] == "sending"
+                && entry["memo"] == expected_memo
+        });
+        if sending {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the update did not start sending: {entries:?}"
         );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }

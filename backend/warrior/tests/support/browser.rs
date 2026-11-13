@@ -277,7 +277,25 @@ pub async fn wait_for_attribute(
     attribute_name: &str,
     expected: &str,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    wait_for_attribute_within(
+        driver,
+        selector,
+        attribute_name,
+        expected,
+        Duration::from_secs(60),
+    )
+    .await;
+}
+
+/// 要素の属性が、指定した時間の中で期待値になるまで待つ。
+pub async fn wait_for_attribute_within(
+    driver: &WebDriver,
+    selector: &str,
+    attribute_name: &str,
+    expected: &str,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
     loop {
         if attribute(driver, selector, attribute_name).await == expected {
             return;
@@ -285,11 +303,24 @@ pub async fn wait_for_attribute(
         if Instant::now() >= deadline {
             let logs = driver.get_log("browser").await.unwrap_or_default();
             panic!(
-                "the attribute {attribute_name} of {selector} did not become {expected}: {logs:?}"
+                "the attribute {attribute_name} of {selector} did not become {expected} within {timeout:?}: {logs:?}"
             );
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+/// ページのコンソールに `panic:` を含むログが無いことを確かめる。
+pub async fn assert_no_panic(driver: &WebDriver) {
+    let logs = driver
+        .get_log("browser")
+        .await
+        .expect("the browser logs must be readable");
+    let panics = logs
+        .iter()
+        .filter(|entry| entry.message.contains("panic:"))
+        .collect::<Vec<_>>();
+    assert!(panics.is_empty(), "the page panicked: {panics:?}");
 }
 
 /// 入力要素の値が期待値になるまで待つ。

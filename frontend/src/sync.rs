@@ -1,7 +1,8 @@
 //! 送信待ちの列をサーバーへ送る。
 //!
 //! 起動時と online イベントで送り、2xx で未保存の表示を消す (ADR-002)。
-//! 固定の sleep は使わず、通信の失敗は次の online イベントか起動で再試行する。
+//! 送信の再試行は固定の sleep で待たず、次の online イベントか起動で行う。
+//! テストの待機も条件で行い、固定の sleep を書かない (ADR-024)。
 
 use std::cell::Cell;
 
@@ -64,9 +65,7 @@ fn listen_online() {
         return;
     };
     let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-        wasm_bindgen_futures::spawn_local(async move {
-            flush().await;
-        });
+        flush_in_background();
     });
     if window
         .add_event_listener_with_callback("online", closure.as_ref().unchecked_ref())
@@ -76,6 +75,15 @@ fn listen_online() {
         return;
     }
     closure.forget();
+}
+
+/// 送信待ちの列を、呼び出し元の処理を待たせずに送る。
+///
+/// 入力の保存の後に呼ぶ。送信の往復は Dioxus の runtime の外で進め、次の入力を止めない。
+pub fn flush_in_background() {
+    wasm_bindgen_futures::spawn_local(async {
+        flush().await;
+    });
 }
 
 /// 送信待ちの列を先頭から送る。同じ flush を同時に走らせない。

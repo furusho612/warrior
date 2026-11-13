@@ -9,7 +9,7 @@ use warrior_core::datetime;
 use warrior_core::ids::uuid_v4_from_bytes;
 use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
-    SessionCreatePayload, SessionRecord, SessionUpdatePayload,
+    SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
 
 use crate::routes::{navigate, Route};
@@ -93,6 +93,22 @@ struct StateSignals {
     confirmed: Signal<String>,
 }
 
+/// 記録画面の入力と保存が共有する signal。
+#[derive(Clone, Copy, PartialEq)]
+struct RecordSignals {
+    session: Signal<Option<SessionRecord>>,
+    memo: Signal<String>,
+    persisted_memo: Signal<String>,
+    memo_revision: Signal<u64>,
+    save_error: Signal<Option<String>>,
+}
+
+/// 画面が状態を読み直す間隔 (ミリ秒)。
+///
+/// 同期の完了を Dioxus の runtime の外から signal へ書くと panic するため、画面の側から
+/// IndexedDB を読んで状態を反映する。
+const STATE_POLL_INTERVAL_MS: i32 = 200;
+
 #[component]
 pub fn RecordSessionScreen(training_id: String) -> Element {
     let session = use_signal(|| Option::<SessionRecord>::None);
@@ -104,6 +120,13 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let status = use_signal(SyncStatus::default);
     let failed = use_signal(Vec::<OutboxEntry>::new);
     let confirmed = use_signal(String::new);
+    let signals = RecordSignals {
+        session,
+        memo,
+        persisted_memo,
+        memo_revision,
+        save_error,
+    };
     let state_signals = StateSignals {
         status,
         failed,
@@ -114,16 +137,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     use_effect(move || {
         let id = route_id.clone();
         spawn(async move {
-            load(
-                id,
-                session,
-                memo,
-                persisted_memo,
-                memo_revision,
-                state_signals,
-                load_error,
-            )
-            .await;
+            load(id, signals, state_signals, load_error).await;
         });
     });
 
@@ -132,73 +146,82 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         let id = poll_id.clone();
         async move {
             loop {
-                sleep_ms(200).await;
+                sleep_ms(STATE_POLL_INTERVAL_MS).await;
                 let state = read_record_state(&id).await;
                 apply_state(state_signals, state);
             }
         }
     });
 
-    let (status_value, status_text) = sync_status_text(status(), &memo(), &confirmed());
-    let failed_entries = failed();
+    let persisted = (signals.persisted_memo)();
+    let failed_entries = (state_signals.failed)();
 
     rsx! {
         section {
             class: "flex min-h-full flex-col gap-3 p-5",
             "data-route": "/record/:training_id",
             "data-session-id": training_id,
-            "data-persisted-memo": "{persisted_memo}",
-            h1 { class: "text-lg font-bold", "{text(Key::RecordTitle)}" }
-            p {
-                class: "text-[13px] text-text-sub",
-                "data-sync-status": status_value,
-                "{status_text}"
-            }
-            MemoEditor {
-                session,
-                memo,
-                persisted_memo,
-                memo_revision,
-                save_error,
+            "data-persisted-memo": "{persisted}",
+            RecordHeader { signals, state_signals }
+            MemoEditor { signals, state_signals }
+            RecordLoadError {
+                training_id: training_id.clone(),
+                signals,
                 state_signals,
-            }
-            if let Some(message) = load_error() {
-                p { class: "text-[13px] text-primary", "{message}" }
-                button {
-                    class: "min-h-11 border border-line px-3 text-[13px]",
-                    onclick: {
-                        let id = training_id.clone();
-                        move |_| {
-                            let id = id.clone();
-                            spawn(async move {
-                                load(
-                                    id,
-                                    session,
-                                    memo,
-                                    persisted_memo,
-                                    memo_revision,
-                                    state_signals,
-                                    load_error,
-                                )
-                                .await;
-                            });
-                        }
-                    },
-                    "{text(Key::RecordRetry)}"
-                }
-            } else if session().is_none() {
-                p { class: "text-[13px] text-text-sub", "{text(Key::RecordLoading)}" }
+                error: load_error,
             }
             FailedOperations {
                 failed: failed_entries,
-                session,
-                memo,
-                persisted_memo,
-                memo_revision,
+                signals,
                 state_signals,
             }
         }
     }
+}
+
+#[component]
+fn RecordHeader(signals: RecordSignals, state_signals: StateSignals) -> Element {
+    let (status_value, status_text) = sync_status_text(
+        (state_signals.status)(),
+        &(signals.memo)(),
+        &(state_signals.confirmed)(),
+    );
+    rsx! {
+        h1 { class: "text-lg font-bold", "{text(Key::RecordTitle)}" }
+        p {
+            class: "text-[13px] text-text-sub",
+            "data-sync-status": status_value,
+            "{status_text}"
+        }
+    }
+}
+
+#[component]
+fn RecordLoadError(
+    training_id: String,
+    signals: RecordSignals,
+    state_signals: StateSignals,
+    error: Signal<Option<String>>,
+) -> Element {
+    if let Some(message) = error() {
+        return rsx! {
+            p { class: "text-[13px] text-primary", "{message}" }
+            button {
+                class: "min-h-11 border border-line px-3 text-[13px]",
+                onclick: move |_| {
+                    let id = training_id.clone();
+                    spawn(async move {
+                        load(id, signals, state_signals, error).await;
+                    });
+                },
+                "{text(Key::RecordRetry)}"
+            }
+        };
+    }
+    if (signals.session)().is_none() {
+        return rsx! { p { class: "text-[13px] text-text-sub", "{text(Key::RecordLoading)}" } };
+    }
+    rsx! {}
 }
 
 #[derive(Clone)]
@@ -209,40 +232,40 @@ struct SaveState {
     in_flight: Rc<Cell<bool>>,
     /// 保存中に新しい入力があったか。
     dirty: Rc<Cell<bool>>,
+    /// 入力中のメモ。保存の開始時の値を読む。
+    draft: Rc<RefCell<String>>,
 }
 
 #[component]
-fn MemoEditor(
-    session: Signal<Option<SessionRecord>>,
-    memo: Signal<String>,
-    persisted_memo: Signal<String>,
-    memo_revision: Signal<u64>,
-    save_error: Signal<Option<String>>,
-    state_signals: StateSignals,
-) -> Element {
+fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
     let saving = use_signal(|| false);
     let in_flight = use_hook(|| Rc::new(Cell::new(false)));
     let dirty = use_hook(|| Rc::new(Cell::new(false)));
+    let draft = use_hook(|| Rc::new(RefCell::new((signals.memo)())));
     let state = SaveState {
         saving,
         in_flight,
         dirty,
+        draft,
     };
     let input_state = state.clone();
     let retry_state = state.clone();
-    let draft = use_hook(|| Rc::new(RefCell::new(memo())));
-    let draft_input = draft.clone();
-    let draft_retry = draft.clone();
-    let draft_reset = draft.clone();
+    let reset_state = state.clone();
 
     use_effect(move || {
-        let _ = memo_revision();
-        *draft_reset.borrow_mut() = (*memo.peek()).clone();
+        let _ = (signals.memo_revision)();
+        *reset_state.draft.borrow_mut() = (*signals.memo.peek()).clone();
     });
+
+    let revision = (signals.memo_revision)();
+    let memo = (signals.memo)();
+    let disabled = (signals.session)().is_none();
+    let saving_now = (state.saving)();
+    let save_error_message = (signals.save_error)();
 
     rsx! {
         div {
-            key: "{memo_revision}",
+            key: "{revision}",
             class: "flex flex-col gap-3",
             label { class: "text-[13px] font-bold", r#for: "record-memo", "{text(Key::RecordMemoLabel)}" }
             textarea {
@@ -250,29 +273,22 @@ fn MemoEditor(
                 class: "min-h-24 border border-line bg-surface p-3 text-[13px] leading-5",
                 "data-memo": "true",
                 initial_value: "{memo}",
-                disabled: session().is_none(),
+                disabled,
+                maxlength: "{MEMO_MAX_CHARS}",
                 placeholder: "{text(Key::RecordMemoPlaceholder)}",
                 oninput: move |event| {
-                    *draft_input.borrow_mut() = event.value();
+                    *input_state.draft.borrow_mut() = event.value();
                     input_state.dirty.set(true);
                     if input_state.in_flight.replace(true) {
                         return;
                     }
-                    spawn(save_loop(
-                        session,
-                        memo,
-                        persisted_memo,
-                        state_signals,
-                        draft.clone(),
-                        input_state.clone(),
-                        save_error,
-                    ));
+                    spawn(save_loop(signals, input_state.clone()));
                 },
             }
-            if (state.saving)() {
+            if saving_now {
                 p { class: "text-[13px] text-text-sub", "{text(Key::RecordSaving)}" }
             }
-            if let Some(message) = save_error() {
+            if let Some(message) = save_error_message {
                 p { class: "text-[13px] text-primary", "{message}" }
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
@@ -282,15 +298,7 @@ fn MemoEditor(
                         }
                         retry_state.in_flight.set(true);
                         retry_state.dirty.set(true);
-                        spawn(save_loop(
-                            session,
-                            memo,
-                            persisted_memo,
-                            state_signals,
-                            draft_retry.clone(),
-                            retry_state.clone(),
-                            save_error,
-                        ));
+                        spawn(save_loop(signals, retry_state.clone()));
                     },
                     "{text(Key::RecordRetry)}"
                 }
@@ -302,16 +310,10 @@ fn MemoEditor(
 #[component]
 fn FailedOperations(
     failed: Vec<OutboxEntry>,
-    session: Signal<Option<SessionRecord>>,
-    memo: Signal<String>,
-    persisted_memo: Signal<String>,
-    memo_revision: Signal<u64>,
+    signals: RecordSignals,
     state_signals: StateSignals,
 ) -> Element {
-    let mut session = session;
-    let mut memo = memo;
-    let mut persisted_memo = persisted_memo;
-    let mut memo_revision = memo_revision;
+    let mut signals = signals;
 
     if failed.is_empty() {
         return rsx! {};
@@ -355,10 +357,12 @@ fn FailedOperations(
                                                 navigate("/record");
                                             }
                                             Some(DiscardOutcome::MemoReverted(updated)) => {
-                                                memo.set(updated.memo.clone());
-                                                persisted_memo.set(updated.memo.clone());
-                                                memo_revision.set(memo_revision() + 1);
-                                                session.set(Some(updated));
+                                                signals.memo.set(updated.memo.clone());
+                                                signals.persisted_memo.set(updated.memo.clone());
+                                                signals
+                                                    .memo_revision
+                                                    .set((signals.memo_revision)() + 1);
+                                                signals.session.set(Some(updated));
                                                 refresh_state(&training_id, state_signals).await;
                                             }
                                             _ => {}
@@ -377,10 +381,7 @@ fn FailedOperations(
 
 async fn load(
     training_id: String,
-    mut session: Signal<Option<SessionRecord>>,
-    mut memo: Signal<String>,
-    mut persisted_memo: Signal<String>,
-    mut memo_revision: Signal<u64>,
+    mut signals: RecordSignals,
     state_signals: StateSignals,
     mut error: Signal<Option<String>>,
 ) {
@@ -390,10 +391,10 @@ async fn load(
     };
     match storage.session(&training_id).await {
         Ok(Some(record)) => {
-            memo.set(record.memo.clone());
-            persisted_memo.set(record.memo.clone());
-            memo_revision.set(memo_revision() + 1);
-            session.set(Some(record));
+            signals.memo.set(record.memo.clone());
+            signals.persisted_memo.set(record.memo.clone());
+            signals.memo_revision.set((signals.memo_revision)() + 1);
+            signals.session.set(Some(record));
             error.set(None);
         }
         Ok(None) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
@@ -422,6 +423,10 @@ fn apply_state(mut state_signals: StateSignals, state: RecordState) {
     }
 }
 
+/// 次の状態の読み直しまで待つ。
+///
+/// 状態そのものは `read_record_state` が IndexedDB から読む。この待機は画面の読み直しの
+/// 間隔を空けるためのものであり、テストのように条件の成立を時間で待つものではない。
 async fn sleep_ms(milliseconds: i32) {
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
         if let Some(window) = web_sys::window() {
@@ -457,37 +462,31 @@ async fn read_record_state(training_id: &str) -> RecordState {
     }
 }
 
-async fn save_loop(
-    mut session: Signal<Option<SessionRecord>>,
-    mut memo: Signal<String>,
-    mut persisted_memo: Signal<String>,
-    state_signals: StateSignals,
-    draft: Rc<RefCell<String>>,
-    mut state: SaveState,
-    mut save_error: Signal<Option<String>>,
-) {
+async fn save_loop(mut signals: RecordSignals, mut state: SaveState) {
     state.saving.set(true);
     loop {
         state.dirty.set(false);
-        let Some(record) = session() else {
+        let Some(record) = (signals.session)() else {
             state.saving.set(false);
             state.in_flight.set(false);
             return;
         };
-        let draft_text = draft.borrow().clone();
-        let training_id = record.id.clone();
+        let draft_text = state.draft.borrow().clone();
         match save_draft(record, &draft_text).await {
             Ok(updated) => {
-                if *draft.borrow() == draft_text {
-                    persisted_memo.set(draft_text.clone());
+                if *state.draft.borrow() == draft_text {
+                    signals.persisted_memo.set(draft_text.clone());
                 }
-                memo.set(draft_text);
-                session.set(Some(updated));
-                save_error.set(None);
-                refresh_state(&training_id, state_signals).await;
+                signals.memo.set(draft_text);
+                signals.session.set(Some(updated));
+                signals.save_error.set(None);
+                // 送信の往復を待たずに次の入力を保存する。画面の状態は 200ms の読み直しが更新する。
+                sync::flush_in_background();
             }
             Err(_) => {
-                save_error.set(Some(text(Key::RecordSaveFailed).to_owned()));
+                signals
+                    .save_error
+                    .set(Some(text(Key::RecordSaveFailed).to_owned()));
                 break;
             }
         }

@@ -45,6 +45,67 @@ fn sync_operations_are_idempotent_scoped_to_the_user_and_atomic() {
     rejects_missing_training(&server, &cookie);
 }
 
+/// 同じ操作 ID の作成を同時に送っても、適用と操作 ID の保存が 1 回だけになることを確かめる。
+///
+/// 適用と操作 ID の保存は `create_statements` の 2 文を 1 回の `db.batch` に渡す
+/// (`backend/warrior/src/sync.rs`)。2 文目を失敗させる細工を置かず、同時に送るだけで確かめる。
+#[test]
+fn concurrent_creates_with_the_same_operation_id_apply_once() {
+    let server = DevServer::start(8802);
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let token = base64url::encode(&[7u8; 32]);
+    seed(&server, &token);
+    let cookie = format!("warrior_session={token}");
+    let operation_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4414";
+    let first = create_operation(operation_id, "first");
+    let second = create_operation(operation_id, "second");
+
+    let (first_response, second_response) = std::thread::scope(|scope| {
+        let first_post = scope.spawn(|| post(&server, &cookie, &first));
+        let second_post = scope.spawn(|| post(&server, &cookie, &second));
+        (
+            first_post.join().expect("the first request must finish"),
+            second_post.join().expect("the second request must finish"),
+        )
+    });
+
+    assert_eq!(first_response.status, 200, "{}", first_response.body);
+    assert_eq!(second_response.status, 200, "{}", second_response.body);
+    let first_status = response_status(&first_response);
+    let second_status = response_status(&second_response);
+    let mut statuses = vec![first_status.as_str(), second_status.as_str()];
+    statuses.sort_unstable();
+    assert_eq!(
+        statuses,
+        vec!["already_applied", "applied"],
+        "exactly one request must apply the operation"
+    );
+    let winner_memo = if first_status == "applied" {
+        "first"
+    } else {
+        "second"
+    };
+    assert_eq!(applied_count(&server, operation_id), 1);
+    assert_eq!(session_count(&server), 1);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT memo FROM training_sessions WHERE id = '{TRAINING_ID}'")
+        )["memo"],
+        winner_memo,
+        "the applied request must leave its memo"
+    );
+}
+
+fn response_status(response: &support::HttpResponse) -> String {
+    serde_json::from_str::<Value>(&response.body).expect("the response is JSON")["status"]
+        .as_str()
+        .expect("a status")
+        .to_owned()
+}
+
 fn create_is_applied(server: &DevServer, cookie: &str) {
     let created = post(
         server,
