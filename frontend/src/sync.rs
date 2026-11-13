@@ -14,7 +14,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, RequestInit, Response};
 
-use crate::storage::{self, StorageError};
+use crate::storage::{self, DiscardOutcome, StorageError};
 
 /// 画面に出す同期の状態。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -28,6 +28,7 @@ pub struct SyncStatus {
 /// 画面が読む同期の状態。
 pub static SYNC_STATUS: GlobalSignal<SyncStatus> = Signal::global(SyncStatus::default);
 static SYNC_OUTBOX: GlobalSignal<Vec<OutboxEntry>> = Signal::global(Vec::new);
+static SYNC_REVISION: GlobalSignal<u64> = Signal::global(|| 0);
 
 thread_local! {
     static FLUSHING: Cell<bool> = const { Cell::new(false) };
@@ -45,6 +46,11 @@ pub async fn start() {
 /// 現在の同期の状態。
 pub fn status() -> SyncStatus {
     SYNC_STATUS()
+}
+
+/// サーバーが操作を受理するたびに増える世代。
+pub fn revision() -> u64 {
+    SYNC_REVISION()
 }
 
 /// 失敗した操作の一覧。
@@ -73,12 +79,11 @@ pub async fn retry_operation(operation_id: &str) {
 }
 
 /// 失敗した操作とその子孫を破棄する。
-pub async fn discard_operation(operation_id: &str) {
-    let Ok(storage) = storage::current().await else {
-        return;
-    };
-    let _ = storage.discard(operation_id).await;
+pub async fn discard_operation(operation_id: &str) -> Option<DiscardOutcome> {
+    let storage = storage::current().await.ok()?;
+    let outcome = storage.discard(operation_id).await.ok()?;
     refresh_status().await;
+    Some(outcome)
 }
 
 /// アカウントの削除で端末内の記録と送信待ちの列を削除する。
@@ -188,6 +193,7 @@ async fn flush_inner() {
                 if storage.mark_success(&operation_id).await.is_err() {
                     return;
                 }
+                *SYNC_REVISION.write() += 1;
             }
             SendOutcome::Permanent => {
                 if storage.mark_permanent_failure(&operation_id).await.is_err() {
@@ -208,6 +214,7 @@ async fn flush_inner() {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SendOutcome {
     Success,
     Permanent,
@@ -244,11 +251,36 @@ async fn send(operation: &Operation) -> SendOutcome {
     let Ok(response) = response.dyn_into::<Response>() else {
         return SendOutcome::Transient;
     };
-    match response.status() {
+    classify_status(response.status())
+}
+
+fn classify_status(status: u16) -> SendOutcome {
+    match status {
         200..=299 => SendOutcome::Success,
         400 | 404 => SendOutcome::Permanent,
         401 => SendOutcome::Unauthorized,
-        429 | 500..=599 => SendOutcome::Transient,
+        408 | 425 | 429 | 500..=599 => SendOutcome::Transient,
         _ => SendOutcome::Permanent,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+    use wasm_bindgen_test::wasm_bindgen_test_configure;
+
+    use super::{classify_status, SendOutcome};
+
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    #[wasm_bindgen_test]
+    fn request_timeout_and_too_early_are_transient() {
+        assert_eq!(classify_status(408), SendOutcome::Transient);
+        assert_eq!(classify_status(425), SendOutcome::Transient);
+        assert_eq!(classify_status(429), SendOutcome::Transient);
+        assert_eq!(classify_status(500), SendOutcome::Transient);
+        assert_eq!(classify_status(400), SendOutcome::Permanent);
+        assert_eq!(classify_status(401), SendOutcome::Unauthorized);
+        assert_eq!(classify_status(200), SendOutcome::Success);
     }
 }

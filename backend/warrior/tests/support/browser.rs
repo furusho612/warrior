@@ -236,6 +236,105 @@ pub async fn get_text(driver: &WebDriver, url: &str) -> String {
     }
 }
 
+/// 要素の属性を読む。
+pub async fn attribute(driver: &WebDriver, selector: &str, attribute: &str) -> String {
+    driver
+        .execute(
+            "const element = document.querySelector(arguments[0]); return element ? element.getAttribute(arguments[1]) : '';",
+            vec![serde_json::json!(selector), serde_json::json!(attribute)],
+        )
+        .await
+        .expect("the attribute must be readable")
+        .json()
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// 入力要素の値を読む。
+pub async fn value(driver: &WebDriver, selector: &str) -> String {
+    driver
+        .execute(
+            "const element = document.querySelector(arguments[0]); return element ? element.value : '';",
+            vec![serde_json::json!(selector)],
+        )
+        .await
+        .expect("the value must be readable")
+        .json()
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// 要素の属性が期待値になるまで待つ。
+pub async fn wait_for_attribute(
+    driver: &WebDriver,
+    selector: &str,
+    attribute_name: &str,
+    expected: &str,
+) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if attribute(driver, selector, attribute_name).await == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the attribute {attribute_name} of {selector} did not become {expected}"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 入力要素の値が期待値になるまで待つ。
+pub async fn wait_for_value(driver: &WebDriver, selector: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if value(driver, selector).await == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the value of {selector} did not become {expected}"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 非同期のスクリプトを実行し、JSON の結果を返す。
+pub async fn eval_json(
+    driver: &WebDriver,
+    script: &str,
+    arguments: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    let result = driver
+        .execute_async(script, arguments)
+        .await
+        .expect("the script must run");
+    let text = result
+        .json()
+        .as_str()
+        .expect("the script must return a JSON string")
+        .to_owned();
+    serde_json::from_str(&text).expect("valid JSON")
+}
+
+/// 非同期のスクリプトを実行し、文字列の結果を返す。
+pub async fn eval_string(
+    driver: &WebDriver,
+    script: &str,
+    arguments: Vec<serde_json::Value>,
+) -> String {
+    driver
+        .execute_async(script, arguments)
+        .await
+        .expect("the script must run")
+        .json()
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// OS に空きポートを選ばせる。
 pub fn free_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a free port must be available");

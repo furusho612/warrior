@@ -2,16 +2,22 @@
 //!
 //! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`。
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
+//! 永続ストレージの拒否はブラウザの判断を制御できないため、要求の結果を待った後も
+//! 保存できることで、保存が許可の結果に依存しないことを確かめる。
+//! セットと段は `put_record` で保存し、outbox の操作は作らない。0021 にはセットの
+//! 同期操作がなく、0025 が型付きの `save_set` を追加する。
 
 use std::cell::Cell;
 
 use js_sys::Promise;
 use serde_json::json;
 use warrior_core::sync::{
-    Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
+    next_sendable, Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
-use warrior_frontend::storage::{request_persistence, Storage, Store};
+use warrior_frontend::storage::{
+    request_persistence, DiscardOutcome, Storage, StorageError, Store,
+};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -28,6 +34,7 @@ const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4301";
 const CREATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4302";
 const UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4303";
 const SECOND_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4304";
+const THIRD_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4305";
 
 fn database_name(test: &str) -> String {
     let sequence = SEQUENCE.with(|sequence| {
@@ -47,12 +54,17 @@ fn session(memo: &str) -> SessionRecord {
         date: "2026-11-12".to_owned(),
         started_at: Some("2026-11-12T03:00:00Z".to_owned()),
         memo: memo.to_owned(),
+        confirmed_memo: String::new(),
         created_at: "2026-11-12T03:00:00Z".to_owned(),
         updated_at: "2026-11-12T03:00:00Z".to_owned(),
     }
 }
 
 fn create_operation(operation_id: &str) -> Operation {
+    create_operation_with_memo(operation_id, "")
+}
+
+fn create_operation_with_memo(operation_id: &str, memo: &str) -> Operation {
     Operation {
         operation_id: operation_id.to_owned(),
         training_id: TRAINING_ID.to_owned(),
@@ -63,7 +75,7 @@ fn create_operation(operation_id: &str) -> Operation {
             id: TRAINING_ID.to_owned(),
             date: "2026-11-12".to_owned(),
             started_at: "2026-11-12T03:00:00Z".to_owned(),
-            memo: String::new(),
+            memo: memo.to_owned(),
         })
         .expect("a create payload"),
     }
@@ -85,12 +97,16 @@ fn update_operation(operation_id: &str, memo: &str) -> Operation {
     }
 }
 
+async fn open(name: &str) -> Storage {
+    Storage::open_with(name, 2)
+        .await
+        .expect("the database must open")
+}
+
 #[wasm_bindgen_test]
 async fn saves_a_session_and_its_operations_and_lists_the_outbox_in_order() {
     let name = database_name("order");
-    let storage = Storage::open_with(&name, 1)
-        .await
-        .expect("the database must open");
+    let storage = open(&name).await;
 
     storage
         .save_session_create(&session(""), &create_operation(CREATE_ID))
@@ -127,9 +143,7 @@ async fn saves_a_session_and_its_operations_and_lists_the_outbox_in_order() {
 #[wasm_bindgen_test]
 async fn a_duplicate_operation_id_aborts_and_does_not_write_the_session() {
     let name = database_name("duplicate");
-    let storage = Storage::open_with(&name, 1)
-        .await
-        .expect("the database must open");
+    let storage = open(&name).await;
 
     storage
         .save_session_create(&session(""), &create_operation(CREATE_ID))
@@ -159,16 +173,76 @@ async fn a_duplicate_operation_id_aborts_and_does_not_write_the_session() {
 }
 
 #[wasm_bindgen_test]
-async fn reuses_only_a_pending_update_of_the_same_training() {
-    let name = database_name("reuse");
-    let storage = Storage::open_with(&name, 1)
+async fn a_duplicate_update_operation_id_aborts_and_keeps_the_session() {
+    let name = database_name("duplicate-update");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(
+            &session("base"),
+            &create_operation_with_memo(CREATE_ID, "base"),
+        )
         .await
-        .expect("the database must open");
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+    storage
+        .save_session_update(&session("first"), &update_operation(UPDATE_ID, "first"))
+        .await
+        .expect("the first update must be saved");
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the update must be sending");
+    storage
+        .mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the update must fail");
+
+    let duplicate = storage
+        .save_session_update(
+            &session("failed draft"),
+            &update_operation(UPDATE_ID, "failed draft"),
+        )
+        .await;
+    assert!(duplicate.is_err(), "the duplicate must be rejected");
+
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "first");
+    assert_eq!(stored.confirmed_memo, "base");
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].state, OutboxState::Failed);
+    assert_eq!(entries[0].operation.payload["memo"], "first");
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn only_an_unattempted_pending_update_is_merged() {
+    let name = database_name("reuse");
+    let storage = open(&name).await;
 
     storage
         .save_session_create(&session(""), &create_operation(CREATE_ID))
         .await
         .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
     storage
         .save_session_update(&session("first"), &update_operation(UPDATE_ID, "first"))
         .await
@@ -185,24 +259,49 @@ async fn reuses_only_a_pending_update_of_the_same_training() {
         .outbox_entries()
         .await
         .expect("the outbox must be readable");
-    assert_eq!(entries.len(), 2);
-    assert_eq!(entries[1].operation.operation_id, UPDATE_ID);
-    assert_eq!(entries[1].operation.sequence, 2);
-    assert_eq!(entries[1].operation.payload["memo"], "second");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].operation.operation_id, UPDATE_ID);
+    assert_eq!(entries[0].operation.sequence, 2);
+    assert_eq!(entries[0].operation.payload["memo"], "second");
 
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn an_attempted_update_is_not_merged_and_the_latest_value_is_last() {
+    let name = database_name("attempted");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+    storage
+        .save_session_update(&session("x"), &update_operation(UPDATE_ID, "x"))
+        .await
+        .expect("the first update must be saved");
     storage
         .mark_sending(UPDATE_ID)
         .await
         .expect("the update must be sending");
     storage
-        .mark_permanent_failure(UPDATE_ID)
+        .mark_transient_failure(UPDATE_ID)
         .await
-        .expect("the update must fail");
+        .expect("the update must fail transiently");
+
     storage
-        .save_session_update(
-            &session("third"),
-            &update_operation(SECOND_UPDATE_ID, "third"),
-        )
+        .save_session_update(&session("y"), &update_operation(SECOND_UPDATE_ID, "y"))
+        .await
+        .expect("the second update must be saved");
+    storage
+        .save_session_update(&session("z"), &update_operation(THIRD_UPDATE_ID, "z"))
         .await
         .expect("the third update must be saved");
 
@@ -210,12 +309,23 @@ async fn reuses_only_a_pending_update_of_the_same_training() {
         .outbox_entries()
         .await
         .expect("the outbox must be readable");
-    assert_eq!(entries.len(), 3);
-    assert_eq!(entries[1].state, OutboxState::Failed);
-    assert_eq!(entries[2].operation.operation_id, SECOND_UPDATE_ID);
-    assert_eq!(entries[2].operation.sequence, 3);
-    assert_eq!(entries[2].operation.payload["memo"], "third");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].operation.operation_id, UPDATE_ID);
+    assert_eq!(entries[0].operation.payload["memo"], "x");
+    assert_eq!(entries[0].state, OutboxState::Pending);
+    assert!(entries[0].attempted);
+    assert_eq!(entries[1].operation.operation_id, SECOND_UPDATE_ID);
+    assert_eq!(entries[1].operation.payload["memo"], "z");
+    assert_eq!(entries[1].operation.sequence, 3);
 
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the attempted operation must be sending");
+    storage
+        .mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the attempted operation must fail");
     storage
         .retry(UPDATE_ID)
         .await
@@ -253,14 +363,335 @@ async fn reuses_only_a_pending_update_of_the_same_training() {
 }
 
 #[wasm_bindgen_test]
-async fn saving_does_not_depend_on_the_persistence_permission() {
-    let name = database_name("persistence");
-    let storage = Storage::open_with(&name, 1)
-        .await
-        .expect("the database must open");
+async fn a_create_parent_blocks_updates_until_it_is_resolved() {
+    let name = database_name("parent");
+    let storage = open(&name).await;
 
-    // ブラウザの判断は制御できない。結果が false でも保存を続けることを、
-    // 要求の結果を待った後に保存できることで確かめる。
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    storage
+        .save_session_update(&session("draft"), &update_operation(UPDATE_ID, "draft"))
+        .await
+        .expect("the update must be saved");
+
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries[1].state, OutboxState::Blocked);
+    assert_eq!(
+        entries[1].operation.parent_operation_id.as_deref(),
+        Some(CREATE_ID)
+    );
+
+    storage
+        .mark_sending(CREATE_ID)
+        .await
+        .expect("the create must be sending");
+    storage
+        .mark_permanent_failure(CREATE_ID)
+        .await
+        .expect("the create must fail");
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries[0].state, OutboxState::Failed);
+    assert_eq!(entries[1].state, OutboxState::Blocked);
+
+    let outcome = storage
+        .discard(CREATE_ID)
+        .await
+        .expect("the create must be discarded");
+    assert_eq!(outcome, DiscardOutcome::SessionDeleted);
+    assert_eq!(
+        storage
+            .session(TRAINING_ID)
+            .await
+            .expect("the session read must work"),
+        None
+    );
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox read must work")
+        .is_empty());
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn a_resolved_create_keeps_the_merged_update_sendable() {
+    let name = database_name("resolved-parent");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    storage
+        .save_session_update(&session("first"), &update_operation(UPDATE_ID, "first"))
+        .await
+        .expect("the update must be saved");
+    storage
+        .mark_sending(CREATE_ID)
+        .await
+        .expect("the create must be sending");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+    storage
+        .save_session_update(&session("second"), &update_operation(UPDATE_ID, "second"))
+        .await
+        .expect("the merged update must be saved");
+
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].state, OutboxState::Pending);
+    assert_eq!(
+        entries[0].operation.parent_operation_id.as_deref(),
+        Some(CREATE_ID)
+    );
+    assert_eq!(entries[0].operation.payload["memo"], "second");
+    assert_eq!(
+        next_sendable(&entries).map(|entry| entry.operation.operation_id.as_str()),
+        Some(UPDATE_ID)
+    );
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn discarding_a_failed_create_removes_the_session_tree_and_outbox() {
+    let name = database_name("discard-create");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    storage
+        .save_session_update(&session("draft"), &update_operation(UPDATE_ID, "draft"))
+        .await
+        .expect("the update must be saved");
+    storage
+        .put_record(
+            Store::TrainingExercises,
+            &json!({"id": "exercise-1", "training_id": TRAINING_ID, "position": 0}),
+        )
+        .await
+        .expect("the exercise must be saved");
+    storage
+        .put_record(
+            Store::Sets,
+            &json!({"id": "set-1", "training_exercise_id": "exercise-1", "position": 0}),
+        )
+        .await
+        .expect("the set must be saved");
+    storage
+        .put_record(
+            Store::SetSegments,
+            &json!({"id": "segment-1", "set_id": "set-1", "position": 0}),
+        )
+        .await
+        .expect("the segment must be saved");
+    storage
+        .put_record(
+            Store::Supersets,
+            &json!({"id": "superset-1", "training_id": TRAINING_ID, "position": 0}),
+        )
+        .await
+        .expect("the superset must be saved");
+    storage
+        .put_record(
+            Store::SupersetMembers,
+            &json!({
+                "superset_id": "superset-1",
+                "training_exercise_id": "exercise-1",
+                "position": 0
+            }),
+        )
+        .await
+        .expect("the member must be saved");
+    storage
+        .mark_sending(CREATE_ID)
+        .await
+        .expect("the create must be sending");
+    storage
+        .mark_permanent_failure(CREATE_ID)
+        .await
+        .expect("the create must fail");
+
+    let outcome = storage
+        .discard(CREATE_ID)
+        .await
+        .expect("the create must be discarded");
+    assert_eq!(outcome, DiscardOutcome::SessionDeleted);
+    for store in [
+        Store::TrainingSessions,
+        Store::TrainingExercises,
+        Store::Sets,
+        Store::SetSegments,
+        Store::Supersets,
+        Store::SupersetMembers,
+    ] {
+        assert!(
+            storage
+                .all_records(store)
+                .await
+                .expect("the store must be readable")
+                .is_empty(),
+            "{store:?} must be empty"
+        );
+    }
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox read must work")
+        .is_empty());
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn discarding_a_failed_update_reverts_the_memo_to_the_confirmed_value() {
+    let name = database_name("discard-update");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(
+            &session("base"),
+            &create_operation_with_memo(CREATE_ID, "base"),
+        )
+        .await
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+    storage
+        .save_session_update(&session("draft"), &update_operation(UPDATE_ID, "draft"))
+        .await
+        .expect("the update must be saved");
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the update must be sending");
+    storage
+        .mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the update must fail");
+
+    let outcome = storage
+        .discard(UPDATE_ID)
+        .await
+        .expect("the update must be discarded");
+    let stored = match outcome {
+        DiscardOutcome::MemoReverted(session) => session,
+        other => panic!("the discarded update must revert the memo: {other:?}"),
+    };
+    assert_eq!(stored.memo, "base");
+    assert_eq!(stored.confirmed_memo, "base");
+    assert_ne!(stored.memo, "draft");
+    let persisted = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(persisted.memo, "base");
+    assert_eq!(persisted.confirmed_memo, "base");
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn a_failed_save_keeps_the_session_and_confirmed_memo() {
+    let name = database_name("failed-save");
+    let storage = open(&name).await;
+
+    storage
+        .save_session_create(
+            &session("base"),
+            &create_operation_with_memo(CREATE_ID, "base"),
+        )
+        .await
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+    storage
+        .save_session_update(&session("first"), &update_operation(UPDATE_ID, "first"))
+        .await
+        .expect("the first update must be saved");
+    storage
+        .mark_sending(UPDATE_ID)
+        .await
+        .expect("the update must be sending");
+    storage
+        .mark_permanent_failure(UPDATE_ID)
+        .await
+        .expect("the update must fail");
+
+    let result = storage
+        .save_session_update(
+            &session("failed draft"),
+            &update_operation(UPDATE_ID, "failed draft"),
+        )
+        .await;
+    assert!(result.is_err());
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "first");
+    assert_eq!(stored.confirmed_memo, "base");
+
+    storage
+        .save_session_update(
+            &session("second"),
+            &update_operation(SECOND_UPDATE_ID, "second"),
+        )
+        .await
+        .expect("the successful update must be saved");
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "second");
+    assert_eq!(stored.confirmed_memo, "base");
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn persistence_permission_does_not_gate_saving() {
+    let name = database_name("persistence");
+    let storage = open(&name).await;
+
     let _ = request_persistence().await;
     storage
         .save_session_create(&session("saved"), &create_operation(CREATE_ID))
@@ -280,11 +711,11 @@ async fn saving_does_not_depend_on_the_persistence_permission() {
 }
 
 #[wasm_bindgen_test]
-async fn a_blocked_migration_keeps_the_data_and_can_be_retried() {
+async fn a_blocked_migration_keeps_the_data_and_adds_the_new_index() {
     let name = database_name("migration");
     let storage = Storage::open_with(&name, 1)
         .await
-        .expect("the database must open");
+        .expect("the version 1 database must open");
     storage
         .save_session_create(&session("keep"), &create_operation(CREATE_ID))
         .await
@@ -308,6 +739,26 @@ async fn a_blocked_migration_keeps_the_data_and_can_be_retried() {
         .expect("the session must be readable")
         .expect("the session must survive the failed migration");
     assert_eq!(stored.memo, "keep");
+    assert_eq!(
+        migrated
+            .outbox_entries()
+            .await
+            .expect("the outbox must be readable")
+            .len(),
+        1,
+        "the outbox must survive the migration"
+    );
+
+    let raw = raw_open(&name).await;
+    let transaction = raw
+        .transaction_with_str("training_sessions")
+        .expect("the session store transaction");
+    let store = transaction
+        .object_store("training_sessions")
+        .expect("the session store");
+    assert!(store.index_names().contains("by_date"));
+    assert!(store.index_names().contains("by_started_at"));
+    raw.close();
 
     migrated
         .clear_account()
@@ -318,9 +769,7 @@ async fn a_blocked_migration_keeps_the_data_and_can_be_retried() {
 #[wasm_bindgen_test]
 async fn clear_account_removes_the_database_the_outbox_and_advances_the_generation() {
     let name = database_name("clear");
-    let storage = Storage::open_with(&name, 1)
-        .await
-        .expect("the database must open");
+    let storage = open(&name).await;
     storage
         .save_session_create(&session("delete"), &create_operation(CREATE_ID))
         .await
@@ -342,7 +791,7 @@ async fn clear_account_removes_the_database_the_outbox_and_advances_the_generati
         .expect("the outbox read must work")
         .is_empty());
 
-    let reopened = Storage::open_with(&name, 1)
+    let reopened = Storage::open_with(&name, 2)
         .await
         .expect("the database must reopen");
     assert_eq!(
@@ -366,9 +815,7 @@ async fn clear_account_removes_the_database_the_outbox_and_advances_the_generati
 #[wasm_bindgen_test]
 async fn saves_and_restores_sets_and_segments() {
     let name = database_name("sets");
-    let storage = Storage::open_with(&name, 1)
-        .await
-        .expect("the database must open");
+    let storage = open(&name).await;
 
     let exercise = json!({
         "id": "exercise-1",
@@ -426,6 +873,34 @@ async fn saves_and_restores_sets_and_segments() {
     assert_eq!(segments[0]["id"], "segment-1");
     assert_eq!(segments[0]["weight_kg"].as_f64(), Some(100.0));
     assert_eq!(segments[0]["reps"], 5);
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn records_are_limited_to_record_stores() {
+    let name = database_name("stores");
+    let storage = open(&name).await;
+
+    for store in [Store::Outbox, Store::Meta] {
+        let write = storage.put_record(store, &json!({"key": "x"})).await;
+        assert_eq!(
+            write,
+            Err(StorageError::InvalidOperation(
+                "the store is not a record store".to_owned()
+            ))
+        );
+        let read = storage.all_records(store).await;
+        assert_eq!(
+            read,
+            Err(StorageError::InvalidOperation(
+                "the store is not a record store".to_owned()
+            ))
+        );
+    }
 
     storage
         .clear_account()

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 use web_sys::IdbObjectStore;
 
-use warrior_core::sync::{OperationKind, OutboxEntry, OutboxState};
+use warrior_core::sync::OutboxEntry;
 
 use super::indexeddb::{self, from_js, get, to_js};
 use super::StorageError;
@@ -36,18 +36,6 @@ pub fn sort(entries: &mut [OutboxEntry]) {
                     .cmp(&right.operation.operation_id)
             })
     });
-}
-
-/// 同じトレーニングの Pending の更新の操作を探す。
-pub fn pending_update<'a>(
-    entries: &'a [OutboxEntry],
-    training_id: &str,
-) -> Option<&'a OutboxEntry> {
-    entries.iter().find(|entry| {
-        entry.operation.training_id == training_id
-            && entry.operation.kind == OperationKind::TrainingSessionUpdate
-            && entry.state == OutboxState::Pending
-    })
 }
 
 /// トレーニングの次の順序を決め、メタを同じトランザクションで更新する。

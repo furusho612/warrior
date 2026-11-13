@@ -96,6 +96,9 @@ pub struct SessionRecord {
     pub started_at: Option<String>,
     /// トレーニング全体のメモ。
     pub memo: String,
+    /// サーバーが受理したメモ。
+    #[serde(default)]
+    pub confirmed_memo: String,
     /// 作成した時刻。
     pub created_at: String,
     /// 更新した時刻。
@@ -243,6 +246,9 @@ pub struct OutboxEntry {
     pub state: OutboxState,
     /// 一時的な失敗の回数。
     pub attempts: u32,
+    /// 送信を試みたことがあるか。
+    #[serde(default)]
+    pub attempted: bool,
 }
 
 /// 次に送る操作を選ぶ。
@@ -287,6 +293,7 @@ pub fn mark_sending(entries: &mut [OutboxEntry], operation_id: &str) -> bool {
         return false;
     }
     entries[index].state = OutboxState::Sending;
+    entries[index].attempted = true;
     let parent_id = operation_id.to_owned();
     for entry in entries.iter_mut() {
         if entry.operation.parent_operation_id.as_deref() == Some(parent_id.as_str())
@@ -312,6 +319,55 @@ pub fn mark_success(entries: &mut Vec<OutboxEntry>, operation_id: &str) -> bool 
         }
     }
     true
+}
+
+/// 送信中のまま残った操作を Pending に戻す。試行の印は残す。
+pub fn recover_interrupted(entries: &mut [OutboxEntry]) -> bool {
+    let mut changed = false;
+    for entry in entries.iter_mut() {
+        if entry.state == OutboxState::Sending {
+            entry.state = OutboxState::Pending;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// 同じトレーニングの最も新しい、送信を試みていない Pending の更新を返す。
+pub fn pending_update<'a>(
+    entries: &'a [OutboxEntry],
+    training_id: &str,
+) -> Option<&'a OutboxEntry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.operation.training_id == training_id
+                && entry.operation.kind == OperationKind::TrainingSessionUpdate
+                && entry.state == OutboxState::Pending
+                && !entry.attempted
+        })
+        .max_by_key(|entry| entry.operation.sequence)
+}
+
+/// 同じトレーニングの未解決の作成操作を返す。
+pub fn unresolved_create<'a>(
+    entries: &'a [OutboxEntry],
+    training_id: &str,
+) -> Option<&'a OutboxEntry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.operation.training_id == training_id
+                && entry.operation.kind == OperationKind::TrainingSessionCreate
+                && matches!(
+                    entry.state,
+                    OutboxState::Pending
+                        | OutboxState::Sending
+                        | OutboxState::Blocked
+                        | OutboxState::Failed
+                )
+        })
+        .max_by_key(|entry| entry.operation.sequence)
 }
 
 /// 一時的な失敗として、Sending を Pending に戻し、試行回数を増やす。
@@ -414,8 +470,9 @@ mod tests {
 
     use super::{
         discard, mark_permanent_failure, mark_sending, mark_success, mark_transient_failure,
-        next_sendable, retry, unsaved_count, validate_operation, Operation, OperationKind,
-        OutboxEntry, OutboxState, SyncError, MEMO_MAX_CHARS,
+        next_sendable, pending_update, recover_interrupted, retry, unresolved_create,
+        unsaved_count, validate_operation, Operation, OperationKind, OutboxEntry, OutboxState,
+        SyncError, MEMO_MAX_CHARS,
     };
 
     const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -460,6 +517,7 @@ mod tests {
             operation,
             state,
             attempts: 0,
+            attempted: false,
         }
     }
 
@@ -500,6 +558,63 @@ mod tests {
         assert_eq!(
             validate_operation(&operation),
             Err(SyncError::InvalidSequence)
+        );
+    }
+
+    #[test]
+    fn rejects_an_operation_id_that_is_not_a_uuid_v4() {
+        let mut operation = create_operation();
+        operation.operation_id = "not-a-uuid".to_owned();
+        assert_eq!(
+            validate_operation(&operation),
+            Err(SyncError::InvalidOperationId)
+        );
+    }
+
+    #[test]
+    fn rejects_a_training_id_that_is_not_a_uuid_v4() {
+        let mut operation = create_operation();
+        operation.training_id = "not-a-uuid".to_owned();
+        assert_eq!(
+            validate_operation(&operation),
+            Err(SyncError::InvalidTrainingId)
+        );
+    }
+
+    #[test]
+    fn rejects_an_operation_that_names_itself_as_the_parent() {
+        let mut operation = create_operation();
+        operation.parent_operation_id = Some(OPERATION_ID.to_owned());
+        assert_eq!(
+            validate_operation(&operation),
+            Err(SyncError::InvalidParent)
+        );
+    }
+
+    #[test]
+    fn rejects_a_started_at_that_is_not_an_iso8601_utc_time() {
+        let mut operation = create_operation();
+        operation.payload["started_at"] = json!("2026-11-12 03:00:00");
+        assert_eq!(
+            validate_operation(&operation),
+            Err(SyncError::InvalidStartedAt)
+        );
+    }
+
+    #[test]
+    fn accepts_a_memo_at_the_limit() {
+        let mut operation = create_operation();
+        operation.payload["memo"] = json!("あ".repeat(MEMO_MAX_CHARS));
+        assert!(validate_operation(&operation).is_ok());
+    }
+
+    #[test]
+    fn rejects_an_unknown_payload_field() {
+        let mut operation = create_operation();
+        operation.payload["unexpected"] = json!(true);
+        assert_eq!(
+            validate_operation(&operation),
+            Err(SyncError::InvalidPayload)
         );
     }
 
@@ -565,6 +680,45 @@ mod tests {
         let removed = discard(&mut entries, OPERATION_ID);
         assert_eq!(removed.len(), 3);
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn pending_update_skips_attempted_and_older_updates() {
+        let mut older = entry(update_operation(UPDATE_ID, 2), OutboxState::Pending);
+        older.attempted = false;
+        let mut attempted = entry(update_operation(PARENT_ID, 3), OutboxState::Pending);
+        attempted.attempted = true;
+        let mut newer = entry(update_operation(CHILD_ID, 4), OutboxState::Pending);
+        newer.attempted = false;
+        let entries = vec![older, attempted, newer];
+
+        assert_eq!(
+            pending_update(&entries, TRAINING_ID)
+                .map(|entry| entry.operation.operation_id.as_str()),
+            Some(CHILD_ID)
+        );
+    }
+
+    #[test]
+    fn an_unresolved_create_is_found_even_after_it_fails() {
+        let mut create = entry(create_operation(), OutboxState::Failed);
+        create.attempted = true;
+        let entries = vec![create];
+        assert_eq!(
+            unresolved_create(&entries, TRAINING_ID)
+                .map(|entry| entry.operation.operation_id.as_str()),
+            Some(OPERATION_ID)
+        );
+    }
+
+    #[test]
+    fn recovering_an_interrupted_send_keeps_the_attempt_mark() {
+        let mut entries = vec![entry(create_operation(), OutboxState::Pending)];
+        assert!(mark_sending(&mut entries, OPERATION_ID));
+        assert!(recover_interrupted(&mut entries));
+        assert_eq!(entries[0].state, OutboxState::Pending);
+        assert!(entries[0].attempted);
+        assert!(!recover_interrupted(&mut entries));
     }
 
     #[test]

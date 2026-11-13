@@ -1,6 +1,6 @@
 # セットの追加と削除、セット種別を実装する
 
-- Requirements: REQ-SET-001, REQ-SET-002, REQ-LIB-004, REQ-PRF-005
+- Requirements: REQ-SET-001, REQ-SET-002, REQ-LIB-004, REQ-PRF-005, REQ-NFR-003, REQ-NFR-004, REQ-NFR-005, REQ-NFR-007
 - Priority: High
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
@@ -66,6 +66,7 @@
 - [ ] PBT で、セット種別ごとの総重量、推定 1RM、自己ベスト、部位別のセット数の扱いが 0012 と一致することを確かめる。
 - [ ] 例示テストで、3 つのセット種別、セットの追加と削除、順序の変更を確かめる。
 - [ ] E2E で、セットを追加し、重量と回数を入れ、種別を変え、削除する操作を確かめる。
+- [ ] Safari の E2E で、セットを入力して再読み込みすると、記録画面が開き、入力済みのセットが残る。これは REQ-NFR-004 の受入基準に対応する。
 
 ## 解決方法
 

@@ -10,20 +10,19 @@ use warrior_core::sync::{
 };
 
 use crate::routes::Route;
-use crate::storage::{self, StorageError};
-use crate::sync;
+use crate::storage::{self, DiscardOutcome, StorageError};
+use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
 
 #[component]
 pub fn RecordScreen() -> Element {
-    let mut error = use_signal(|| Option::<String>::None);
-    let mut starting = use_signal(|| false);
+    let error = use_signal(|| Option::<String>::None);
+    let starting = use_signal(|| false);
 
     use_effect(move || {
         spawn(async move {
             sync::start().await;
             let Ok(storage) = storage::current().await else {
-                error.set(Some(text(Key::RecordLoadFailed).to_owned()));
                 return;
             };
             match storage.active_session().await {
@@ -33,7 +32,7 @@ pub fn RecordScreen() -> Element {
                     });
                 }
                 Ok(None) => {}
-                Err(_) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
+                Err(_) => {}
             }
         });
     });
@@ -47,20 +46,7 @@ pub fn RecordScreen() -> Element {
                 "data-start-record": "true",
                 disabled: starting(),
                 onclick: move |_| {
-                    spawn(async move {
-                        starting.set(true);
-                        let result = create_session().await;
-                        starting.set(false);
-                        match result {
-                            Ok(session) => {
-                                sync::after_local_save().await;
-                                let _ = navigator().push(Route::RecordSession {
-                                    training_id: session.id,
-                                });
-                            }
-                            Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
-                        }
-                    });
+                    spawn(start_session(error, starting));
                 },
                 "{text(Key::RecordStart)}"
             }
@@ -69,21 +55,7 @@ pub fn RecordScreen() -> Element {
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
                     onclick: move |_| {
-                        spawn(async move {
-                            starting.set(true);
-                            let result = create_session().await;
-                            starting.set(false);
-                            match result {
-                                Ok(session) => {
-                                    error.set(None);
-                                    sync::after_local_save().await;
-                                    let _ = navigator().push(Route::RecordSession {
-                                        training_id: session.id,
-                                    });
-                                }
-                                Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
-                            }
-                        });
+                        spawn(start_session(error, starting));
                     },
                     "{text(Key::RecordRetry)}"
                 }
@@ -92,36 +64,45 @@ pub fn RecordScreen() -> Element {
     }
 }
 
+async fn start_session(mut error: Signal<Option<String>>, mut starting: Signal<bool>) {
+    starting.set(true);
+    let result = create_session().await;
+    starting.set(false);
+    match result {
+        Ok(session) => {
+            error.set(None);
+            sync::after_local_save().await;
+            let _ = navigator().push(Route::RecordSession {
+                training_id: session.id,
+            });
+        }
+        Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
+    }
+}
+
 #[component]
 pub fn RecordSessionScreen(training_id: String) -> Element {
     let session = use_signal(|| Option::<SessionRecord>::None);
     let memo = use_signal(String::new);
+    let persisted_memo = use_signal(String::new);
+    let saving = use_signal(|| false);
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let route_id = training_id.clone();
 
     use_effect(move || {
+        let _revision = sync::revision();
         let id = route_id.clone();
         spawn(async move {
-            load(id, session, memo, load_error).await;
+            load(id, session, memo, persisted_memo, load_error).await;
         });
     });
 
     let status = sync::status();
-    let status_value = if status.failed > 0 {
-        "failed"
-    } else if status.unsaved > 0 {
-        "unsaved"
-    } else {
-        "saved"
-    };
-    let status_text = if status.failed > 0 {
-        format!("{}: {}", text(Key::SyncFailed), status.failed)
-    } else if status.unsaved > 0 {
-        format!("{}: {}", text(Key::SyncUnsaved), status.unsaved)
-    } else {
-        text(Key::SyncSaved).to_owned()
-    };
+    let confirmed = session()
+        .map(|record| record.confirmed_memo)
+        .unwrap_or_default();
+    let (status_value, status_text) = sync_status_text(status, &memo(), &confirmed);
     let failed = sync::failed_operations();
 
     rsx! {
@@ -129,6 +110,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             class: "flex min-h-full flex-col gap-3 p-5",
             "data-route": "/record/:training_id",
             "data-session-id": training_id,
+            "data-persisted-memo": "{persisted_memo}",
             h1 { class: "text-lg font-bold", "{text(Key::RecordTitle)}" }
             p {
                 class: "text-[13px] text-text-sub",
@@ -136,7 +118,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 "{status_text}"
             }
             if session().is_some() {
-                MemoEditor { session, memo, save_error }
+                MemoEditor { session, memo, persisted_memo, saving, save_error }
             } else if let Some(message) = load_error() {
                 p { class: "text-[13px] text-primary", "{message}" }
                 button {
@@ -146,7 +128,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                         move |_| {
                             let id = id.clone();
                             spawn(async move {
-                                load(id, session, memo, load_error).await;
+                                load(id, session, memo, persisted_memo, load_error).await;
                             });
                         }
                     },
@@ -156,7 +138,12 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 p { class: "text-[13px] text-text-sub", "{text(Key::RecordLoading)}" }
             }
             if !failed.is_empty() {
-                FailedOperations { failed }
+                FailedOperations {
+                    failed,
+                    session,
+                    memo,
+                    persisted_memo,
+                }
             }
         }
     }
@@ -166,11 +153,11 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
 fn MemoEditor(
     session: Signal<Option<SessionRecord>>,
     memo: Signal<String>,
+    persisted_memo: Signal<String>,
+    saving: Signal<bool>,
     save_error: Signal<Option<String>>,
 ) -> Element {
-    let mut session = session;
     let mut memo = memo;
-    let mut save_error = save_error;
 
     rsx! {
         label { class: "text-[13px] font-bold", r#for: "record-memo", "{text(Key::RecordMemoLabel)}" }
@@ -181,42 +168,19 @@ fn MemoEditor(
             value: "{memo}",
             placeholder: "{text(Key::RecordMemoPlaceholder)}",
             oninput: move |event| {
-                let value = event.value();
-                memo.set(value.clone());
-                let Some(mut record) = session() else {
-                    return;
-                };
-                record.memo = value;
-                record.updated_at = now_iso();
-                session.set(Some(record.clone()));
-                spawn(async move {
-                    match save_memo(record).await {
-                        Ok(()) => {
-                            save_error.set(None);
-                            sync::after_local_save().await;
-                        }
-                        Err(_) => save_error.set(Some(text(Key::RecordSaveFailed).to_owned())),
-                    }
-                });
+                memo.set(event.value());
+                spawn(save_current(session, memo, persisted_memo, saving, save_error));
             },
+        }
+        if saving() {
+            p { class: "text-[13px] text-text-sub", "{text(Key::RecordSaving)}" }
         }
         if let Some(message) = save_error() {
             p { class: "text-[13px] text-primary", "{message}" }
             button {
                 class: "min-h-11 border border-line px-3 text-[13px]",
                 onclick: move |_| {
-                    let Some(record) = session() else {
-                        return;
-                    };
-                    spawn(async move {
-                        match save_memo(record).await {
-                            Ok(()) => {
-                                save_error.set(None);
-                                sync::after_local_save().await;
-                            }
-                            Err(_) => save_error.set(Some(text(Key::RecordSaveFailed).to_owned())),
-                        }
-                    });
+                    spawn(save_current(session, memo, persisted_memo, saving, save_error));
                 },
                 "{text(Key::RecordRetry)}"
             }
@@ -225,7 +189,16 @@ fn MemoEditor(
 }
 
 #[component]
-fn FailedOperations(failed: Vec<OutboxEntry>) -> Element {
+fn FailedOperations(
+    failed: Vec<OutboxEntry>,
+    session: Signal<Option<SessionRecord>>,
+    memo: Signal<String>,
+    persisted_memo: Signal<String>,
+) -> Element {
+    let mut session = session;
+    let mut memo = memo;
+    let mut persisted_memo = persisted_memo;
+
     rsx! {
         div { class: "flex flex-col gap-2 border border-line bg-surface p-3",
             h2 { class: "text-sm font-bold", "{text(Key::RecordFailedOperations)}" }
@@ -254,7 +227,17 @@ fn FailedOperations(failed: Vec<OutboxEntry>) -> Element {
                                 move |_| {
                                     let operation_id = operation_id.clone();
                                     spawn(async move {
-                                        sync::discard_operation(&operation_id).await;
+                                        match sync::discard_operation(&operation_id).await {
+                                            Some(DiscardOutcome::SessionDeleted) => {
+                                                let _ = navigator().push(Route::Record {});
+                                            }
+                                            Some(DiscardOutcome::MemoReverted(updated)) => {
+                                                memo.set(updated.memo.clone());
+                                                persisted_memo.set(updated.memo.clone());
+                                                session.set(Some(updated));
+                                            }
+                                            _ => {}
+                                        }
                                     });
                                 }
                             },
@@ -271,6 +254,7 @@ async fn load(
     training_id: String,
     mut session: Signal<Option<SessionRecord>>,
     mut memo: Signal<String>,
+    mut persisted_memo: Signal<String>,
     mut error: Signal<Option<String>>,
 ) {
     sync::start().await;
@@ -281,6 +265,7 @@ async fn load(
     match storage.session(&training_id).await {
         Ok(Some(record)) => {
             memo.set(record.memo.clone());
+            persisted_memo.set(record.memo.clone());
             session.set(Some(record));
             error.set(None);
         }
@@ -288,6 +273,31 @@ async fn load(
         Err(_) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
     }
     sync::refresh_status().await;
+}
+
+async fn save_current(
+    mut session: Signal<Option<SessionRecord>>,
+    memo: Signal<String>,
+    mut persisted_memo: Signal<String>,
+    mut saving: Signal<bool>,
+    mut save_error: Signal<Option<String>>,
+) {
+    let Some(record) = session() else {
+        return;
+    };
+    let draft = memo();
+    saving.set(true);
+    let result = save_draft(record, &draft).await;
+    saving.set(false);
+    match result {
+        Ok(updated) => {
+            session.set(Some(updated));
+            persisted_memo.set(draft);
+            save_error.set(None);
+            sync::after_local_save().await;
+        }
+        Err(_) => save_error.set(Some(text(Key::RecordSaveFailed).to_owned())),
+    }
 }
 
 async fn create_session() -> Result<SessionRecord, StorageError> {
@@ -300,6 +310,7 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
         date: date.clone(),
         started_at: Some(now.clone()),
         memo: String::new(),
+        confirmed_memo: String::new(),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -326,8 +337,9 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
     Ok(session)
 }
 
-async fn save_memo(record: SessionRecord) -> Result<(), StorageError> {
-    let operation_id = new_uuid()?;
+async fn save_draft(mut record: SessionRecord, memo: &str) -> Result<SessionRecord, StorageError> {
+    record.memo = memo.to_owned();
+    record.updated_at = now_iso();
     let started_at = record.started_at.clone().ok_or_else(|| {
         StorageError::InvalidOperation("the session has no start time".to_owned())
     })?;
@@ -337,7 +349,7 @@ async fn save_memo(record: SessionRecord) -> Result<(), StorageError> {
         memo: record.memo.clone(),
     };
     let operation = Operation {
-        operation_id,
+        operation_id: new_uuid()?,
         training_id: record.id.clone(),
         sequence: 0,
         kind: OperationKind::TrainingSessionUpdate,
@@ -346,7 +358,35 @@ async fn save_memo(record: SessionRecord) -> Result<(), StorageError> {
             .map_err(|error| StorageError::Serialize(error.to_string()))?,
     };
     let storage = storage::current().await?;
-    storage.save_session_update(&record, &operation).await
+    storage.save_session_update(&record, &operation).await?;
+    Ok(record)
+}
+
+fn sync_status_text(status: SyncStatus, draft: &str, confirmed: &str) -> (&'static str, String) {
+    let draft_unsaved = draft != confirmed;
+    let unsaved = status.unsaved > 0 || draft_unsaved;
+    let value = if status.failed > 0 {
+        "failed"
+    } else if unsaved {
+        "unsaved"
+    } else {
+        "saved"
+    };
+    let mut parts = Vec::new();
+    if unsaved {
+        if status.unsaved > 0 {
+            parts.push(format!("{}: {}", text(Key::SyncUnsaved), status.unsaved));
+        } else {
+            parts.push(text(Key::SyncUnsaved).to_owned());
+        }
+    }
+    if status.failed > 0 {
+        parts.push(format!("{}: {}", text(Key::SyncFailed), status.failed));
+    }
+    if parts.is_empty() {
+        parts.push(text(Key::SyncSaved).to_owned());
+    }
+    (value, parts.join(" "))
 }
 
 fn operation_label(kind: OperationKind) -> &'static str {

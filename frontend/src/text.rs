@@ -64,6 +64,7 @@ text_keys! {
     RecordMemoLabel => "メモ",
     RecordMemoPlaceholder => "トレーニングのメモ",
     RecordLoading => "読み込み中",
+    RecordSaving => "保存中",
     RecordLoadFailed => "記録を読み込めませんでした。",
     RecordSaveFailed => "端末への保存に失敗しました。",
     RecordRetry => "再試行",

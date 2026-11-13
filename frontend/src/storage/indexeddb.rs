@@ -33,6 +33,8 @@ struct IndexSpec {
     name: &'static str,
     /// 索引のキーの形。
     key_path: KeyPath,
+    /// 追加したスキーマの版。
+    since: u32,
 }
 
 /// 必要なオブジェクトストアと索引。
@@ -49,10 +51,18 @@ const STORES: &[StoreSpec] = &[
     StoreSpec {
         name: "training_sessions",
         key_path: KeyPath::Single("id"),
-        indexes: &[IndexSpec {
-            name: "by_started_at",
-            key_path: KeyPath::Single("started_at"),
-        }],
+        indexes: &[
+            IndexSpec {
+                name: "by_started_at",
+                key_path: KeyPath::Single("started_at"),
+                since: 1,
+            },
+            IndexSpec {
+                name: "by_date",
+                key_path: KeyPath::Single("date"),
+                since: 2,
+            },
+        ],
     },
     StoreSpec {
         name: "training_exercises",
@@ -60,6 +70,7 @@ const STORES: &[StoreSpec] = &[
         indexes: &[IndexSpec {
             name: "by_training",
             key_path: KeyPath::Single("training_id"),
+            since: 1,
         }],
     },
     StoreSpec {
@@ -68,6 +79,7 @@ const STORES: &[StoreSpec] = &[
         indexes: &[IndexSpec {
             name: "by_training_exercise",
             key_path: KeyPath::Single("training_exercise_id"),
+            since: 1,
         }],
     },
     StoreSpec {
@@ -76,6 +88,7 @@ const STORES: &[StoreSpec] = &[
         indexes: &[IndexSpec {
             name: "by_set",
             key_path: KeyPath::Single("set_id"),
+            since: 1,
         }],
     },
     StoreSpec {
@@ -84,6 +97,7 @@ const STORES: &[StoreSpec] = &[
         indexes: &[IndexSpec {
             name: "by_training",
             key_path: KeyPath::Single("training_id"),
+            since: 1,
         }],
     },
     StoreSpec {
@@ -92,6 +106,7 @@ const STORES: &[StoreSpec] = &[
         indexes: &[IndexSpec {
             name: "by_training_exercise",
             key_path: KeyPath::Single("training_exercise_id"),
+            since: 1,
         }],
     },
     StoreSpec {
@@ -100,6 +115,7 @@ const STORES: &[StoreSpec] = &[
         indexes: &[IndexSpec {
             name: "by_training_sequence",
             key_path: KeyPath::Multiple(&["operation.training_id", "operation.sequence"]),
+            since: 1,
         }],
     },
     StoreSpec {
@@ -118,7 +134,7 @@ pub async fn open(name: &str, version: u32) -> Result<IdbDatabase, StorageError>
     let settled = Rc::new(Cell::new(false));
     let promise = Promise::new(&mut |resolve, reject| {
         request.set_onupgradeneeded(Some(
-            upgrade_handler(settled.clone(), reject.clone()).unchecked_ref(),
+            upgrade_handler(settled.clone(), reject.clone(), version).unchecked_ref(),
         ));
         request.set_onblocked(Some(
             blocked_handler(settled.clone(), reject.clone()).unchecked_ref(),
@@ -139,7 +155,11 @@ pub async fn open(name: &str, version: u32) -> Result<IdbDatabase, StorageError>
     Ok(database)
 }
 
-fn upgrade_handler(settled: Rc<Cell<bool>>, reject: js_sys::Function) -> js_sys::Function {
+fn upgrade_handler(
+    settled: Rc<Cell<bool>>,
+    reject: js_sys::Function,
+    version: u32,
+) -> js_sys::Function {
     Closure::once_into_js(move |event: web_sys::Event| {
         let Some(request) = event_target::<IdbOpenDbRequest>(&event) else {
             settled.set(true);
@@ -170,7 +190,7 @@ fn upgrade_handler(settled: Rc<Cell<bool>>, reject: js_sys::Function) -> js_sys:
             );
             return;
         };
-        if let Err(error) = ensure_schema(&database, &transaction) {
+        if let Err(error) = ensure_schema(&database, &transaction, version) {
             let _ = transaction.abort();
             settled.set(true);
             let _ = reject.call1(&JsValue::NULL, &JsValue::from_str(&error.to_string()));
@@ -268,7 +288,11 @@ fn close_on_version_change(database: &IdbDatabase) {
     closure.forget();
 }
 
-fn ensure_schema(database: &IdbDatabase, transaction: &IdbTransaction) -> Result<(), StorageError> {
+fn ensure_schema(
+    database: &IdbDatabase,
+    transaction: &IdbTransaction,
+    version: u32,
+) -> Result<(), StorageError> {
     let names: DomStringList = database.object_store_names();
     for spec in STORES {
         let store = if names.contains(spec.name) {
@@ -284,7 +308,7 @@ fn ensure_schema(database: &IdbDatabase, transaction: &IdbTransaction) -> Result
         };
         let index_names = store.index_names();
         for index in spec.indexes {
-            if index_names.contains(index.name) {
+            if index.since > version || index_names.contains(index.name) {
                 continue;
             }
             match &index.key_path {

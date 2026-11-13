@@ -1,6 +1,6 @@
 //! 同期の操作の適用の結合テスト。
 //!
-//! 対応する要求: `REQ-NFR-005`、`REQ-NFR-007`。
+//! 対応する要求: `REQ-NFR-005`。
 //! 同じ操作 ID の再送で D1 が変わらず、操作の適用と操作 ID の保存が同じ batch で行われることを確かめる。
 
 mod support;
@@ -77,6 +77,8 @@ fn replayed_create_does_not_change_d1(server: &DevServer, cookie: &str) {
     );
     let after = rows(server, &format!("{SESSION_SELECT}{TRAINING_ID}'"));
     assert_eq!(before, after, "a replayed operation must not change D1");
+    assert_eq!(applied_count(server, CREATE_OPERATION_ID), 1);
+    assert_eq!(session_count(server), 1);
 }
 
 fn update_is_applied(server: &DevServer, cookie: &str) {
@@ -113,6 +115,16 @@ fn replayed_update_does_not_change_d1(server: &DevServer, cookie: &str) {
     );
     let after = rows(server, &format!("{SESSION_SELECT}{TRAINING_ID}'"));
     assert_eq!(before, after, "a replayed update must not change D1");
+    assert_eq!(applied_count(server, UPDATE_OPERATION_ID), 1);
+    assert_eq!(session_count(server), 1);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT memo FROM training_sessions WHERE id = '{TRAINING_ID}'")
+        )["memo"],
+        "second",
+        "the second statement of a replayed update must not run"
+    );
 }
 
 fn rejects_foreign_training(server: &DevServer, cookie: &str) {
@@ -248,5 +260,12 @@ fn applied_count(server: &DevServer, operation_id: &str) -> i64 {
         &format!(
             "SELECT COUNT(*) AS count FROM applied_operations WHERE operation_id = '{operation_id}'"
         ),
+    )
+}
+
+fn session_count(server: &DevServer) -> i64 {
+    count(
+        server,
+        &format!("SELECT COUNT(*) AS count FROM training_sessions WHERE id = '{TRAINING_ID}'"),
     )
 }
