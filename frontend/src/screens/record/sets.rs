@@ -544,8 +544,10 @@ pub(super) fn SetTable(
                         "{text(Key::RecordExerciseEmpty)}"
                     }
                 }
+                // セットの ID でキーし、並べ替えと種目切替でストップウォッチの状態が別の行へ移らないようにする。
                 for (index, row) in rows.iter().enumerate() {
                     SetRow {
+                        key: "{row.record.id}",
                         index,
                         set: row.clone(),
                         number: numbers[index],
@@ -658,8 +660,10 @@ fn SetRow(
                 }
                 RowButtons { buttons, disabled, on_action }
             }
+            // 段の ID でキーし、段の追加と削除で入力の状態を正しい段に保つ。
             for (segment_index, segment) in set.segments.iter().enumerate().skip(1) {
                 SegmentRow {
+                    key: "{set_id}:{segment.record.id}",
                     set_id: set_id.clone(),
                     segment: segment.clone(),
                     segment_index,

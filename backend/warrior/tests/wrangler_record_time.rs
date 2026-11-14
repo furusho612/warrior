@@ -16,7 +16,7 @@ use support::record_common;
 use support::DevServer;
 use warrior_core::base64url;
 
-const PORT: u16 = 8833;
+const PORT: u16 = 8838;
 
 const PLANK_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5600";
 const SIDE_PLANK_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5601";

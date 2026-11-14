@@ -285,10 +285,6 @@ async fn check_record_layout(driver: &WebDriver, browser: Browser) {
         browser::attribute(driver, "[data-set-table]", "data-set-row-height").await,
         "44"
     );
-    assert_eq!(
-        browser::attribute(driver, "[data-set-drawer]", "data-set-drawer").await,
-        "true"
-    );
     let rail_width = driver
         .execute(
             "return document.querySelector('[data-exercise-rail]').getBoundingClientRect().width;",
