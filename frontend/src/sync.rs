@@ -56,6 +56,16 @@ pub async fn clear_account() -> Result<(), StorageError> {
     Ok(())
 }
 
+/// 編集権を失ったトレーニングを記録し、以後の送信を止める。
+///
+/// 記録できたときだけ true を返す。画面は true のとき閲覧のみへ切り替える。
+pub async fn mark_training_forbidden(training_id: &str) -> bool {
+    let Ok(storage) = storage::current().await else {
+        return false;
+    };
+    storage.mark_training_forbidden(training_id).await.is_ok()
+}
+
 fn listen_online() {
     if LISTENING.with(|listening| listening.replace(true)) {
         return;
@@ -120,10 +130,16 @@ async fn flush_inner() {
         if storage::generation() != generation {
             return;
         }
+        let forbidden = storage.forbidden_trainings().await.unwrap_or_default();
         let Ok(entries) = storage.outbox_entries().await else {
             return;
         };
-        let Some(entry) = next_sendable(&entries).cloned() else {
+        // 編集権を失ったトレーニングは、引き継ぐか読み直すまで送らない。
+        let sendable = entries
+            .into_iter()
+            .filter(|entry| !forbidden.contains(&entry.operation.training_id))
+            .collect::<Vec<_>>();
+        let Some(entry) = next_sendable(&sendable).cloned() else {
             return;
         };
         let operation_id = entry.operation.operation_id.clone();
@@ -154,6 +170,13 @@ async fn flush_inner() {
                 let _ = storage.return_to_pending(&operation_id).await;
                 return;
             }
+            SendOutcome::Forbidden => {
+                if !mark_training_forbidden(&entry.operation.training_id).await {
+                    return;
+                }
+                let _ = storage.return_to_pending(&operation_id).await;
+                return;
+            }
             SendOutcome::Transient => {
                 let _ = storage.mark_transient_failure(&operation_id).await;
                 return;
@@ -167,6 +190,8 @@ enum SendOutcome {
     Success,
     Permanent,
     Unauthorized,
+    /// 記録中のトレーニングの編集権を持たない。
+    Forbidden,
     Transient,
 }
 
@@ -207,6 +232,7 @@ fn classify_status(status: u16) -> SendOutcome {
         200..=299 => SendOutcome::Success,
         400 | 404 => SendOutcome::Permanent,
         401 => SendOutcome::Unauthorized,
+        403 => SendOutcome::Forbidden,
         408 | 425 | 429 | 500..=599 => SendOutcome::Transient,
         _ => SendOutcome::Permanent,
     }
@@ -228,7 +254,9 @@ mod tests {
         assert_eq!(classify_status(429), SendOutcome::Transient);
         assert_eq!(classify_status(500), SendOutcome::Transient);
         assert_eq!(classify_status(400), SendOutcome::Permanent);
+        assert_eq!(classify_status(404), SendOutcome::Permanent);
         assert_eq!(classify_status(401), SendOutcome::Unauthorized);
+        assert_eq!(classify_status(403), SendOutcome::Forbidden);
         assert_eq!(classify_status(200), SendOutcome::Success);
     }
 }

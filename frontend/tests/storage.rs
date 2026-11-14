@@ -1,6 +1,7 @@
-//! IndexedDB の保存、送信待ちの列、移行、アカウント削除のブラウザのテスト。
+//! IndexedDB の保存、送信待ちの列、編集権を失った記録、サーバーの記録での置き換え、
+//! 移行、アカウント削除のブラウザのテスト。
 //!
-//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`。
+//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`、`REQ-NFR-015`。
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
 //! 永続ストレージの拒否を強制する API はないため、`request_persistence` の結果に
 //! かかわらず保存が続くことで、保存が許可の結果に依存しないことを確かめる。
@@ -17,9 +18,10 @@ use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
+use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{BestKind, PersonalBestItem, SessionSource};
 use warrior_frontend::storage::{
-    request_persistence, DiscardOutcome, Storage, StorageError, Store,
+    request_persistence, DiscardOutcome, ReplacePurpose, Storage, StorageError, Store,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -34,7 +36,9 @@ thread_local! {
 }
 
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4301";
+const OTHER_TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4300";
 const CREATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4302";
+const OTHER_CREATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4306";
 const UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4303";
 const SECOND_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4304";
 const THIRD_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4305";
@@ -52,8 +56,12 @@ fn database_name(test: &str) -> String {
 }
 
 fn session(memo: &str) -> SessionRecord {
+    session_with_id(TRAINING_ID, memo)
+}
+
+fn session_with_id(id: &str, memo: &str) -> SessionRecord {
     SessionRecord {
-        id: TRAINING_ID.to_owned(),
+        id: id.to_owned(),
         date: "2026-11-12".to_owned(),
         started_at: Some("2026-11-12T03:00:00Z".to_owned()),
         memo: memo.to_owned(),
@@ -79,14 +87,18 @@ fn create_operation(operation_id: &str) -> Operation {
 }
 
 fn create_operation_with_memo(operation_id: &str, memo: &str) -> Operation {
+    create_operation_for(TRAINING_ID, operation_id, memo)
+}
+
+fn create_operation_for(training_id: &str, operation_id: &str, memo: &str) -> Operation {
     Operation {
         operation_id: operation_id.to_owned(),
-        training_id: TRAINING_ID.to_owned(),
+        training_id: training_id.to_owned(),
         sequence: 0,
         kind: OperationKind::TrainingSessionCreate,
         parent_operation_id: None,
         payload: serde_json::to_value(SessionCreatePayload {
-            id: TRAINING_ID.to_owned(),
+            id: training_id.to_owned(),
             date: "2026-11-12".to_owned(),
             started_at: "2026-11-12T03:00:00Z".to_owned(),
             memo: memo.to_owned(),
@@ -119,6 +131,77 @@ async fn open(name: &str) -> Storage {
     Storage::open_with(name, 2)
         .await
         .expect("the database must open")
+}
+
+fn server_record(training_id: &str, memo: &str) -> TrainingRecord {
+    serde_json::from_value(json!({
+        "session": {
+            "id": training_id,
+            "date": "2026-11-12",
+            "started_at": "2026-11-12T03:00:00Z",
+            "memo": memo,
+            "created_at": "2026-11-12T03:00:00Z",
+            "updated_at": "2026-11-12T04:00:00Z"
+        },
+        "exercises": [{
+            "id": "exercise-1",
+            "training_id": training_id,
+            "exercise_id": "bench-press",
+            "snapshot": "{}",
+            "position": 1,
+            "created_at": "2026-11-12T03:00:00Z",
+            "updated_at": "2026-11-12T03:00:00Z"
+        }],
+        "sets": [{
+            "id": "set-1",
+            "training_exercise_id": "exercise-1",
+            "position": 1,
+            "kind": "normal",
+            "completed": 1,
+            "rpe": 8.0,
+            "grip": null,
+            "recorded_at": null,
+            "created_at": "2026-11-12T03:00:00Z",
+            "updated_at": "2026-11-12T03:00:00Z"
+        }],
+        "segments": [{
+            "id": "segment-1",
+            "set_id": "set-1",
+            "position": 1,
+            "weight_kg": 100.0,
+            "reps": 5,
+            "momentum_reps": 0,
+            "assisted_reps": 0,
+            "duration_seconds": null,
+            "left_weight_kg": null,
+            "left_reps": null,
+            "left_duration_seconds": null,
+            "right_weight_kg": null,
+            "right_reps": null,
+            "right_duration_seconds": null,
+            "created_at": "2026-11-12T03:00:00Z",
+            "updated_at": "2026-11-12T03:00:00Z"
+        }],
+        "supersets": [{
+            "id": "superset-1",
+            "training_id": training_id,
+            "position": 1,
+            "members": [{
+                "superset_id": "superset-1",
+                "training_exercise_id": "exercise-1",
+                "position": 1
+            }],
+            "created_at": "2026-11-12T03:00:00Z",
+            "updated_at": "2026-11-12T03:00:00Z"
+        }]
+    }))
+    .expect("the server record must deserialize")
+}
+
+fn finished_server_record(training_id: &str, memo: &str) -> TrainingRecord {
+    let mut record = server_record(training_id, memo);
+    record.session.finished_at = Some("2026-11-12T04:00:00Z".to_owned());
+    record
 }
 
 /// メモをサーバーが受理した状態のトレーニングを作る。
@@ -1482,6 +1565,243 @@ async fn refreshing_confirmed_does_not_change_the_draft() {
         .clear_account()
         .await
         .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn forbidden_trainings_are_sorted_and_only_a_takeover_clears_them() {
+    let name = database_name("forbidden");
+    let storage = open(&name).await;
+    assert!(storage
+        .forbidden_trainings()
+        .await
+        .expect("the meta store must be readable")
+        .is_empty());
+
+    storage
+        .mark_training_forbidden(TRAINING_ID)
+        .await
+        .expect("the training must be marked");
+    storage
+        .mark_training_forbidden(OTHER_TRAINING_ID)
+        .await
+        .expect("the other training must be marked");
+    storage
+        .mark_training_forbidden(TRAINING_ID)
+        .await
+        .expect("marking the same training again must not duplicate it");
+    assert_eq!(
+        storage
+            .forbidden_trainings()
+            .await
+            .expect("the meta store must be readable"),
+        vec![OTHER_TRAINING_ID.to_owned(), TRAINING_ID.to_owned()]
+    );
+
+    storage
+        .replace_session_tree(
+            &server_record(TRAINING_ID, "reload"),
+            ReplacePurpose::Reload,
+        )
+        .await
+        .expect("the reload must replace the tree");
+    assert_eq!(
+        storage
+            .forbidden_trainings()
+            .await
+            .expect("the meta store must be readable"),
+        vec![OTHER_TRAINING_ID.to_owned(), TRAINING_ID.to_owned()],
+        "a reload must keep the editing right loss"
+    );
+
+    storage
+        .replace_session_tree(
+            &server_record(TRAINING_ID, "takeover"),
+            ReplacePurpose::Takeover,
+        )
+        .await
+        .expect("the takeover must replace the tree");
+    assert_eq!(
+        storage
+            .forbidden_trainings()
+            .await
+            .expect("the meta store must be readable"),
+        vec![OTHER_TRAINING_ID.to_owned()],
+        "a takeover must clear only the taken training"
+    );
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn reloading_a_finished_session_clears_the_forbidden_mark() {
+    let name = database_name("forbidden-finished");
+    let storage = open(&name).await;
+    storage
+        .mark_training_forbidden(TRAINING_ID)
+        .await
+        .expect("the training must be marked");
+    storage
+        .mark_training_forbidden(OTHER_TRAINING_ID)
+        .await
+        .expect("the other training must be marked");
+
+    storage
+        .replace_session_tree(
+            &finished_server_record(TRAINING_ID, "finished"),
+            ReplacePurpose::Reload,
+        )
+        .await
+        .expect("the reload must replace the tree");
+    assert_eq!(
+        storage
+            .forbidden_trainings()
+            .await
+            .expect("the meta store must be readable"),
+        vec![OTHER_TRAINING_ID.to_owned()],
+        "a finished training must be editable on every terminal after a reload"
+    );
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.finished_at.as_deref(), Some("2026-11-12T04:00:00Z"));
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn replacing_a_session_tree_removes_the_old_rows_and_outbox_of_the_training() {
+    let name = database_name("replace-tree");
+    let storage = open(&name).await;
+    storage
+        .save_session_create(
+            &session("old"),
+            &create_operation_with_memo(CREATE_ID, "old"),
+        )
+        .await
+        .expect("the create must be saved");
+    storage
+        .save_session_create(
+            &session_with_id(OTHER_TRAINING_ID, "other"),
+            &create_operation_for(OTHER_TRAINING_ID, OTHER_CREATE_ID, "other"),
+        )
+        .await
+        .expect("the other create must be saved");
+    for (store, record) in [
+        (
+            Store::TrainingExercises,
+            json!({"id": "old-exercise", "training_id": TRAINING_ID, "position": 0}),
+        ),
+        (
+            Store::Sets,
+            json!({"id": "old-set", "training_exercise_id": "old-exercise", "position": 0}),
+        ),
+        (
+            Store::SetSegments,
+            json!({"id": "old-segment", "set_id": "old-set", "position": 0}),
+        ),
+        (
+            Store::Supersets,
+            json!({"id": "old-superset", "training_id": TRAINING_ID, "position": 0}),
+        ),
+        (
+            Store::SupersetMembers,
+            json!({
+                "superset_id": "old-superset",
+                "training_exercise_id": "old-exercise",
+                "position": 0
+            }),
+        ),
+        (
+            Store::TrainingExercises,
+            json!({"id": "other-exercise", "training_id": OTHER_TRAINING_ID, "position": 0}),
+        ),
+    ] {
+        storage
+            .put_record(store, &record)
+            .await
+            .expect("the row must be saved");
+    }
+
+    storage
+        .replace_session_tree(
+            &server_record(TRAINING_ID, "server"),
+            ReplacePurpose::Takeover,
+        )
+        .await
+        .expect("the tree must be replaced");
+
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.memo, "server");
+    assert_eq!(stored.confirmed_memo, "server");
+    assert_eq!(stored.confirmed_sequence, 0);
+    assert_eq!(
+        storage
+            .session(OTHER_TRAINING_ID)
+            .await
+            .expect("the other session must be readable")
+            .expect("the other session must exist")
+            .memo,
+        "other",
+        "replacing one training must keep the other training"
+    );
+    assert_eq!(
+        record_ids(&storage, Store::TrainingExercises).await,
+        vec!["exercise-1".to_owned(), "other-exercise".to_owned()]
+    );
+    assert_eq!(
+        record_ids(&storage, Store::Sets).await,
+        vec!["set-1".to_owned()]
+    );
+    assert_eq!(
+        record_ids(&storage, Store::SetSegments).await,
+        vec!["segment-1".to_owned()]
+    );
+    assert_eq!(
+        record_ids(&storage, Store::Supersets).await,
+        vec!["superset-1".to_owned()]
+    );
+    let members = storage
+        .all_records(Store::SupersetMembers)
+        .await
+        .expect("the members must be readable");
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0]["superset_id"], "superset-1");
+    assert_eq!(members[0]["training_exercise_id"], "exercise-1");
+
+    let entries = storage
+        .outbox_entries()
+        .await
+        .expect("the outbox must be readable");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].operation.training_id, OTHER_TRAINING_ID);
+    assert_eq!(entries[0].operation.operation_id, OTHER_CREATE_ID);
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+async fn record_ids(storage: &Storage, store: Store) -> Vec<String> {
+    storage
+        .all_records(store)
+        .await
+        .expect("the store must be readable")
+        .iter()
+        .map(|record| record["id"].as_str().expect("a record id").to_owned())
+        .collect()
 }
 
 async fn raw_open(name: &str) -> web_sys::IdbDatabase {

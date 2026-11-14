@@ -57,14 +57,18 @@
 ## 編集権と引き継ぎ
 
 `TrainingOwnership.tla` は、記録中のトレーニングの編集権、開始した端末、サーバーに保存済みの操作、未同期の操作、引き継ぎ、終了後の編集をモデル化する。
+初期状態は、終了済みのトレーニングと、端末トークンを持たない移行前の所有者の無い記録中のトレーニングを含む。
+所有者の無い記録中のトレーニングは、最初に書き込んだ端末が `Claim` で所有者になる。
 
 | 不変条件 | 内容 | 対応する要求 |
 | --- | --- | --- |
 | `AtMostOneEditor` | 記録中に編集できる端末は 1 台以下である | REQ-NFR-015 |
 | `HandoffFromSaved` | 引き継ぎの元はサーバーに保存済みの操作だけである | REQ-NFR-015 |
-| `LastWriteWins` | サーバーの内容と最後に受理した書き込みが一致する | REQ-NFR-015 |
 | `AfterFinishAllCanEdit` | 終了後は同じアカウントのどの端末も編集できる | REQ-NFR-015 |
-| `AcceptedWritesSurvive` | 受理済みの操作は、同じ操作の後勝ちの上書き以外では残る | REQ-NFR-015 |
+
+`Sync` と `EditAfterFinish` は、同じ操作の `server` を上書きし、`accepted` に加える。後勝ちは、`server` が各操作について最後に受理した端末を保持することで表す。`LastWriteWins` と `AcceptedWritesSurvive` は、この構造からつねに成り立つため、不変条件に含めない。
+
+`Claim` は、所有者の無い記録中の行を 1 台の端末のものにする。
 
 ## オフライン同期
 
@@ -79,12 +83,13 @@
 
 ## 検査が機能していることの確認
 
-ガードを外したコピーをリポジトリの外に置き、TLC が違反を検出することを確かめた。
+ガードを外したコピーをリポジトリに含めない場所 (例: `formal/.cache/`) に置き、TLC が違反を検出することを確かめた。
 
 | 変更 | TLC の結果 |
 | --- | --- |
 | `Handoff` で編集権を置き換えずに追加する | `Invariant Inv is violated`（`editors = {d1, d2}`） |
 | `Handoff` で未同期の操作も引き継ぐ | `Invariant Inv is violated`（`handoffSource = {o1}`、`accepted = {}`） |
+| `Claim` のガード (記録中かつ所有者なし) を外す | `Invariant Inv is violated`（`status = "finished"` で `editors = {d1}`） |
 | `Send` の重複ガードを外す (OfflineSync) | `Invariant Inv is violated`（`counts[o1] = 2`） |
 | `ConsumeChallenge` の消費済みガードを外す | `Invariant Inv is violated`（`challengeResults[c1] = 2`） |
 | `ConsumeOAuth` の消費済みガードを外す | `Invariant Inv is violated` |
@@ -92,5 +97,7 @@
 | `DeletePasskey` で Google アカウントのログインを失わせる | `Invariant Inv is violated` |
 | `Send` の取り消しガードを外す | `Invariant Inv is violated` |
 | `Send` の古い終了予定時刻のガードを外す | `Invariant Inv is violated` |
+
+`Claim` のガードを片方だけ外した場合は違反を検出しない。`editors = {}` だけを外すと `Claim` は編集権を置き換えるだけで、現在の不変条件は所有者の交代を観測しない。`status = "recording"` だけを外すと、終了済みの状態は `editors = {}` を満たさないため `Claim` に到達しない。
 
 通常の 4 つの仕様は `mise run formal` で成功する。

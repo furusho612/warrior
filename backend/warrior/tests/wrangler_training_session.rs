@@ -10,7 +10,7 @@ mod support;
 
 use serde_json::{json, Value};
 use support::DevServer;
-use warrior_core::auth::hash_session_token;
+use warrior_core::auth::{hash_session_token, hash_terminal_token};
 use warrior_core::base64url;
 use warrior_core::datetime;
 use warrior_core::exercise::Laterality;
@@ -29,6 +29,7 @@ const MISSING_TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4513";
 const PAST_TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4514";
 const STARTED_TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4515";
 const CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4560";
+const TERMINAL_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4562";
 const BENCH_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4530";
 const PLANK_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4531";
 const BENCH_TRAINING_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4520";
@@ -129,7 +130,8 @@ fn start_server(port: u16) -> DevServer {
 }
 
 fn session_cookie(token: &str) -> String {
-    format!("warrior_session={token}")
+    let terminal_token = base64url::encode(&[17u8; 32]);
+    format!("warrior_session={token}; warrior_terminal={terminal_token}")
 }
 
 fn start_training(
@@ -330,6 +332,11 @@ fn seed_users_and_sessions(server: &DevServer, token: &str) {
             "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, expires_at) \
              VALUES ('3f2504e0-4f89-41d3-9a0c-0305e82c4561', '{USER_ID}', '{}', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')",
             hash_session_token(token)
+        ),
+        format!(
+            "INSERT INTO terminal_tokens (id, user_id, token_hash, created_at, last_seen_at) \
+             VALUES ('{TERMINAL_ID}', '{USER_ID}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            hash_terminal_token(&base64url::encode(&[17u8; 32]))
         ),
         format!(
             "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \

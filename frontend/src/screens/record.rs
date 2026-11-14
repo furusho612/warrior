@@ -17,10 +17,15 @@ use warrior_core::sync::{
 use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::routes::{navigate, Route};
-use crate::storage::{self, DiscardOutcome, StorageError};
+use crate::storage::{self, DiscardOutcome, ReplacePurpose, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
 use crate::training_session as training_api;
+use crate::training_session::TrainingApiError;
+
+mod ownership;
+
+use ownership::RecordOwnership;
 
 #[component]
 pub fn RecordScreen() -> Element {
@@ -91,6 +96,7 @@ struct RecordState {
     status: SyncStatus,
     confirmed: String,
     failed: Vec<OutboxEntry>,
+    view_only: bool,
 }
 
 /// 画面が読む同期の状態の signal。
@@ -109,6 +115,15 @@ struct RecordSignals {
     persisted_memo: Signal<String>,
     memo_revision: Signal<u64>,
     save_error: Signal<Option<String>>,
+    view_only: Signal<bool>,
+}
+
+/// 閲覧のみの端末の引き継ぎと読み直しの signal。
+#[derive(Clone, Copy, PartialEq)]
+struct OwnershipSignals {
+    confirming: Signal<bool>,
+    busy: Signal<bool>,
+    error: Signal<Option<String>>,
 }
 
 /// 画面が状態を読み直す間隔 (ミリ秒)。
@@ -125,15 +140,25 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let memo_revision = use_signal(|| 0u64);
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
+    let view_only = use_signal(|| false);
     let status = use_signal(SyncStatus::default);
     let failed = use_signal(Vec::<OutboxEntry>::new);
     let confirmed = use_signal(String::new);
+    let confirming = use_signal(|| false);
+    let ownership_busy = use_signal(|| false);
+    let ownership_error = use_signal(|| Option::<String>::None);
     let signals = RecordSignals {
         session,
         memo,
         persisted_memo,
         memo_revision,
         save_error,
+        view_only,
+    };
+    let ownership = OwnershipSignals {
+        confirming,
+        busy: ownership_busy,
+        error: ownership_error,
     };
     let state_signals = StateSignals {
         status,
@@ -156,7 +181,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             loop {
                 sleep_ms(STATE_POLL_INTERVAL_MS).await;
                 let state = read_record_state(&id).await;
-                apply_state(state_signals, state);
+                apply_state(state_signals, signals, state);
             }
         }
     });
@@ -171,6 +196,11 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-session-id": training_id,
             "data-persisted-memo": "{persisted}",
             RecordHeader { signals, state_signals }
+            RecordOwnership {
+                training_id: training_id.clone(),
+                signals,
+                ownership,
+            }
             MemoEditor { signals, state_signals }
             RecordFinish { signals }
             SetTable {}
@@ -228,7 +258,7 @@ fn SetDrawer() -> Element {
 fn RecordFinish(signals: RecordSignals) -> Element {
     let finishing = use_signal(|| false);
     let error = use_signal(|| Option::<String>::None);
-    let enabled = (signals.session)().is_some();
+    let enabled = (signals.session)().is_some() && !(signals.view_only)();
     let busy = finishing();
 
     rsx! {
@@ -247,12 +277,14 @@ fn RecordFinish(signals: RecordSignals) -> Element {
         }
         if let Some(message) = error() {
             p { class: "text-[13px] text-primary", "{message}" }
-            button {
-                class: "min-h-11 border border-line px-3 text-[13px]",
-                onclick: move |_| {
-                    spawn(finish_training(signals, finishing, error));
-                },
-                "{text(Key::RecordRetry)}"
+            if !(signals.view_only)() {
+                button {
+                    class: "min-h-11 border border-line px-3 text-[13px]",
+                    onclick: move |_| {
+                        spawn(finish_training(signals, finishing, error));
+                    },
+                    "{text(Key::RecordRetry)}"
+                }
             }
         }
     }
@@ -292,6 +324,10 @@ async fn finish_training(
     finishing.set(false);
     let summary = match result {
         Ok(summary) => summary,
+        Err(TrainingApiError::Forbidden) => {
+            finish_forbidden(&record.id, signals, error).await;
+            return;
+        }
         Err(_) => {
             error.set(Some(text(Key::RecordFinishFailed).to_owned()));
             return;
@@ -310,6 +346,22 @@ async fn finish_training(
         }
         Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
     }
+}
+
+/// 終了の 403 で、この端末を閲覧のみへ切り替える。
+///
+/// 同期の 403 と同じく編集権を失った記録を残し、以後の送信を止める。
+async fn finish_forbidden(
+    training_id: &str,
+    mut signals: RecordSignals,
+    mut error: Signal<Option<String>>,
+) {
+    if sync::mark_training_forbidden(training_id).await {
+        signals.view_only.set(true);
+        error.set(Some(text(Key::RecordViewOnly).to_owned()));
+        return;
+    }
+    error.set(Some(text(Key::RecordFinishFailed).to_owned()));
 }
 
 fn completed_session(
@@ -409,7 +461,7 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
 
     let revision = (signals.memo_revision)();
     let memo = (signals.memo)();
-    let disabled = (signals.session)().is_none();
+    let disabled = (signals.session)().is_none() || (signals.view_only)();
     let saving_now = (state.saving)();
     let save_error_message = (signals.save_error)();
 
@@ -547,10 +599,46 @@ async fn load(
             signals.session.set(Some(record));
             error.set(None);
         }
-        Ok(None) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
+        Ok(None) => {
+            load_from_server(&training_id, &storage, signals, state_signals, error).await;
+            return;
+        }
         Err(_) => error.set(Some(text(Key::RecordLoadFailed).to_owned())),
     }
     refresh_state(&training_id, state_signals).await;
+}
+
+/// 端末に記録がないとき、サーバーに保存済みの記録で端末の記録を作る。
+///
+/// 同じアカウントでログインした別の端末は、この経路で記録を閲覧する (REQ-NFR-006)。
+async fn load_from_server(
+    training_id: &str,
+    storage: &storage::Storage,
+    mut signals: RecordSignals,
+    state_signals: StateSignals,
+    mut error: Signal<Option<String>>,
+) {
+    let record = match training_api::record(training_id).await {
+        Ok(record) => record,
+        Err(_) => {
+            error.set(Some(text(Key::RecordLoadFailed).to_owned()));
+            return;
+        }
+    };
+    if storage
+        .replace_session_tree(&record, ReplacePurpose::Reload)
+        .await
+        .is_err()
+    {
+        error.set(Some(text(Key::RecordLoadFailed).to_owned()));
+        return;
+    }
+    signals.memo.set(record.session.memo.clone());
+    signals.persisted_memo.set(record.session.memo.clone());
+    signals.memo_revision.set((signals.memo_revision)() + 1);
+    signals.session.set(Some(record.session));
+    error.set(None);
+    refresh_state(training_id, state_signals).await;
 }
 
 async fn refresh_state(training_id: &str, mut state_signals: StateSignals) {
@@ -561,7 +649,7 @@ async fn refresh_state(training_id: &str, mut state_signals: StateSignals) {
     state_signals.confirmed.set(state.confirmed);
 }
 
-fn apply_state(mut state_signals: StateSignals, state: RecordState) {
+fn apply_state(mut state_signals: StateSignals, mut signals: RecordSignals, state: RecordState) {
     if *state_signals.status.peek() != state.status {
         state_signals.status.set(state.status);
     }
@@ -570,6 +658,9 @@ fn apply_state(mut state_signals: StateSignals, state: RecordState) {
     }
     if *state_signals.confirmed.peek() != state.confirmed {
         state_signals.confirmed.set(state.confirmed);
+    }
+    if *signals.view_only.peek() != state.view_only {
+        signals.view_only.set(state.view_only);
     }
 }
 
@@ -599,6 +690,11 @@ async fn read_record_state(training_id: &str) -> RecordState {
         .flatten()
         .map(|session| session.confirmed_memo)
         .unwrap_or_default();
+    let view_only = storage
+        .forbidden_trainings()
+        .await
+        .map(|trainings| trainings.iter().any(|id| id == training_id))
+        .unwrap_or(false);
     RecordState {
         status: SyncStatus {
             unsaved: unsaved_count(&entries),
@@ -609,6 +705,7 @@ async fn read_record_state(training_id: &str) -> RecordState {
             .into_iter()
             .filter(|entry| entry.state == OutboxState::Failed)
             .collect(),
+        view_only,
     }
 }
 

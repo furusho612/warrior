@@ -7,8 +7,8 @@ mod support;
 
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
-use thirtyfour::SameSite;
-use warrior_core::auth::hash_session_token;
+use thirtyfour::{Cookie, SameSite};
+use warrior_core::auth::{hash_session_token, hash_terminal_token};
 
 #[tokio::test]
 async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
@@ -79,6 +79,18 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
     assert_eq!(token_hash, hash_session_token(&session.value));
     assert_ne!(token_hash, session.value);
 
+    let terminal = cookies
+        .iter()
+        .find(|cookie| cookie.name == "warrior_terminal")
+        .expect("the terminal cookie must exist");
+    check_terminal_cookie(browser, terminal);
+    let stored_terminal = server
+        .execute_d1_json("SELECT token_hash FROM terminal_tokens")
+        .expect("the terminal rows must be readable");
+    let terminal_hash = first_value(&stored_terminal, "token_hash");
+    assert_eq!(terminal_hash, hash_terminal_token(&terminal.value));
+    assert_ne!(terminal_hash, terminal.value);
+
     driver
         .goto(format!("{}/", server.origin()))
         .await
@@ -101,6 +113,14 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
         .and_then(|value| value.as_i64())
         .expect("a session count");
     assert_eq!(count, 0, "logout must delete the session row");
+    let terminals = server
+        .execute_d1_json("SELECT COUNT(*) AS count FROM terminal_tokens")
+        .expect("the terminal rows must be readable");
+    assert_eq!(
+        first_count(&terminals),
+        Some(1),
+        "logout must keep the terminal token"
+    );
 
     let error_page = browser::get_text(&driver, &format!("{}/login/error", server.origin())).await;
     assert!(
@@ -125,6 +145,64 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
         first_id, second_id,
         "the same Google sub must keep the user"
     );
+    let again_cookies = driver
+        .get_all_cookies()
+        .await
+        .expect("the browser cookies must be readable");
+    let again_terminal = again_cookies
+        .iter()
+        .find(|cookie| cookie.name == "warrior_terminal")
+        .expect("the terminal cookie must exist after the login");
+    assert_eq!(
+        again_terminal.value, terminal.value,
+        "the same user must reconnect to the same terminal token"
+    );
+    let again_terminals = server
+        .execute_d1_json("SELECT COUNT(*) AS count FROM terminal_tokens")
+        .expect("the terminal rows must be readable");
+    assert_eq!(
+        first_count(&again_terminals),
+        Some(1),
+        "the login must reuse the terminal token of the same user"
+    );
 
     driver.quit().await.expect("the browser must close");
+}
+
+fn check_terminal_cookie(browser: Browser, terminal: &Cookie) {
+    if browser == Browser::Chrome {
+        assert_eq!(
+            terminal.secure,
+            Some(true),
+            "the terminal cookie must be Secure"
+        );
+        assert_eq!(
+            terminal.http_only,
+            Some(true),
+            "the terminal cookie must be HttpOnly"
+        );
+        assert_eq!(terminal.same_site, Some(SameSite::Lax));
+    } else {
+        // SafariDriver は Cookie の属性を返さないことがある。属性の正本は結合テストと単体テストで確かめる。
+        assert_ne!(terminal.secure, Some(false));
+        assert_ne!(terminal.http_only, Some(false));
+        if let Some(same_site) = terminal.same_site {
+            assert_eq!(same_site, SameSite::Lax);
+        }
+    }
+}
+
+fn first_count(value: &serde_json::Value) -> Option<i64> {
+    value.get(0)?.get("results")?.get(0)?.get("count")?.as_i64()
+}
+
+fn first_value(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(0)
+        .and_then(|entry| entry.get("results"))
+        .and_then(|rows| rows.get(0))
+        .and_then(|row| row.get(key))
+        .and_then(|value| value.as_str())
+        .expect("a stored value")
+        .to_owned()
 }

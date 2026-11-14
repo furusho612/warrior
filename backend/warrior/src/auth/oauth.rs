@@ -252,9 +252,11 @@ pub async fn callback(request: Request, context: RouteContext<()>) -> Result<Res
     }
     let session_token = crate::random::random_token()?;
     let session_cookie = session::create(&db, &user_id, &session_token, now).await?;
+    let terminal_cookie = crate::ownership::resolve(&db, &request, &user_id).await?;
     let url = Url::parse(&format!("{origin}/"))?;
     let response = redirect(url.as_str())?;
     let response = append_cookie(response, &session_cookie)?;
+    let response = append_cookie(response, &terminal_cookie)?;
     append_cookie(response, &clear_oauth_state_cookie())
 }
 

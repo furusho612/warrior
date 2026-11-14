@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use wasm_bindgen::JsValue;
 use worker::d1::{D1Database, D1PreparedStatement, D1Result};
-use worker::Result;
+use worker::{console_error, Result};
 
 /// D1 のバインディングを包むデータベース。
 pub struct Db {
@@ -52,6 +52,26 @@ impl Db {
             .collect::<Vec<JsValue>>();
         self.database.prepare(statement.sql()).bind(&bindings)
     }
+}
+
+/// batch の文が変更した行数を返す。
+///
+/// 0 行の更新を成功として扱わないために使う。D1 が件数を返さない場合は、
+/// 書き込みを確認できないため失敗にする。
+pub fn changed_rows(result: &D1Result) -> Result<usize> {
+    let Some(meta) = result.meta()? else {
+        console_error!("the statement result has no meta");
+        return Err(worker::Error::RustError(
+            "the statement result has no meta".into(),
+        ));
+    };
+    let Some(changes) = meta.changes else {
+        console_error!("the statement result has no change count");
+        return Err(worker::Error::RustError(
+            "the statement result has no change count".into(),
+        ));
+    };
+    Ok(changes)
 }
 
 /// SQL のバインド値を D1 が受け取る JavaScript の値にする。

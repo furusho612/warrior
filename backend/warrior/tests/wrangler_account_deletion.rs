@@ -54,6 +54,7 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
 
     assert_eq!(count(&server, "users"), 0);
     assert_eq!(count(&server, "auth_sessions"), 0);
+    assert_eq!(count(&server, "terminal_tokens"), 0);
     assert_eq!(count(&server, "passkeys"), 0);
     assert_eq!(count(&server, "webauthn_challenges"), 0);
     assert_eq!(count(&server, "elevation_tokens"), 0);
@@ -104,6 +105,7 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
         "elevation_tokens",
         "passkeys",
         "auth_sessions",
+        "terminal_tokens",
     ] {
         server
             .execute_d1_json(&format!("DELETE FROM {table} WHERE user_id = '{USER_ID}'"))
@@ -121,6 +123,10 @@ fn seed_user(server: &DevServer, session_hash: &str) {
         format!(
             "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, expires_at) \
              VALUES ('11111111-1111-4111-8111-111111111111', '{USER_ID}', '{session_hash}', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO terminal_tokens (id, user_id, token_hash, created_at, last_seen_at) \
+             VALUES ('55555555-5555-4555-8555-555555555555', '{USER_ID}', 'terminal', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
         ),
         format!(
             "INSERT INTO passkeys (id, user_id, credential_id, public_key, sign_count, transports, name, created_at) \

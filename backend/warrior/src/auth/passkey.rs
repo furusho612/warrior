@@ -325,8 +325,10 @@ pub async fn login_finish(mut request: Request, context: RouteContext<()>) -> Re
     }
     let token = crate::random::random_token()?;
     let cookie = session::create(&db, &user_id, &token, now_seconds()).await?;
+    let terminal_cookie = crate::ownership::resolve(&db, &request, &user_id).await?;
     let body = Response::from_json(&serde_json::json!({ "status": "ok" }))?;
-    append_cookie(body, &cookie)
+    let body = append_cookie(body, &cookie)?;
+    append_cookie(body, &terminal_cookie)
 }
 
 /// `POST /api/auth/reauthenticate/passkey/start`

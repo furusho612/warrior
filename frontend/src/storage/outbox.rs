@@ -12,6 +12,9 @@ use super::StorageError;
 /// トレーニングごとの最後の順序を持つメタのキーの接頭辞。
 pub const SEQUENCE_KEY_PREFIX: &str = "outbox_sequence:";
 
+/// 編集権を失ったトレーニングのメタのキーの接頭辞。
+pub const FORBIDDEN_KEY_PREFIX: &str = "forbidden_training:";
+
 /// メタの 1 行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MetaRecord {
@@ -22,6 +25,44 @@ struct MetaRecord {
 /// トレーニングの最後の順序を持つメタのキー。
 pub fn sequence_key(training_id: &str) -> String {
     format!("{SEQUENCE_KEY_PREFIX}{training_id}")
+}
+
+/// 編集権を失ったトレーニングのメタのキー。
+pub fn forbidden_key(training_id: &str) -> String {
+    format!("{FORBIDDEN_KEY_PREFIX}{training_id}")
+}
+
+/// 編集権を失ったトレーニングを、送信を止める対象として記録する。
+pub async fn mark_forbidden(meta: &IdbObjectStore, training_id: &str) -> Result<(), StorageError> {
+    let record = MetaRecord {
+        key: forbidden_key(training_id),
+        value: 1,
+    };
+    indexeddb::put(meta, &to_js(&record)?).await
+}
+
+/// 編集権を失ったトレーニングの記録を消す。
+pub async fn clear_forbidden(meta: &IdbObjectStore, training_id: &str) -> Result<(), StorageError> {
+    indexeddb::delete_entry(meta, &JsValue::from_str(&forbidden_key(training_id))).await
+}
+
+/// 編集権を失ったトレーニングの ID を返す。
+pub async fn forbidden_trainings(meta: &IdbObjectStore) -> Result<Vec<String>, StorageError> {
+    let mut trainings = indexeddb::get_all(meta)
+        .await?
+        .iter()
+        .map(from_js::<MetaRecord>)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter_map(|record| {
+            record
+                .key
+                .strip_prefix(FORBIDDEN_KEY_PREFIX)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    trainings.sort();
+    Ok(trainings)
 }
 
 /// 送信待ちの列を順序の昇順に並べる。

@@ -13,11 +13,13 @@ pub mod exercise;
 pub mod ids;
 pub mod jst;
 pub mod nutrition;
+pub mod ownership;
 pub mod pwa;
 pub mod rate_limit;
 pub mod set_calc;
 pub mod sql;
 pub mod sync;
+pub mod training_record;
 pub mod training_session;
 pub mod webauthn;
 
