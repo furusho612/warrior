@@ -12,12 +12,11 @@ use serde_json::{json, Value};
 use warrior_core::base64url;
 
 const DEFAULT_PORT: u16 = 8788;
-const ISSUER: &str = "http://localhost:8788";
 
 fn main() {
     let port = parse_port();
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("test OIDC provider must bind");
-    let mut state = State::default();
+    let mut state = State::new(port);
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
@@ -39,11 +38,23 @@ fn parse_port() -> u16 {
     DEFAULT_PORT
 }
 
-#[derive(Default)]
 struct State {
     codes: HashMap<String, AuthorizationCode>,
     tokens: HashMap<String, User>,
     counter: u64,
+    issuer: String,
+}
+
+impl State {
+    /// 待ち受けるポートから、ID トークンに載せる発行元を決める。
+    fn new(port: u16) -> Self {
+        Self {
+            codes: HashMap::new(),
+            tokens: HashMap::new(),
+            counter: 0,
+            issuer: format!("http://localhost:{port}"),
+        }
+    }
 }
 
 struct AuthorizationCode {
@@ -148,6 +159,7 @@ fn token(state: &mut State, request: &Request) -> Vec<u8> {
         &authorization.sub,
         &authorization.nonce,
         &authorization.client_id,
+        &state.issuer,
     );
     json_response(
         200,
@@ -160,7 +172,7 @@ fn token(state: &mut State, request: &Request) -> Vec<u8> {
     )
 }
 
-fn id_token(sub: &str, nonce: &str, client_id: &str) -> String {
+fn id_token(sub: &str, nonce: &str, client_id: &str, issuer: &str) -> String {
     let header = json!({ "alg": "none", "typ": "JWT" });
     let expiry = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -168,7 +180,7 @@ fn id_token(sub: &str, nonce: &str, client_id: &str) -> String {
         .as_secs()
         + 3600;
     let payload = json!({
-        "iss": ISSUER,
+        "iss": issuer,
         "aud": client_id,
         "sub": sub,
         "email": format!("{sub}@example.test"),

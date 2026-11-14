@@ -6,7 +6,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Serialize, Serializer};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::datetime::{self, SECONDS_PER_DAY};
 
@@ -259,6 +259,17 @@ impl Serialize for JstDate {
         S: Serializer,
     {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for JstDate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let text = String::deserialize(deserializer)?;
+        JstDate::parse(&text)
+            .ok_or_else(|| de::Error::custom(format!("invalid Japan date: {text}")))
     }
 }
 

@@ -9,6 +9,7 @@ use crate::jst::JstDate;
 
 /// セットの種別。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SetKind {
     /// 通常のセット。
     Normal,
@@ -16,6 +17,27 @@ pub enum SetKind {
     Warmup,
     /// ドロップセット。総重量は全段、最大重量と推定 1RM は最初の段だけを対象にする。
     Drop,
+}
+
+impl SetKind {
+    /// DB と API の文字列。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Warmup => "warmup",
+            Self::Drop => "drop",
+        }
+    }
+
+    /// DB の文字列からセット種別に戻す。
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "normal" => Some(Self::Normal),
+            "warmup" => Some(Self::Warmup),
+            "drop" => Some(Self::Drop),
+            _ => None,
+        }
+    }
 }
 
 /// 左右別の種目で使う側。
@@ -40,7 +62,7 @@ pub enum RecordMode {
 }
 
 /// 左右別の値。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SideValue {
     /// 重量 (kg)。
     pub weight_kg: f64,
@@ -82,7 +104,7 @@ pub struct OneRepMax {
 }
 
 /// セットの 1 つの段。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetSegment {
     /// 重量 (kg)。
     pub weight_kg: f64,
