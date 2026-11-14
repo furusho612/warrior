@@ -46,7 +46,7 @@ CSV は、利用者の全期間の記録を 1 つのファイルにまとめる�
 重量と回数の列に、段の値を `;` で区切って順に書く。
 左右別のセットは、重量と回数の列に、左右の値を `/` で区切って書く。
 ドロップセットと左右別の両方の場合は、段を `;` で区切り、各段の左右を `/` で区切る。
-自重種目の重量は、記録時の体重に加重を足した値とする。
+自重種目の重量は、`sets.body_weight_kg` の記録時体重に `set_segments.weight_kg` のセットごとの加重を足した値とする。読み取り時に計算し、CSV には計算後の重量を書く。
 ドロップセットと左右別の 1 行の表し方は、PRD が列だけを定めているための実装の判断である。
 
 CSV のセルは、カンマ、引用符、改行を含む場合に引用符で囲み、引用符を 2 つ重ねる。
@@ -85,6 +85,7 @@ D1 には書き出しのメタデータだけを置く。
 ## 解決方法
 
 `backend/warrior_core/src/csv.rs` に、列の定義、セルの引用、数式として解釈される先頭文字の無害化、ドロップセットと左右別の値の整形を置く。
+`backend/warrior/src/stored_sets.rs` の読み取りは、自重種目の重量を `sets.body_weight_kg` と `set_segments.weight_kg` の和で求める。
 `backend/warrior/src/export.rs` に、全期間の記録の取得、CSV の生成、R2 への保存、メタデータの保存、ダウンロードを置く。
 `backend/warrior/src/router.rs` に `POST /api/exports`、`GET /api/exports/:id` を追加する。
 `frontend/src/screens/mypage.rs` に書き出しの操作を置く。

@@ -3,13 +3,14 @@
 //! 年齢は日本時間の日付で満年齢を求める。2 月 29 日生まれの利用者は、閏年でない年の
 //! 2 月 28 日に年を取るものとして扱う。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::datetime;
 use crate::jst::JstDate;
 
 /// 性別。基礎代謝の係数に使う。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Sex {
     /// 男性。
     Male,
@@ -20,6 +21,15 @@ pub enum Sex {
 }
 
 impl Sex {
+    /// D1 と API に載せる値。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Sex::Male => "male",
+            Sex::Female => "female",
+            Sex::Other => "other",
+        }
+    }
+
     /// 基礎代謝の式に足す係数。
     pub fn adjustment(self) -> f64 {
         match self {
@@ -31,7 +41,8 @@ impl Sex {
 }
 
 /// 目的。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Goal {
     /// 筋肥大。
     Hypertrophy,
@@ -46,6 +57,17 @@ pub enum Goal {
 }
 
 impl Goal {
+    /// D1 と API に載せる値。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Goal::Hypertrophy => "hypertrophy",
+            Goal::Diet => "diet",
+            Goal::BodyMake => "body_make",
+            Goal::Strength => "strength",
+            Goal::Performance => "performance",
+        }
+    }
+
     /// 消費カロリーに対する目標カロリーの調整率。
     pub fn calorie_adjustment(self) -> f64 {
         match self {
@@ -57,7 +79,8 @@ impl Goal {
 }
 
 /// 日常の活動量。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ActivityLevel {
     /// 低い。
     Low,
@@ -68,6 +91,15 @@ pub enum ActivityLevel {
 }
 
 impl ActivityLevel {
+    /// D1 と API に載せる値。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ActivityLevel::Low => "low",
+            ActivityLevel::Normal => "normal",
+            ActivityLevel::High => "high",
+        }
+    }
+
     /// 活動係数の幅。
     pub fn factor_range(self) -> (f64, f64) {
         match self {

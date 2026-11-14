@@ -25,6 +25,7 @@
 ## 設計方針
 
 終了したトレーニングは、記録画面と同じ部品で開き、種目、セット、メモを編集できる。
+自重種目のセットを編集するときは、記録時点の体重 `sets.body_weight_kg` を変えず、`set_segments.weight_kg` のセットごとの加重だけを更新する。重量は読み取り時に記録時点の体重と加重の和で求める。
 編集の保存は、サーバーが受理した時刻で後勝ちとする。
 端末の時計ではなく、サーバーが受理した時刻で決める。
 
@@ -67,6 +68,7 @@ AI の評価と次回セットの提案は、生成時の記録に基づくた�
 
 `backend/warrior/src/training_session.rs` に、終了したトレーニングの編集、削除、日付指定の追加を置く。
 `backend/warrior_core/src/personal_best.rs` に、全ての記録から自己ベストを計算し直す関数を置く。
+`backend/warrior/src/stored_sets.rs` の読み取りは、自重種目の重量を `sets.body_weight_kg` と `set_segments.weight_kg` の和で求める。
 `backend/warrior/src/personal_best.rs` に、対象の種目の自己ベストを計算し直す処理を置く。
 `frontend/src/screens/record.rs` に、終了したトレーニングの編集の表示を置く。
 `frontend/src/screens/history.rs` に、編集と削除の操作を置く。

@@ -8,6 +8,7 @@ use worker::{Request, Response, Result, RouteContext, Router};
 use crate::account;
 use crate::auth::{oauth, passkey, session};
 use crate::calendar;
+use crate::profile;
 use crate::sync;
 use crate::training_record;
 use crate::training_session;
@@ -36,6 +37,8 @@ pub const TRAINING_TAKEOVER_ROUTE_NAME: &str = "training_takeover";
 pub const CALENDAR_MONTH_ROUTE_NAME: &str = "calendar_month";
 /// カレンダーの日を返す経路の名前。
 pub const CALENDAR_DAY_ROUTE_NAME: &str = "calendar_day";
+/// 身体情報を取得し、更新する経路の名前。
+pub const PROFILE_ROUTE_NAME: &str = "profile";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -47,6 +50,8 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/auth/google/callback", oauth::callback)
         .post_async("/api/auth/logout", session::logout)
         .get_async("/api/me", session::me)
+        .get_async("/api/profile", profile::get)
+        .put_async("/api/profile", profile::update)
         .get_async("/api/me/passkeys", passkey::list)
         .delete_async("/api/account", account::delete)
         .post_async("/api/sync/operations", sync::apply_operation)
@@ -104,6 +109,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/auth/google/callback" => GOOGLE_CALLBACK_ROUTE_NAME,
         "/api/auth/logout" => LOGOUT_ROUTE_NAME,
         "/api/me" => ME_ROUTE_NAME,
+        "/api/profile" => PROFILE_ROUTE_NAME,
         "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
         "/api/calendar" => CALENDAR_MONTH_ROUTE_NAME,
         "/api/me/passkeys" => "passkeys_list",
@@ -137,9 +143,9 @@ fn training_id_path(path: &str) -> Option<&str> {
 mod tests {
     use super::{
         route_name, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME,
-        LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
-        TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
-        TRAINING_TAKEOVER_ROUTE_NAME,
+        LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, PROFILE_ROUTE_NAME,
+        SYNC_OPERATION_ROUTE_NAME, TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME,
+        TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
     };
     use super::{CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME};
 
@@ -160,6 +166,11 @@ mod tests {
         );
         assert_eq!(route_name("/api/auth/logout"), LOGOUT_ROUTE_NAME);
         assert_eq!(route_name("/api/me"), ME_ROUTE_NAME);
+    }
+
+    #[test]
+    fn names_the_profile_route() {
+        assert_eq!(route_name("/api/profile"), PROFILE_ROUTE_NAME);
     }
 
     #[test]

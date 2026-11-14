@@ -59,6 +59,9 @@ pub struct SetRecordRow {
     pub rpe: Option<f64>,
     /// グリップ。JSON の文字列である。
     pub grip: Option<String>,
+    /// 自重種目のセットを記録した時点の体重 (kg)。身体情報が無いときは None。
+    #[serde(default)]
+    pub body_weight_kg: Option<f64>,
     /// 記録した時刻。
     pub recorded_at: Option<String>,
     /// 作成した時刻。
@@ -76,7 +79,7 @@ pub struct SetSegmentRecord {
     pub set_id: String,
     /// 並び順。
     pub position: i64,
-    /// 重量 (kg)。
+    /// 重量 (kg)。自重種目はセットごとの加重を表す。
     pub weight_kg: Option<f64>,
     /// 回数。
     pub reps: Option<i64>,

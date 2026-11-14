@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-use dioxus_router::navigator;
+use dioxus_router::{navigator, Link};
 use warrior_core::datetime;
 use warrior_core::ids::uuid_v4_from_bytes;
 use warrior_core::sync::{
@@ -141,6 +141,8 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let view_only = use_signal(|| false);
+    let profile_prompt = use_signal(|| false);
+    let profile_checked = use_signal(|| false);
     let status = use_signal(SyncStatus::default);
     let failed = use_signal(Vec::<OutboxEntry>::new);
     let confirmed = use_signal(String::new);
@@ -174,6 +176,17 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         });
     });
 
+    use_effect(move || {
+        let mut profile_prompt = profile_prompt;
+        let mut profile_checked = profile_checked;
+        spawn(async move {
+            if let Ok(profile) = crate::profile::fetch().await {
+                profile_prompt.set(profile.is_none_or(|profile| profile.body_profile().is_none()));
+                profile_checked.set(true);
+            }
+        });
+    });
+
     let poll_id = training_id.clone();
     use_future(move || {
         let id = poll_id.clone();
@@ -195,6 +208,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-route": "/record/:training_id",
             "data-session-id": training_id,
             "data-persisted-memo": "{persisted}",
+            "data-profile-checked": if profile_checked() { "true" } else { "false" },
             RecordHeader { signals, state_signals }
             RecordOwnership {
                 training_id: training_id.clone(),
@@ -203,6 +217,9 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             }
             MemoEditor { signals, state_signals }
             RecordFinish { signals }
+            if profile_prompt() {
+                ProfilePrompt {}
+            }
             SetTable {}
             SetDrawer {}
             RecordLoadError {
@@ -215,6 +232,22 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 failed: failed_entries,
                 signals,
                 state_signals,
+            }
+        }
+    }
+}
+
+#[component]
+fn ProfilePrompt() -> Element {
+    rsx! {
+        div {
+            class: "flex flex-col gap-2 border border-line bg-surface p-3",
+            "data-profile-prompt": "true",
+            p { class: "text-[13px] leading-5", "{text(Key::ProfilePrompt)}" }
+            Link {
+                to: Route::MyPage {},
+                class: "flex min-h-11 items-center border border-line px-3 text-[13px] text-primary",
+                "{text(Key::ProfilePromptAction)}"
             }
         }
     }

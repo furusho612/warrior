@@ -9,6 +9,7 @@ pub mod generated;
 pub mod http;
 pub mod layout;
 pub mod passkey;
+pub mod profile;
 pub mod pwa;
 pub mod routes;
 pub mod screens;

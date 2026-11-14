@@ -2,12 +2,14 @@
 //!
 //! トレーニングのサマリーとカレンダーの日の詳細は、このモジュールが返す記録だけを使う。
 //! 総重量などの計算は `set_calc` に任せ、ここでは行から記録への変換だけを行う。
+//! 自重種目の段の重量は、記録した時点の体重にセットごとの加重を足して求める。
 //! スナップショットは記録した時点の種目の内容を持つ (ADR-006)。
 
 use serde::Deserialize;
 use warrior_core::exercise::{ExerciseSnapshot, GripSelection, Laterality};
+use warrior_core::profile::BodyWeightAtRecord;
 use warrior_core::set_calc::{
-    BestKey, SetKind, SetRecord, SetSegment, SetValidationError, SideValue,
+    BestKey, RecordMode, SetKind, SetRecord, SetSegment, SetValidationError, SideValue,
 };
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::training_session::SessionSet;
@@ -25,6 +27,7 @@ struct SetSegmentRow {
     kind: String,
     set_rpe: Option<f64>,
     grip: Option<String>,
+    body_weight_kg: Option<f64>,
     segment_id: Option<String>,
     weight_kg: Option<f64>,
     reps: Option<i64>,
@@ -53,6 +56,7 @@ pub struct StoredExercise {
 const SET_SEGMENT_COLUMNS: &str = "te.training_id AS training_id, \
      te.id AS training_exercise_id, te.snapshot, \
      s.id AS set_id, s.kind AS kind, s.rpe AS set_rpe, s.grip AS grip, \
+     s.body_weight_kg AS body_weight_kg, \
      sg.id AS segment_id, \
      sg.weight_kg, sg.reps, sg.momentum_reps, sg.assisted_reps, sg.duration_seconds, \
      sg.left_weight_kg, sg.left_reps, sg.left_duration_seconds, \
@@ -202,7 +206,7 @@ fn build_training(
         let segment = row
             .segment_id
             .as_ref()
-            .map(|_| segment_from_row(&row, group.snapshot.laterality));
+            .map(|_| segment_from_row(&row, group.snapshot.laterality, group.snapshot.record_mode));
         match group.sets.iter_mut().find(|set| set.id == row.set_id) {
             Some(set) => {
                 if let Some(segment) = segment {
@@ -271,7 +275,11 @@ fn parse_set_kind(text: &str) -> Option<SetKind> {
     SetKind::parse(text)
 }
 
-fn segment_from_row(row: &SetSegmentRow, laterality: Laterality) -> SetSegment {
+fn segment_from_row(
+    row: &SetSegmentRow,
+    laterality: Laterality,
+    record_mode: RecordMode,
+) -> SetSegment {
     match laterality {
         Laterality::Unilateral => SetSegment {
             weight_kg: 0.0,
@@ -282,16 +290,24 @@ fn segment_from_row(row: &SetSegmentRow, laterality: Laterality) -> SetSegment {
                 row.left_weight_kg,
                 row.left_reps,
                 row.left_duration_seconds,
+                record_mode,
+                row.body_weight_kg,
             )),
             right: Some(side_value(
                 row.right_weight_kg,
                 row.right_reps,
                 row.right_duration_seconds,
+                record_mode,
+                row.body_weight_kg,
             )),
             duration_seconds: None,
         },
         Laterality::Bilateral => SetSegment {
-            weight_kg: row.weight_kg.unwrap_or(0.0),
+            weight_kg: segment_weight(
+                row.weight_kg.unwrap_or(0.0),
+                record_mode,
+                row.body_weight_kg,
+            ),
             reps: to_u32(row.reps),
             momentum_reps: to_u32(row.momentum_reps),
             assisted_reps: to_u32(row.assisted_reps),
@@ -304,13 +320,29 @@ fn segment_from_row(row: &SetSegmentRow, laterality: Laterality) -> SetSegment {
     }
 }
 
+/// 段の重量。自重種目は記録した時点の体重に加重を足す。
+fn segment_weight(
+    added_weight_kg: f64,
+    record_mode: RecordMode,
+    body_weight_kg: Option<f64>,
+) -> f64 {
+    match record_mode {
+        RecordMode::BodyweightAndReps => BodyWeightAtRecord::new(body_weight_kg)
+            .set_weight_kg(added_weight_kg)
+            .unwrap_or(0.0),
+        RecordMode::WeightAndReps | RecordMode::Time => added_weight_kg,
+    }
+}
+
 fn side_value(
     weight_kg: Option<f64>,
     reps: Option<i64>,
     duration_seconds: Option<i64>,
+    record_mode: RecordMode,
+    body_weight_kg: Option<f64>,
 ) -> SideValue {
     SideValue {
-        weight_kg: weight_kg.unwrap_or(0.0),
+        weight_kg: segment_weight(weight_kg.unwrap_or(0.0), record_mode, body_weight_kg),
         reps: to_u32(reps),
         duration_seconds: duration_seconds.and_then(|value| u32::try_from(value).ok()),
     }
@@ -326,6 +358,7 @@ fn to_u32(value: Option<i64>) -> u32 {
 mod tests {
     //! 保存した行からセットの記録への変換の例示テスト。
     //!
+    //! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`。
     //! 要求の受入基準は結合テストと E2E が担い、ここは変換の失敗と並びを確かめる。
 
     use serde_json::json;
@@ -434,6 +467,26 @@ mod tests {
         );
         assert_eq!(exercises[0].sets[0].total_weight_kg(), 400.0);
         assert_eq!(exercises[1].sets[0].total_weight_kg(), 640.0);
+    }
+
+    #[test]
+    fn a_bodyweight_row_adds_the_added_weight_to_the_recorded_body_weight() {
+        let row = bodyweight_row(Some(70.0), Some(10.0), Some(5));
+        let exercises = build_exercises(vec![row]).expect("the stored sets are valid");
+        let record = &exercises[0].sets[0];
+        assert_eq!(record.mode(), RecordMode::BodyweightAndReps);
+        assert_eq!(record.total_weight_kg(), 400.0);
+        assert_eq!(record.max_weight_kg(), Some(80.0));
+    }
+
+    #[test]
+    fn a_bodyweight_row_without_a_body_weight_has_no_weight() {
+        let row = bodyweight_row(None, Some(10.0), Some(5));
+        let exercises = build_exercises(vec![row]).expect("the stored sets are valid");
+        let record = &exercises[0].sets[0];
+        assert_eq!(record.total_weight_kg(), 0.0);
+        assert_eq!(record.max_weight_kg(), None);
+        assert_eq!(record.estimated_one_rep_max(), None);
     }
 
     #[test]
@@ -561,6 +614,7 @@ mod tests {
             kind: kind.to_owned(),
             set_rpe: None,
             grip: None,
+            body_weight_kg: None,
             segment_id: Some(format!("{set_id}-segment")),
             weight_kg,
             reps,
@@ -591,6 +645,7 @@ mod tests {
             kind: "normal".to_owned(),
             set_rpe: None,
             grip: None,
+            body_weight_kg: None,
             segment_id: Some(format!("{set_id}-segment")),
             weight_kg: None,
             reps: None,
@@ -602,6 +657,35 @@ mod tests {
             left_duration_seconds: None,
             right_weight_kg: Some(right.0),
             right_reps: Some(right.1),
+            right_duration_seconds: None,
+        }
+    }
+
+    fn bodyweight_row(
+        body_weight_kg: Option<f64>,
+        added_weight_kg: Option<f64>,
+        reps: Option<i64>,
+    ) -> SetSegmentRow {
+        SetSegmentRow {
+            training_id: "training-a".to_owned(),
+            training_exercise_id: "exercise-bodyweight".to_owned(),
+            snapshot: snapshot_json("exercise-bodyweight", "bodyweight_and_reps", "bilateral"),
+            set_id: "set-bodyweight".to_owned(),
+            kind: "normal".to_owned(),
+            set_rpe: None,
+            grip: None,
+            body_weight_kg,
+            segment_id: Some("set-bodyweight-segment".to_owned()),
+            weight_kg: added_weight_kg,
+            reps,
+            momentum_reps: Some(0),
+            assisted_reps: Some(0),
+            duration_seconds: None,
+            left_weight_kg: None,
+            left_reps: None,
+            left_duration_seconds: None,
+            right_weight_kg: None,
+            right_reps: None,
             right_duration_seconds: None,
         }
     }

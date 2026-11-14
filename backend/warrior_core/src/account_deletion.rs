@@ -118,6 +118,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の端末から適用した同期の操作。",
     },
     Table {
+        name: "profiles",
+        class: TableClass::Owned,
+        reason: "利用者の身体情報、目的、日数、活動量の最新値。",
+    },
+    Table {
         name: "muscles",
         class: TableClass::Master,
         reason: "筋肉の単位。利用者に紐づかない。",
@@ -159,6 +164,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "training_exercises",
     "applied_operations",
     "training_sessions",
+    "profiles",
     "users",
 ];
 
@@ -204,6 +210,7 @@ mod tests {
             "superset_members",
             "applied_operations",
             "oauth_states",
+            "profiles",
         ] {
             assert!(classify(name).is_some(), "{name} must be classified");
         }
