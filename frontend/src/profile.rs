@@ -12,6 +12,31 @@ pub async fn fetch() -> Result<Option<Profile>, HttpError> {
     http::request_json("GET", "/api/profile").await
 }
 
+/// 保存済みのプロフィールを読み、体重を端末内へキャッシュする。未登録は None。
+pub async fn fetch_and_cache() -> Result<Option<Profile>, HttpError> {
+    let profile = fetch().await?;
+    if let Ok(storage) = crate::storage::current().await {
+        let weight = profile.as_ref().and_then(|profile| profile.weight_kg);
+        // キャッシュの失敗で取得済みのプロフィールを捨てない。次の取得が上書きする。
+        let _ = storage.cache_body_weight(weight).await;
+    }
+    Ok(profile)
+}
+
+/// 記録に使う体重。取得できなければキャッシュを使い、キャッシュが無ければ None。
+pub async fn body_weight_for_record() -> Option<f64> {
+    match fetch_and_cache().await {
+        Ok(profile) => profile.and_then(|profile| profile.weight_kg),
+        Err(_) => crate::storage::current()
+            .await
+            .ok()?
+            .cached_body_weight()
+            .await
+            .ok()
+            .flatten(),
+    }
+}
+
 /// プロフィールを保存し、保存した値を受け取る。
 pub async fn save(profile: &Profile) -> Result<Profile, HttpError> {
     http::request_json_with_body("PUT", "/api/profile", profile).await

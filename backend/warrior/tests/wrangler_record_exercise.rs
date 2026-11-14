@@ -12,7 +12,6 @@ mod support;
 use helpers::*;
 use serde_json::{json, Value};
 use support::DevServer;
-use warrior_core::auth::{hash_session_token, hash_terminal_token};
 use warrior_core::base64url;
 
 const PORT: u16 = 8816;

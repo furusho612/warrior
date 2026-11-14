@@ -88,6 +88,8 @@ pub enum DiscardOutcome {
     MemoReverted(Box<SessionRecord>),
     /// 種目の作成の破棄で、端末の種目と配下の行を削除した。
     ExerciseDeleted,
+    /// セットの作成の破棄で、端末のセットと段を削除した。
+    SetDeleted,
     /// 操作だけを削除した。
     OperationsRemoved,
 }
@@ -579,6 +581,35 @@ impl Storage {
         Ok(trainings)
     }
 
+    /// 身体情報の体重を端末内へキャッシュする。None のときはキャッシュを消す。
+    pub async fn cache_body_weight(&self, body_weight_kg: Option<f64>) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Meta.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let meta = transaction.store(Store::Meta.name())?;
+        match outbox::save_body_weight(&meta, body_weight_kg).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
+    }
+
+    /// キャッシュした身体情報の体重を返す。
+    pub async fn cached_body_weight(&self) -> Result<Option<f64>, StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Meta.name()],
+            IdbTransactionMode::Readonly,
+        )?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let weight = outbox::cached_body_weight(&meta).await?;
+        transaction.finish().await?;
+        Ok(weight)
+    }
+
     /// サーバーに保存済みの記録で、端末の記録と送信待ちの列を置き換える。
     ///
     /// 引き継ぎと、閲覧のみの端末の読み直しで使う。トレーニングの木の古い行と、
@@ -838,6 +869,11 @@ async fn discard_steps(
         let training_exercise_id = exercise::payload_training_exercise_id(&target.operation)?;
         exercise::delete_training_exercise_rows(transaction, &training_exercise_id).await?;
         return Ok(DiscardOutcome::ExerciseDeleted);
+    }
+    if target.operation.kind == OperationKind::SetCreate {
+        let set_id = set::payload_set_id(&target.operation)?;
+        set::delete_set_rows(transaction, &set_id).await?;
+        return Ok(DiscardOutcome::SetDeleted);
     }
     if target.operation.kind != OperationKind::TrainingSessionUpdate {
         return Ok(DiscardOutcome::OperationsRemoved);

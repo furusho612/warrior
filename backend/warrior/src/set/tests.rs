@@ -1,3 +1,7 @@
+//! セットの操作の SQL の組み立ての例示テスト。
+//!
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`。
+
 use serde_json::json;
 use warrior_core::set_calc::{SetKind, SideValue};
 use warrior_core::sql::SqlValue;
@@ -129,6 +133,7 @@ fn the_update_and_delete_statements_keep_the_training_scope() {
         set_id: SET_ID.to_owned(),
         position: 2,
         kind: SetKind::Drop,
+        completed: false,
         rpe: Some(8.0),
         grip: None,
         body_weight_kg: None,
@@ -141,14 +146,17 @@ fn the_update_and_delete_statements_keep_the_training_scope() {
         ExerciseOwnership::Finished,
         NOW,
     );
-    assert!(statement.sql().contains("UPDATE sets SET position = ?"));
+    assert!(statement
+        .sql()
+        .contains("UPDATE sets SET position = ?, kind = ?, completed = ?"));
     assert!(statement
         .sql()
         .contains("training_exercises WHERE training_id = ?"));
     assert!(statement.sql().contains("ts.finished_at IS NOT NULL"));
     assert_eq!(statement.bindings()[0], SqlValue::Integer(2));
     assert_eq!(statement.bindings()[1], SqlValue::Text("drop".to_owned()));
-    assert_eq!(statement.bindings()[2], SqlValue::Real(8.0));
+    assert_eq!(statement.bindings()[2], SqlValue::Integer(0));
+    assert_eq!(statement.bindings()[3], SqlValue::Real(8.0));
 
     let delete = delete_set_statement(
         USER_ID,

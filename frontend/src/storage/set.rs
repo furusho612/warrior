@@ -8,7 +8,7 @@ use warrior_core::sync::{
     Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
     SetReorderPayload, SetUpdatePayload,
 };
-use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
+use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use wasm_bindgen::JsValue;
 use web_sys::{IdbObjectStore, IdbTransactionMode};
 
@@ -147,6 +147,13 @@ impl Storage {
         let outbox_store = transaction.store(Store::Outbox.name())?;
         let meta = transaction.store(Store::Meta.name())?;
         let entries = outbox::read(&outbox_store).await?;
+        if indexeddb::get(&sets, &JsValue::from_str(&set.id))
+            .await?
+            .is_none()
+        {
+            transaction.finish().await?;
+            return Ok(());
+        }
         if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
             return abort(transaction, error).await;
         }
@@ -282,11 +289,78 @@ impl Storage {
         let outbox_store = transaction.store(Store::Outbox.name())?;
         let meta = transaction.store(Store::Meta.name())?;
         let entries = outbox::read(&outbox_store).await?;
+        if indexeddb::get(&sets, &JsValue::from_str(&set.id))
+            .await?
+            .is_none()
+        {
+            transaction.finish().await?;
+            return Ok(());
+        }
         if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
             return abort(transaction, error).await;
         }
         if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
             return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// サーバーに保存済みの 1 つのセットと段を端末へ戻す。
+    pub async fn restore_set(
+        &self,
+        record: &TrainingRecord,
+        set_id: &str,
+    ) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Sets.name(), Store::SetSegments.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sets = transaction.store(Store::Sets.name())?;
+        let segments = transaction.store(Store::SetSegments.name())?;
+        if let Err(error) = delete_set_rows_in(&sets, &segments, set_id).await {
+            return abort(transaction, error).await;
+        }
+        if let Some(set) = record.sets.iter().find(|set| set.id == set_id) {
+            if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
+                return abort(transaction, error).await;
+            }
+            for segment in record
+                .segments
+                .iter()
+                .filter(|segment| segment.set_id == set_id)
+            {
+                if let Err(error) = indexeddb::put(&segments, &indexeddb::to_js(segment)?).await {
+                    return abort(transaction, error).await;
+                }
+            }
+        }
+        transaction.finish().await
+    }
+
+    /// サーバーに保存済みのセットの位置を端末へ戻す。
+    ///
+    /// サーバーに無いセットは、端末だけにある未送信の行として残す。
+    pub async fn restore_set_positions(&self, record: &TrainingRecord) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Sets.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sets = transaction.store(Store::Sets.name())?;
+        let rows = read_rows::<SetRecordRow>(&sets).await?;
+        for row in rows {
+            let Some(server) = record.sets.iter().find(|set| set.id == row.id) else {
+                continue;
+            };
+            let mut updated = row.clone();
+            updated.position = server.position;
+            updated.updated_at = server.updated_at.clone();
+            if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(&updated)?).await {
+                return abort(transaction, error).await;
+            }
         }
         transaction.finish().await
     }
@@ -298,6 +372,37 @@ async fn delete_segments(store: &IdbObjectStore, set_id: &str) -> Result<(), Sto
         indexeddb::delete_entry(store, &JsValue::from_str(&segment.id)).await?;
     }
     Ok(())
+}
+
+async fn delete_set_rows_in(
+    sets: &IdbObjectStore,
+    segments: &IdbObjectStore,
+    set_id: &str,
+) -> Result<(), StorageError> {
+    delete_segments(segments, set_id).await?;
+    indexeddb::delete_entry(sets, &JsValue::from_str(set_id)).await
+}
+
+/// 破棄するセットの行と段を削除する。
+///
+/// 送信待ちの列の破棄で、サーバーに無いセットの作成を取り消すときに使う。
+pub(super) async fn delete_set_rows(
+    transaction: &indexeddb::Transaction,
+    set_id: &str,
+) -> Result<(), StorageError> {
+    let sets = transaction.store(Store::Sets.name())?;
+    let segments = transaction.store(Store::SetSegments.name())?;
+    delete_set_rows_in(&sets, &segments, set_id).await
+}
+
+/// 操作の本文からセットの ID を取る。
+pub(super) fn payload_set_id(operation: &Operation) -> Result<String, StorageError> {
+    operation
+        .payload
+        .get("set_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .ok_or_else(|| StorageError::InvalidOperation("the operation has no set id".to_owned()))
 }
 
 fn create_payload(operation: &Operation) -> Result<SetCreatePayload, StorageError> {

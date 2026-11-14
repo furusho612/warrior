@@ -1,7 +1,11 @@
 use serde_json::{json, Value};
-use warrior_core::auth::{hash_session_token, hash_terminal_token};
 
 use super::*;
+use support::record_common;
+
+pub(crate) use support::record_common::{
+    applied_count, cookie, count, count_with, first_row, status,
+};
 
 pub(crate) const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5501";
 pub(crate) const OTHER_USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5502";
@@ -30,175 +34,162 @@ pub(crate) const BENCH_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5560
 pub(crate) const BODYWEIGHT_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5561";
 pub(crate) const ORIGIN: &str = "http://localhost:8787";
 
-pub(crate) fn cookie(token: &str, terminal_token: &str) -> String {
-    format!("warrior_session={token}; warrior_terminal={terminal_token}")
-}
-
 pub(crate) fn seed_base(
     server: &DevServer,
     token: &str,
     terminal_token: &str,
     other_terminal_token: &str,
 ) {
-    let session_hash = hash_session_token(token);
-    let terminal_hash = hash_terminal_token(terminal_token);
-    let other_terminal_hash = hash_terminal_token(other_terminal_token);
-    for sql in [
-        format!(
-            "INSERT INTO users (id, google_sub, email, display_name, created_at, updated_at) \
-             VALUES ('{USER_ID}', 'sub-record-set', 'record-set@example.test', 'セットの利用者', \
-              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO users (id, google_sub, email, display_name, created_at, updated_at) \
-             VALUES ('{OTHER_USER_ID}', 'sub-record-set-other', 'other@example.test', '別の利用者', \
-              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, expires_at) \
-             VALUES ('3f2504e0-4f89-41d3-9a0c-0305e82c5570', '{USER_ID}', '{session_hash}', \
-              '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO terminal_tokens (id, user_id, token_hash, created_at, last_seen_at) \
-             VALUES ('{TERMINAL_ID}', '{USER_ID}', '{terminal_hash}', '2026-01-01T00:00:00Z', \
-              '2026-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO terminal_tokens (id, user_id, token_hash, created_at, last_seen_at) \
-             VALUES ('{OTHER_TERMINAL_ID}', '{USER_ID}', '{other_terminal_hash}', \
-              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ),
-        format!(
+    record_common::seed_user(
+        server,
+        USER_ID,
+        "sub-record-set",
+        "record-set@example.test",
+        "セットの利用者",
+    );
+    record_common::seed_user(
+        server,
+        OTHER_USER_ID,
+        "sub-record-set-other",
+        "other@example.test",
+        "別の利用者",
+    );
+    record_common::seed_auth_session(
+        server,
+        "3f2504e0-4f89-41d3-9a0c-0305e82c5570",
+        USER_ID,
+        token,
+    );
+    record_common::seed_terminal(server, TERMINAL_ID, USER_ID, terminal_token);
+    record_common::seed_terminal(server, OTHER_TERMINAL_ID, USER_ID, other_terminal_token);
+    server
+        .execute_d1_json(&format!(
             "INSERT INTO profiles (user_id, weight_kg, created_at, updated_at) \
              VALUES ('{USER_ID}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ),
-        session_sql(TRAINING_ID, USER_ID, "2026-11-12", TERMINAL_ID, None),
-        session_sql(
-            FINISHED_TRAINING_ID,
-            USER_ID,
-            "2026-11-11",
-            "NULL",
-            Some("2026-11-11T04:00:00Z"),
-        ),
-        session_sql(OTHER_TRAINING_ID, OTHER_USER_ID, "2026-11-12", "NULL", None),
-        exercise_sql(
-            BENCH_ROW_ID,
-            USER_ID,
-            TRAINING_ID,
-            BENCH_EXERCISE_ID,
-            1,
-            "weight_and_reps",
-        ),
-        exercise_sql(
-            BODYWEIGHT_ROW_ID,
-            USER_ID,
-            TRAINING_ID,
-            BODYWEIGHT_EXERCISE_ID,
-            2,
-            "bodyweight_and_reps",
-        ),
-        exercise_sql(
-            FINISHED_ROW_ID,
-            USER_ID,
-            FINISHED_TRAINING_ID,
-            BENCH_EXERCISE_ID,
-            1,
-            "weight_and_reps",
-        ),
-        exercise_sql(
-            OTHER_ROW_ID,
-            OTHER_USER_ID,
-            OTHER_TRAINING_ID,
-            BENCH_EXERCISE_ID,
-            1,
-            "weight_and_reps",
-        ),
-        set_sql(FINISHED_SET_ID, USER_ID, FINISHED_ROW_ID, 1, 1),
-        segment_sql(FINISHED_SET_ID, USER_ID, FINISHED_SEGMENT_ID, 60.0, 5),
-        set_sql(OTHER_SET_ID, OTHER_USER_ID, OTHER_ROW_ID, 1, 1),
-        segment_sql(OTHER_SET_ID, OTHER_USER_ID, OTHER_SEGMENT_ID, 60.0, 5),
-    ] {
-        server
-            .execute_d1_json(&sql)
-            .expect("the base rows must be seeded");
-    }
-}
-
-fn session_sql(
-    training_id: &str,
-    user_id: &str,
-    date: &str,
-    owner: &str,
-    finished_at: Option<&str>,
-) -> String {
-    let owner = if owner == "NULL" {
-        "NULL".to_owned()
-    } else {
-        format!("'{owner}'")
-    };
-    match finished_at {
-        Some(finished_at) => format!(
-            "INSERT INTO training_sessions \
-             (id, user_id, date, started_at, memo, source_kind, owner_terminal_id, finished_at, \
-              created_at, updated_at) \
-             VALUES ('{training_id}', '{user_id}', '{date}', '{date}T03:00:00Z', '', 'empty', \
-              {owner}, '{finished_at}', '{date}T03:00:00Z', '{finished_at}')"
-        ),
-        None => format!(
-            "INSERT INTO training_sessions \
-             (id, user_id, date, started_at, memo, source_kind, owner_terminal_id, \
-              created_at, updated_at) \
-             VALUES ('{training_id}', '{user_id}', '{date}', '{date}T03:00:00Z', '', 'empty', \
-              {owner}, '{date}T03:00:00Z', '{date}T03:00:00Z')"
-        ),
-    }
-}
-
-fn exercise_sql(
-    row_id: &str,
-    user_id: &str,
-    training_id: &str,
-    exercise_id: &str,
-    position: i64,
-    record_mode: &str,
-) -> String {
-    let snapshot = json!({
-        "exercise_id": exercise_id,
-        "name": "種目",
-        "body_part": "chest",
-        "muscles": [{"muscle": "pectoralis_major_middle", "role": "primary"}],
-        "record_mode": record_mode,
-        "laterality": "bilateral",
-        "grip_mode": "none",
-        "grip_options": []
-    });
-    format!(
-        "INSERT INTO training_exercises \
-         (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
-         VALUES ('{row_id}', '{user_id}', '{training_id}', '{exercise_id}', '{}', {position}, \
-          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        snapshot.to_string().replace('\'', "''")
-    )
-}
-
-fn set_sql(set_id: &str, user_id: &str, row_id: &str, position: i64, completed: i64) -> String {
-    format!(
-        "INSERT INTO sets \
-         (id, user_id, training_exercise_id, position, kind, completed, created_at, updated_at) \
-         VALUES ('{set_id}', '{user_id}', '{row_id}', {position}, 'normal', {completed}, \
-          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-    )
-}
-
-fn segment_sql(set_id: &str, user_id: &str, segment_id: &str, weight_kg: f64, reps: i64) -> String {
-    format!(
-        "INSERT INTO set_segments \
-         (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, \
-          created_at, updated_at) \
-         VALUES ('{segment_id}', '{user_id}', '{set_id}', 1, {weight_kg}, {reps}, 0, 0, \
-          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-    )
+        ))
+        .expect("the profile must be seeded");
+    record_common::seed_session(
+        server,
+        TRAINING_ID,
+        USER_ID,
+        "2026-11-12",
+        Some(TERMINAL_ID),
+        None,
+    );
+    record_common::seed_session(
+        server,
+        FINISHED_TRAINING_ID,
+        USER_ID,
+        "2026-11-11",
+        None,
+        Some("2026-11-11T04:00:00Z"),
+    );
+    record_common::seed_session(
+        server,
+        OTHER_TRAINING_ID,
+        OTHER_USER_ID,
+        "2026-11-12",
+        None,
+        None,
+    );
+    record_common::seed_exercise(
+        server,
+        record_common::ExerciseSeed {
+            row_id: BENCH_ROW_ID,
+            user_id: USER_ID,
+            training_id: TRAINING_ID,
+            exercise_id: BENCH_EXERCISE_ID,
+            name: "ベンチプレス",
+            body_part: "chest",
+            muscle: "pectoralis_major_middle",
+            record_mode: "weight_and_reps",
+            position: 1,
+        },
+    );
+    record_common::seed_exercise(
+        server,
+        record_common::ExerciseSeed {
+            row_id: BODYWEIGHT_ROW_ID,
+            user_id: USER_ID,
+            training_id: TRAINING_ID,
+            exercise_id: BODYWEIGHT_EXERCISE_ID,
+            name: "プッシュアップ",
+            body_part: "chest",
+            muscle: "pectoralis_major_middle",
+            record_mode: "bodyweight_and_reps",
+            position: 2,
+        },
+    );
+    record_common::seed_exercise(
+        server,
+        record_common::ExerciseSeed {
+            row_id: FINISHED_ROW_ID,
+            user_id: USER_ID,
+            training_id: FINISHED_TRAINING_ID,
+            exercise_id: BENCH_EXERCISE_ID,
+            name: "ベンチプレス",
+            body_part: "chest",
+            muscle: "pectoralis_major_middle",
+            record_mode: "weight_and_reps",
+            position: 1,
+        },
+    );
+    record_common::seed_exercise(
+        server,
+        record_common::ExerciseSeed {
+            row_id: OTHER_ROW_ID,
+            user_id: OTHER_USER_ID,
+            training_id: OTHER_TRAINING_ID,
+            exercise_id: BENCH_EXERCISE_ID,
+            name: "ベンチプレス",
+            body_part: "chest",
+            muscle: "pectoralis_major_middle",
+            record_mode: "weight_and_reps",
+            position: 1,
+        },
+    );
+    record_common::seed_set(
+        server,
+        FINISHED_SET_ID,
+        USER_ID,
+        FINISHED_ROW_ID,
+        1,
+        "normal",
+        1,
+    );
+    record_common::seed_segment(
+        server,
+        record_common::SegmentSeed {
+            segment_id: FINISHED_SEGMENT_ID,
+            user_id: USER_ID,
+            set_id: FINISHED_SET_ID,
+            position: 1,
+            weight_kg: Some(60.0),
+            reps: Some(5),
+            duration_seconds: None,
+        },
+    );
+    record_common::seed_set(
+        server,
+        OTHER_SET_ID,
+        OTHER_USER_ID,
+        OTHER_ROW_ID,
+        1,
+        "normal",
+        1,
+    );
+    record_common::seed_segment(
+        server,
+        record_common::SegmentSeed {
+            segment_id: OTHER_SEGMENT_ID,
+            user_id: OTHER_USER_ID,
+            set_id: OTHER_SET_ID,
+            position: 1,
+            weight_kg: Some(60.0),
+            reps: Some(5),
+            duration_seconds: None,
+        },
+    );
 }
 
 pub(crate) fn segment(
@@ -255,13 +246,19 @@ pub(crate) fn create_operation(
     })
 }
 
+/// セットの更新の操作に載せるセットの指定。
+pub(crate) struct UpdateSpec<'a> {
+    pub(crate) position: i64,
+    pub(crate) kind: &'a str,
+    pub(crate) completed: bool,
+    pub(crate) body_weight_kg: Option<f64>,
+}
+
 pub(crate) fn update_operation(
     operation_id: &str,
     training_id: &str,
     set_id: &str,
-    position: i64,
-    kind: &str,
-    body_weight_kg: Option<f64>,
+    spec: UpdateSpec<'_>,
     segments: Vec<serde_json::Value>,
 ) -> Value {
     json!({
@@ -273,11 +270,12 @@ pub(crate) fn update_operation(
         "payload": {
             "training_id": training_id,
             "set_id": set_id,
-            "position": position,
-            "kind": kind,
+            "position": spec.position,
+            "kind": spec.kind,
+            "completed": spec.completed,
             "rpe": null,
             "grip": null,
-            "body_weight_kg": body_weight_kg,
+            "body_weight_kg": spec.body_weight_kg,
             "segments": segments
         }
     })
@@ -338,53 +336,5 @@ pub(crate) fn complete_operation(
 }
 
 pub(crate) fn post(server: &DevServer, cookie: &str, operation: &Value) -> support::HttpResponse {
-    server.request_with_body(
-        "POST",
-        "/api/sync/operations",
-        &[
-            ("Origin", ORIGIN),
-            ("Content-Type", "application/json"),
-            ("Cookie", cookie),
-        ],
-        &serde_json::to_string(operation).expect("the operation is JSON"),
-    )
-}
-
-pub(crate) fn status(response: &support::HttpResponse) -> String {
-    serde_json::from_str::<Value>(&response.body).expect("the response is JSON")["status"]
-        .as_str()
-        .expect("a status")
-        .to_owned()
-}
-
-pub(crate) fn applied_count(server: &DevServer, operation_id: &str) -> i64 {
-    count_with(
-        server,
-        &format!(
-            "SELECT COUNT(*) AS count FROM applied_operations \
-             WHERE operation_id = '{operation_id}'"
-        ),
-    )
-}
-
-pub(crate) fn count(server: &DevServer, table: &str, id: &str) -> i64 {
-    count_with(
-        server,
-        &format!("SELECT COUNT(*) AS count FROM {table} WHERE id = '{id}'"),
-    )
-}
-
-pub(crate) fn count_with(server: &DevServer, sql: &str) -> i64 {
-    first_row(server, sql)["count"].as_i64().expect("a count")
-}
-
-pub(crate) fn first_row(server: &DevServer, sql: &str) -> Value {
-    server
-        .execute_d1_json(sql)
-        .expect("the query must run")
-        .get(0)
-        .and_then(|entry| entry.get("results"))
-        .and_then(|rows| rows.get(0))
-        .cloned()
-        .expect("a row")
+    record_common::post_operation(server, cookie, operation, ORIGIN)
 }

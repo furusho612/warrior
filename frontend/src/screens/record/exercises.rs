@@ -248,11 +248,7 @@ async fn load(
             return;
         }
     };
-    let body_weight_kg = crate::profile::fetch()
-        .await
-        .ok()
-        .flatten()
-        .and_then(|profile| profile.weight_kg);
+    let body_weight_kg = crate::profile::body_weight_for_record().await;
     let old = (views)();
     let mut next = Vec::with_capacity(records.len());
     let mut training_previous = match previous_api::fetch_training(&training_id).await {
@@ -495,7 +491,7 @@ fn previous_set_text(index: usize, set: &warrior_core::previous::PreviousSet) ->
         Some(segment) => {
             let duration = segment.longest_duration_seconds();
             if duration > 0 && segment.weight_kg == 0.0 && segment.reps == 0 {
-                format!("{duration}{}", text(Key::CalendarSeconds))
+                format!("{duration}{}", text(Key::RecordSeconds))
             } else {
                 format!("{} kg x {}", format_number(segment.weight_kg), segment.reps)
             }
@@ -538,10 +534,10 @@ fn signed_longest(diff: DurationDifference) -> String {
 
 fn signed_seconds(value: i64) -> String {
     if value > 0 {
-        format!("+{value} {}", text(Key::CalendarSeconds))
+        format!("+{value} {}", text(Key::RecordSeconds))
     } else if value < 0 {
-        format!("{value} {}", text(Key::CalendarSeconds))
+        format!("{value} {}", text(Key::RecordSeconds))
     } else {
-        format!("0 {}", text(Key::CalendarSeconds))
+        format!("0 {}", text(Key::RecordSeconds))
     }
 }

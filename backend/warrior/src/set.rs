@@ -142,14 +142,11 @@ async fn precheck(
             }
         }
         ValidatedPayload::SetUpdate(payload) => {
-            let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
+            if set_row(db, user_id, training_id, &payload.set_id)
+                .await?
+                .is_none()
+            {
                 return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-            };
-            if row.completed != 0 && !segments_have_values(&payload.segments) {
-                return Ok(Some(response(
-                    ErrorCode::BadRequest,
-                    "the completed set has no values",
-                )));
             }
         }
         ValidatedPayload::SetDelete(payload) => {
@@ -308,9 +305,11 @@ fn update_set_statement(
     now: &str,
 ) -> SqlStatement {
     let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
+    let completed = payload.completed && segments_have_values(&payload.segments);
     let mut bindings = vec![
         SqlValue::Integer(payload.position),
         SqlValue::Text(payload.kind.as_str().to_owned()),
+        SqlValue::Integer(if completed { 1 } else { 0 }),
         optional_real(payload.rpe),
         grip_json(payload.grip).unwrap_or(SqlValue::Null),
         optional_real(payload.body_weight_kg),
@@ -323,8 +322,8 @@ fn update_set_statement(
     bindings.append(&mut condition_bindings);
     SqlStatement::new(
         format!(
-            "UPDATE sets SET position = ?, kind = ?, rpe = ?, grip = ?, body_weight_kg = ?, \
-             updated_at = ? \
+            "UPDATE sets SET position = ?, kind = ?, completed = ?, rpe = ?, grip = ?, \
+             body_weight_kg = ?, updated_at = ? \
              WHERE id = ? AND user_id = ? \
              AND training_exercise_id IN \
               (SELECT id FROM training_exercises WHERE training_id = ? AND user_id = ?) \

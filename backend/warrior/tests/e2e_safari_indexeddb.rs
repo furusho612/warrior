@@ -46,11 +46,11 @@ async fn safari_restores_the_record_screen_memo_and_sets_after_reload() {
     let training_id = browser::attribute(&driver, "[data-session-id]", "data-session-id").await;
     assert!(!training_id.is_empty());
 
-    add_exercise(&driver, BENCH_EXERCISE_ID).await;
-    click(&driver, "[data-add-set]").await;
+    browser::add_exercise(&driver, BENCH_EXERCISE_ID).await;
+    browser::click(&driver, "[data-add-set]").await;
     browser::wait_for_present(&driver, "[data-set-row]").await;
-    set_input(&driver, "[data-set-row] [data-set-weight]", WEIGHT).await;
-    set_input(&driver, "[data-set-row] [data-set-reps]", REPS).await;
+    browser::set_input(&driver, "[data-set-row] [data-set-weight]", WEIGHT).await;
+    browser::set_input(&driver, "[data-set-row] [data-set-reps]", REPS).await;
 
     let textarea = driver
         .find(By::Css("textarea[data-memo]"))
@@ -82,42 +82,4 @@ async fn safari_restores_the_record_screen_memo_and_sets_after_reload() {
     browser::wait_for_value(&driver, "[data-set-row] [data-set-reps]", REPS).await;
 
     driver.quit().await.expect("the browser must close");
-}
-
-async fn add_exercise(driver: &WebDriver, exercise_id: &str) {
-    browser::wait_for_present(driver, "[data-add-exercise]").await;
-    click(driver, "[data-add-exercise]").await;
-    browser::wait_for_route(driver, "/record/:training_id/exercises").await;
-    browser::wait_for_present(driver, "[data-exercise-choose]").await;
-    let selector = format!("[data-exercise-choose][data-exercise-id=\"{exercise_id}\"]");
-    click(driver, &selector).await;
-    browser::wait_for_route(driver, "/record/:training_id").await;
-    let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
-    browser::wait_for_present(driver, &row).await;
-}
-
-async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
-    let input = driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the input {selector} must exist: {error}"));
-    input
-        .clear()
-        .await
-        .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
-    input
-        .send_keys(value)
-        .await
-        .unwrap_or_else(|error| panic!("the input {selector} must be typed: {error}"));
-}
-
-async fn click(driver: &WebDriver, selector: &str) {
-    let element = driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
-    element
-        .click()
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must be clickable: {error}"));
 }

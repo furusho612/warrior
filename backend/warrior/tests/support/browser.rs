@@ -213,6 +213,55 @@ pub async fn click_text(driver: &WebDriver, label: &str) {
     button.click().await.expect("the button must be clickable");
 }
 
+/// セレクタの要素を押す。
+pub async fn click(driver: &WebDriver, selector: &str) {
+    let element = driver
+        .find(By::Css(selector))
+        .await
+        .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
+    element
+        .click()
+        .await
+        .unwrap_or_else(|error| panic!("the element {selector} must be clickable: {error}"));
+}
+
+/// 数値の入力要素を空にして、値を入れる。
+pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
+    let input = driver
+        .find(By::Css(selector))
+        .await
+        .unwrap_or_else(|error| panic!("the input {selector} must exist: {error}"));
+    input
+        .clear()
+        .await
+        .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
+    input
+        .send_keys(value)
+        .await
+        .unwrap_or_else(|error| panic!("the input {selector} must be typed: {error}"));
+}
+
+/// 種目をライブラリから記録へ追加する。
+pub async fn add_exercise(driver: &WebDriver, exercise_id: &str) {
+    wait_for_present(driver, "[data-add-exercise]").await;
+    click(driver, "[data-add-exercise]").await;
+    wait_for_route(driver, "/record/:training_id/exercises").await;
+    wait_for_present(driver, "[data-exercise-choose]").await;
+    let selector = format!("[data-exercise-choose][data-exercise-id=\"{exercise_id}\"]");
+    click(driver, &selector).await;
+    wait_for_route(driver, "/record/:training_id").await;
+    let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
+    wait_for_present(driver, &row).await;
+}
+
+/// レールの種目を選ぶ。
+pub async fn select_exercise(driver: &WebDriver, exercise_id: &str) {
+    let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
+    wait_for_present(driver, &row).await;
+    click(driver, &row).await;
+    wait_for_attribute(driver, &row, "data-selected", "true").await;
+}
+
 /// ページを開き、本文が現れるまで待って返す。
 pub async fn get_text(driver: &WebDriver, url: &str) -> String {
     driver.goto(url).await.expect("the page must open");

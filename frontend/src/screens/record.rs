@@ -197,7 +197,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         let mut profile_prompt = profile_prompt;
         let mut profile_checked = profile_checked;
         spawn(async move {
-            if let Ok(profile) = crate::profile::fetch().await {
+            if let Ok(profile) = crate::profile::fetch_and_cache().await {
                 profile_prompt.set(profile.is_none_or(|profile| profile.body_profile().is_none()));
                 profile_checked.set(true);
             }
@@ -567,6 +567,29 @@ async fn restore_discarded_exercise(
             .restore_training_exercise_positions(&record)
             .await
             .is_ok(),
+        _ => false,
+    }
+}
+
+async fn restore_discarded_set(
+    training_id: &str,
+    set_id: Option<&str>,
+    kind: OperationKind,
+) -> bool {
+    let Ok(record) = training_api::record(training_id).await else {
+        return false;
+    };
+    let Ok(storage) = storage::current().await else {
+        return false;
+    };
+    match kind {
+        OperationKind::SetUpdate | OperationKind::SetComplete | OperationKind::SetDelete => {
+            let Some(set_id) = set_id else {
+                return false;
+            };
+            storage.restore_set(&record, set_id).await.is_ok()
+        }
+        OperationKind::SetReorder => storage.restore_set_positions(&record).await.is_ok(),
         _ => false,
     }
 }

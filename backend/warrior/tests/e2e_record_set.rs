@@ -1,12 +1,13 @@
 //! セットの追加、入力、種別の変更、完了、削除の E2E。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-NFR-007`、`REQ-PRF-005`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-LIB-004`、`REQ-NFR-003`、
+//! `REQ-NFR-007`、`REQ-PRF-005`。
 //! 通信を遅くした状態でも入力と完了が画面へ反映されること、通信の復帰後に D1 へ
 //! 保存されること、自重種目のセットが体重と加重を別の列に保存することを確かめる。
 
 mod support;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
@@ -15,6 +16,11 @@ use thirtyfour::prelude::*;
 
 const BENCH_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
 const PUSHUP_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000012";
+const PLANK_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-00000000005d";
+const PREVIOUS_TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5701";
+const PREVIOUS_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5702";
+const PREVIOUS_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5703";
+const PREVIOUS_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5704";
 const SERVER_PORT: u16 = 8825;
 const PROVIDER_PORT: u16 = 8826;
 const FAST_REFLECTION: Duration = Duration::from_secs(2);
@@ -73,12 +79,25 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
     login(&driver, &server, &provider).await;
     let user_id = current_user_id(&driver).await;
     seed_profile(&server, &user_id);
+    seed_previous_bench(&server, &user_id);
     let _training_id = start_training(&driver).await;
-    add_exercise(&driver, BENCH_EXERCISE_ID).await;
+    browser::wait_for_attribute(
+        &driver,
+        "[data-profile-checked]",
+        "data-profile-checked",
+        "true",
+    )
+    .await;
+    browser::add_exercise(&driver, BENCH_EXERCISE_ID).await;
 
     let first_set = add_set(&driver).await;
+    check_table_height(&driver).await;
     check_fast_input_and_completion(&driver, &first_set).await;
+    wait_for_diff(&driver, "data-exercise-weight-diff", "0").await;
+    wait_for_diff(&driver, "data-training-total-diff", "0").await;
     change_kind(&driver, &first_set, "warmup").await;
+    wait_for_diff(&driver, "data-exercise-weight-diff", "-500").await;
+    wait_for_diff(&driver, "data-training-total-diff", "-500").await;
     wait_for_set(
         &driver,
         &server,
@@ -93,6 +112,8 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
     )
     .await;
     change_kind(&driver, &first_set, "drop").await;
+    wait_for_diff(&driver, "data-exercise-weight-diff", "0").await;
+    wait_for_diff(&driver, "data-training-total-diff", "0").await;
     wait_for_set(
         &driver,
         &server,
@@ -107,14 +128,26 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
     )
     .await;
 
-    add_exercise(&driver, PUSHUP_EXERCISE_ID).await;
-    select_exercise(&driver, PUSHUP_EXERCISE_ID).await;
+    browser::add_exercise(&driver, PUSHUP_EXERCISE_ID).await;
+    browser::select_exercise(&driver, PUSHUP_EXERCISE_ID).await;
+    browser::offline(&driver, true).await;
     let bodyweight_set = add_set(&driver).await;
-    set_input(&driver, &weight_selector(&bodyweight_set), "10").await;
-    set_input(&driver, &reps_selector(&bodyweight_set), "5").await;
+    assert_eq!(
+        browser::attribute(&driver, &weight_selector(&bodyweight_set), "placeholder").await,
+        "加重"
+    );
+    assert!(driver
+        .find(By::Css(format!(
+            "[data-set-id=\"{bodyweight_set}\"] [data-set-duration]"
+        )))
+        .await
+        .is_err());
+    browser::set_input(&driver, &weight_selector(&bodyweight_set), "10").await;
+    browser::set_input(&driver, &reps_selector(&bodyweight_set), "5").await;
     wait_for_complete_ready(&driver, &bodyweight_set).await;
-    click(&driver, &complete_selector(&bodyweight_set)).await;
+    browser::click(&driver, &complete_selector(&bodyweight_set)).await;
     wait_for_completed(&driver, &bodyweight_set, "true").await;
+    browser::offline(&driver, false).await;
     let bodyweight_row = wait_for_set(
         &driver,
         &server,
@@ -132,10 +165,32 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
     assert_eq!(bodyweight_row["weight_kg"].as_f64(), Some(10.0));
     delete_set(&driver, &server, &bodyweight_set).await;
 
-    select_exercise(&driver, BENCH_EXERCISE_ID).await;
+    browser::add_exercise(&driver, PLANK_EXERCISE_ID).await;
+    browser::select_exercise(&driver, PLANK_EXERCISE_ID).await;
+    let time_set = add_set(&driver).await;
+    browser::wait_for_present(
+        &driver,
+        &format!("[data-set-id=\"{time_set}\"] [data-set-duration]"),
+    )
+    .await;
+    assert!(driver
+        .find(By::Css(format!(
+            "[data-set-id=\"{time_set}\"] [data-set-weight]"
+        )))
+        .await
+        .is_err());
+    assert!(driver
+        .find(By::Css(format!(
+            "[data-set-id=\"{time_set}\"] [data-set-reps]"
+        )))
+        .await
+        .is_err());
+    delete_set(&driver, &server, &time_set).await;
+
+    browser::select_exercise(&driver, BENCH_EXERCISE_ID).await;
     let second_set = add_set(&driver).await;
-    set_input(&driver, &weight_selector(&second_set), "80").await;
-    set_input(&driver, &reps_selector(&second_set), "5").await;
+    browser::set_input(&driver, &weight_selector(&second_set), "80").await;
+    browser::set_input(&driver, &reps_selector(&second_set), "5").await;
     wait_for_complete_ready(&driver, &second_set).await;
     check_reorder(&driver, &server, &first_set, &second_set).await;
     delete_set(&driver, &server, &second_set).await;
@@ -176,28 +231,9 @@ async fn start_training(driver: &WebDriver) -> String {
     training_id
 }
 
-async fn add_exercise(driver: &WebDriver, exercise_id: &str) {
-    browser::wait_for_attribute(driver, "[data-exercises]", "data-exercises", "true").await;
-    click(driver, "[data-add-exercise]").await;
-    browser::wait_for_route(driver, "/record/:training_id/exercises").await;
-    browser::wait_for_present(driver, "[data-exercise-choose]").await;
-    let selector = format!("[data-exercise-choose][data-exercise-id=\"{exercise_id}\"]");
-    click(driver, &selector).await;
-    browser::wait_for_route(driver, "/record/:training_id").await;
-    let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
-    browser::wait_for_present(driver, &row).await;
-}
-
-async fn select_exercise(driver: &WebDriver, exercise_id: &str) {
-    let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
-    browser::wait_for_present(driver, &row).await;
-    click(driver, &row).await;
-    browser::wait_for_attribute(driver, &row, "data-selected", "true").await;
-}
-
 async fn add_set(driver: &WebDriver) -> String {
     browser::wait_for_present(driver, "[data-add-set]").await;
-    click(driver, "[data-add-set]").await;
+    browser::click(driver, "[data-add-set]").await;
     browser::wait_for_present(driver, "[data-set-row]").await;
     let rows = set_ids(driver).await;
     rows.last().cloned().expect("the new set id")
@@ -205,12 +241,12 @@ async fn add_set(driver: &WebDriver) -> String {
 
 async fn check_fast_input_and_completion(driver: &WebDriver, set_id: &str) {
     browser::set_network(driver, false, 5000).await;
-    set_input(driver, &weight_selector(set_id), "100").await;
-    set_input(driver, &reps_selector(set_id), "5").await;
+    browser::set_input(driver, &weight_selector(set_id), "100").await;
+    browser::set_input(driver, &reps_selector(set_id), "5").await;
     browser::wait_for_value_within(driver, &weight_selector(set_id), "100", FAST_REFLECTION).await;
     browser::wait_for_value_within(driver, &reps_selector(set_id), "5", FAST_REFLECTION).await;
     wait_for_complete_ready(driver, set_id).await;
-    click(driver, &complete_selector(set_id)).await;
+    browser::click(driver, &complete_selector(set_id)).await;
     browser::wait_for_attribute_within(
         driver,
         &format!("[data-set-id=\"{set_id}\"]"),
@@ -257,7 +293,7 @@ async fn check_reorder(driver: &WebDriver, server: &DevServer, first_set: &str, 
     let rows = set_ids(driver).await;
     assert_eq!(rows, vec![first_set.to_owned(), second_set.to_owned()]);
     let second_row = format!("[data-set-id=\"{second_set}\"]");
-    click(driver, &format!("{second_row} [data-set-move-up]")).await;
+    browser::click(driver, &format!("{second_row} [data-set-move-up]")).await;
     let rows = set_ids(driver).await;
     assert_eq!(rows, vec![second_set.to_owned(), first_set.to_owned()]);
     wait_for_position(driver, server, second_set, 1).await;
@@ -266,7 +302,7 @@ async fn check_reorder(driver: &WebDriver, server: &DevServer, first_set: &str, 
 
 async fn delete_set(driver: &WebDriver, server: &DevServer, set_id: &str) {
     let row = format!("[data-set-id=\"{set_id}\"]");
-    click(driver, &format!("{row} [data-delete-set]")).await;
+    browser::click(driver, &format!("{row} [data-delete-set]")).await;
     browser::wait_for_absent(driver, &row).await;
     wait_for_deleted(driver, server, set_id).await;
 }
@@ -409,32 +445,6 @@ async fn wait_for_completed(driver: &WebDriver, set_id: &str, expected: &str) {
     .await;
 }
 
-async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
-    let input = driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the input {selector} must exist: {error}"));
-    input
-        .clear()
-        .await
-        .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
-    input
-        .send_keys(value)
-        .await
-        .unwrap_or_else(|error| panic!("the input {selector} must be typed: {error}"));
-}
-
-async fn click(driver: &WebDriver, selector: &str) {
-    let element = driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
-    element
-        .click()
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must be clickable: {error}"));
-}
-
 async fn set_ids(driver: &WebDriver) -> Vec<String> {
     let value = browser::eval_json(
         driver,
@@ -489,6 +499,80 @@ fn seed_profile(server: &DevServer, user_id: &str) {
              VALUES ('{user_id}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
         ))
         .expect("the profile must be seeded");
+}
+
+fn seed_previous_bench(server: &DevServer, user_id: &str) {
+    let snapshot = json!({
+        "exercise_id": BENCH_EXERCISE_ID,
+        "name": "ベンチプレス",
+        "body_part": "chest",
+        "muscles": [{"muscle": "pectoralis_major_middle", "role": "primary"}],
+        "record_mode": "weight_and_reps",
+        "laterality": "bilateral",
+        "grip_mode": "none",
+        "grip_options": []
+    });
+    for sql in [
+        format!(
+            "INSERT INTO training_sessions \
+             (id, user_id, date, started_at, memo, source_kind, finished_at, total_weight_kg, \
+              created_at, updated_at) \
+             VALUES ('{PREVIOUS_TRAINING_ID}', '{user_id}', '2026-01-01', \
+              '2026-01-01T03:00:00Z', '', 'empty', '2026-01-01T04:00:00Z', 500.0, \
+              '2026-01-01T03:00:00Z', '2026-01-01T04:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO training_exercises \
+             (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
+             VALUES ('{PREVIOUS_ROW_ID}', '{user_id}', '{PREVIOUS_TRAINING_ID}', \
+              '{BENCH_EXERCISE_ID}', '{}', 1, '2026-01-01T03:00:00Z', \
+              '2026-01-01T03:00:00Z')",
+            snapshot.to_string().replace('\'', "''")
+        ),
+        format!(
+            "INSERT INTO sets \
+             (id, user_id, training_exercise_id, position, kind, completed, created_at, updated_at) \
+             VALUES ('{PREVIOUS_SET_ID}', '{user_id}', '{PREVIOUS_ROW_ID}', 1, 'normal', 1, \
+              '2026-01-01T03:00:00Z', '2026-01-01T03:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO set_segments \
+             (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, \
+              created_at, updated_at) \
+             VALUES ('{PREVIOUS_SEGMENT_ID}', '{user_id}', '{PREVIOUS_SET_ID}', 1, 100.0, 5, 0, 0, \
+              '2026-01-01T03:00:00Z', '2026-01-01T03:00:00Z')"
+        ),
+    ] {
+        server
+            .execute_d1_json(&sql)
+            .expect("the previous training must be seeded");
+    }
+}
+
+async fn wait_for_diff(driver: &WebDriver, attribute: &str, expected: &str) {
+    browser::wait_for_attribute(driver, &format!("[{attribute}]"), attribute, expected).await;
+}
+
+async fn check_table_height(driver: &WebDriver) {
+    let value = browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         const table = document.querySelector('[data-set-table]'); \
+         const rows = Array.from(document.querySelectorAll('[data-set-row]')) \
+           .map((row) => row.getBoundingClientRect().height); \
+         done(JSON.stringify({ \
+           table: table ? table.getBoundingClientRect().height : 0, \
+           rows \
+         }));",
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(value["table"].as_f64(), Some(222.0));
+    let rows = value["rows"].as_array().expect("the row heights");
+    assert!(!rows.is_empty(), "the selected table must have a row");
+    for row in rows {
+        assert_eq!(row.as_f64(), Some(44.0));
+    }
 }
 
 fn optional_row(server: &DevServer, sql: &str) -> Option<Value> {

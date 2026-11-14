@@ -164,7 +164,10 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
     status_response("applied")
 }
 
-/// batch の最初の文が変更した行数を返す。最初の文はトレーニングへの適用である。
+/// batch の最初の文が変更した行数を返す。
+///
+/// 作成と更新はトレーニングへの適用、種目とセットは編集権の確認とトレーニングの
+/// 更新時刻の更新を最初の文に置く。
 fn batch_changes(results: &[D1Result]) -> Result<usize> {
     let result = results
         .first()

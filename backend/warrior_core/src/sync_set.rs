@@ -3,7 +3,7 @@
 //! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-LIB-004`、`REQ-PRF-005`。
 //! `warrior_core::sync` の操作の検証から呼ぶ。本文を操作のトレーニングの ID、セットの
 //! ID、段、セット種別、RPE、記録した時点の体重について確かめ、`SetRecord` への変換を
-//! 提供する。段の入力は 0012 の計算規則と同じ形にそろえる。
+//! 提供する。段の入力は warrior_core::set_calc の計算規則と同じ形にそろえる。
 
 use crate::exercise::GripSelection;
 use crate::ids::is_valid_uuid_v4;
@@ -193,7 +193,7 @@ fn validate_side(
 }
 
 impl SetSegmentPayload {
-    /// 0012 の段の記録に変換する。自重種目は記録した時点の体重に加重を足す。
+    /// crate::set_calc の段の記録に変換する。自重種目は記録した時点の体重に加重を足す。
     pub fn to_segment(&self, mode: RecordMode, body_weight_kg: Option<f64>) -> SetSegment {
         SetSegment {
             weight_kg: weight_at_record(self.weight_kg, mode, body_weight_kg),
@@ -226,7 +226,7 @@ impl SetSegmentPayload {
 }
 
 impl SetCreatePayload {
-    /// 0012 のセットの記録に変換する。
+    /// crate::set_calc のセットの記録に変換する。
     pub fn to_record(
         &self,
         exercise_id: &str,
@@ -245,7 +245,7 @@ impl SetCreatePayload {
 }
 
 impl SetUpdatePayload {
-    /// 0012 のセットの記録に変換する。
+    /// crate::set_calc のセットの記録に変換する。
     pub fn to_record(
         &self,
         exercise_id: &str,
@@ -374,6 +374,7 @@ mod tests {
             set_id: SET_ID.to_owned(),
             position: 1,
             kind: SetKind::Warmup,
+            completed: false,
             rpe: Some(8.0),
             grip: None,
             body_weight_kg: Some(70.0),
@@ -523,7 +524,11 @@ mod tests {
         let operation = create_operation();
         let mut payload = create_from(&operation);
         payload.body_weight_kg = None;
-        assert!(validate_create(&operation, payload).is_ok());
+        let validated = validate_create(&operation, payload).expect("a valid create");
+        let ValidatedPayload::SetCreate(payload) = validated else {
+            panic!("the payload must be a set create");
+        };
+        assert_eq!(payload.body_weight_kg, None);
     }
 
     #[test]
@@ -621,7 +626,11 @@ mod tests {
         );
         let payload: SetReorderPayload =
             serde_json::from_value(reorder.payload.clone()).expect("a reorder payload");
-        assert!(validate_reorder(&reorder, payload).is_ok());
+        let validated = validate_reorder(&reorder, payload).expect("a valid reorder");
+        let ValidatedPayload::SetReorder(payload) = validated else {
+            panic!("the payload must be a set reorder");
+        };
+        assert_eq!(payload.ordered_ids, vec![SET_ID, OTHER_ID]);
 
         let duplicated = operation(
             OperationKind::SetReorder,

@@ -26,6 +26,8 @@ pub struct SetValues {
     pub reps: u32,
     /// 時間で記録する場合の秒数。
     pub duration_seconds: Option<u32>,
+    /// 完了しているか。値が無いときは完了にしない。
+    pub completed: bool,
     /// 記録した時点の体重 (kg)。身体情報が無いときは None。
     pub body_weight_kg: Option<f64>,
     /// RPE。
@@ -34,12 +36,24 @@ pub struct SetValues {
     pub grip: Option<GripSelection>,
 }
 
+impl SetValues {
+    /// セットに記録する値があるか。
+    pub fn has_values(&self) -> bool {
+        self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
+    }
+
+    /// 値を保ったまま完了できるか。
+    pub fn completed_with_values(&self) -> bool {
+        self.completed && self.has_values()
+    }
+}
+
 /// 端末に保存する 1 つのセットと段。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetRows {
     /// セットの行。
     pub set: SetRecordRow,
-    /// セットの段。0025 では 1 つだけである。
+    /// セットの段。この版では 1 つだけである。
     pub segment: SetSegmentRecord,
 }
 
@@ -97,6 +111,7 @@ pub fn update(
     let now = now_iso();
     let updated_set = SetRecordRow {
         kind: values.kind.as_str().to_owned(),
+        completed: if values.completed_with_values() { 1 } else { 0 },
         rpe: values.rpe,
         grip: grip_json(values.grip),
         body_weight_kg: values.body_weight_kg,
@@ -123,6 +138,7 @@ pub fn update(
         set_id: set.id.clone(),
         position: updated_set.position,
         kind: values.kind,
+        completed: values.completed_with_values(),
         rpe: values.rpe,
         grip: values.grip,
         body_weight_kg: values.body_weight_kg,

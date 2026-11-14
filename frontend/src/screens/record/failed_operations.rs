@@ -7,7 +7,8 @@ use dioxus::prelude::*;
 use warrior_core::sync::{OperationKind, OutboxEntry, SessionRecord};
 
 use super::{
-    operation_label, refresh_state, restore_discarded_exercise, RecordSignals, StateSignals,
+    operation_label, refresh_state, restore_discarded_exercise, restore_discarded_set,
+    RecordSignals, StateSignals,
 };
 use crate::routes::navigate;
 use crate::storage::DiscardOutcome;
@@ -63,12 +64,19 @@ pub(super) fn FailedOperations(
                                     .get("training_exercise_id")
                                     .and_then(|value| value.as_str())
                                     .map(str::to_owned);
+                                let set_id = entry
+                                    .operation
+                                    .payload
+                                    .get("set_id")
+                                    .and_then(|value| value.as_str())
+                                    .map(str::to_owned);
                                 move |_| {
                                     spawn(discard(
                                         operation_id.clone(),
                                         training_id.clone(),
                                         operation_kind,
                                         training_exercise_id.clone(),
+                                        set_id.clone(),
                                         signals,
                                         state_signals,
                                     ));
@@ -89,6 +97,7 @@ async fn discard(
     training_id: String,
     operation_kind: OperationKind,
     training_exercise_id: Option<String>,
+    set_id: Option<String>,
     mut signals: RecordSignals,
     state_signals: StateSignals,
 ) {
@@ -100,6 +109,9 @@ async fn discard(
         Some(DiscardOutcome::ExerciseDeleted) => {
             discard_exercise_deleted(&training_id, signals, state_signals).await;
         }
+        Some(DiscardOutcome::SetDeleted) => {
+            discard_set_deleted(&training_id, signals, state_signals).await;
+        }
         Some(DiscardOutcome::OperationsRemoved)
             if matches!(
                 operation_kind,
@@ -109,6 +121,24 @@ async fn discard(
             discard_exercise_operation(
                 &training_id,
                 training_exercise_id.as_deref(),
+                operation_kind,
+                &mut signals,
+                state_signals,
+            )
+            .await;
+        }
+        Some(DiscardOutcome::OperationsRemoved)
+            if matches!(
+                operation_kind,
+                OperationKind::SetUpdate
+                    | OperationKind::SetDelete
+                    | OperationKind::SetReorder
+                    | OperationKind::SetComplete
+            ) =>
+        {
+            discard_set_operation(
+                &training_id,
+                set_id.as_deref(),
                 operation_kind,
                 &mut signals,
                 state_signals,
@@ -144,6 +174,32 @@ async fn discard_exercise_deleted(
     signals
         .exercise_revision
         .set((signals.exercise_revision)() + 1);
+    refresh_state(training_id, state_signals).await;
+}
+
+async fn discard_set_deleted(
+    training_id: &str,
+    mut signals: RecordSignals,
+    state_signals: StateSignals,
+) {
+    signals.tree_revision.set((signals.tree_revision)() + 1);
+    refresh_state(training_id, state_signals).await;
+}
+
+async fn discard_set_operation(
+    training_id: &str,
+    set_id: Option<&str>,
+    operation_kind: OperationKind,
+    signals: &mut RecordSignals,
+    state_signals: StateSignals,
+) {
+    if restore_discarded_set(training_id, set_id, operation_kind).await {
+        signals.tree_revision.set((signals.tree_revision)() + 1);
+    } else {
+        signals
+            .save_error
+            .set(Some(text(Key::RecordSetRestoreFailed).to_owned()));
+    }
     refresh_state(training_id, state_signals).await;
 }
 

@@ -126,6 +126,9 @@ pub(super) fn update_set_input(
         Field::Reps => set.reps = value,
         Field::Duration => set.duration = value,
     }
+    if set.completed() && !set.values().has_values() {
+        set.record.completed = 0;
+    }
     set.bump();
     views.set(list);
 }
@@ -169,6 +172,7 @@ pub(super) async fn add_set(
         weight_kg: 0.0,
         reps: 0,
         duration_seconds: None,
+        completed: false,
         body_weight_kg: view.body_weight_kg,
         rpe: None,
         grip: None,
@@ -381,12 +385,39 @@ pub(super) async fn complete_set(
             return;
         }
     };
-    update_completed(views, &set_id, completed);
-    let result = match storage::current().await {
-        Ok(storage) => storage.save_set_complete(&updated, &operation).await,
-        Err(error) => Err(error),
+    let storage = match storage::current().await {
+        Ok(storage) => storage,
+        Err(_) => {
+            set_error(error, Key::RecordSetSaveFailed);
+            return;
+        }
     };
-    if result.is_err() {
+    // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
+    if completed {
+        let values = set.values();
+        let (rows, update_operation) =
+            match training_set::update(&training_id, &set.record, &set.segment, &values) {
+                Ok(rows) => rows,
+                Err(_) => {
+                    set_error(error, Key::RecordSetSaveFailed);
+                    return;
+                }
+            };
+        if storage
+            .save_set_update(&rows.set, &rows.segment, &update_operation)
+            .await
+            .is_err()
+        {
+            set_error(error, Key::RecordSetSaveFailed);
+            return;
+        }
+    }
+    update_completed(views, &set_id, completed);
+    if storage
+        .save_set_complete(&updated, &operation)
+        .await
+        .is_err()
+    {
         update_completed(views, &set_id, !completed);
         set_error(error, Key::RecordSetSaveFailed);
         return;

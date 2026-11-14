@@ -227,6 +227,8 @@ pub struct SetUpdatePayload {
     pub position: i64,
     /// セット種別。
     pub kind: crate::set_calc::SetKind,
+    /// 完了したか。値の無いセットは完了にできない。
+    pub completed: bool,
     /// RPE。
     pub rpe: Option<f64>,
     /// グリップ。選ばない種目は None。

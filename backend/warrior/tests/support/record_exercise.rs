@@ -1,4 +1,9 @@
 use super::*;
+use support::record_common;
+
+pub(crate) use support::record_common::{
+    applied_count, cookie, count, count_with, first_row, json_literal, sql_number, sql_text, status,
+};
 
 pub(crate) fn seed_previous_sessions(server: &DevServer) {
     seed_current_session(
@@ -464,27 +469,11 @@ pub(crate) fn post_with_training(
     if operation["payload"]["training_id"].is_string() {
         operation["payload"]["training_id"] = json!(training_id);
     }
-    server.request_with_body(
-        "POST",
-        "/api/sync/operations",
-        &[
-            ("Origin", ORIGIN),
-            ("Content-Type", "application/json"),
-            ("Cookie", cookie),
-        ],
-        &serde_json::to_string(&operation).expect("the operation is JSON"),
-    )
+    record_common::post_operation(server, cookie, &operation, ORIGIN)
 }
 
 pub(crate) fn response_json(response: &support::HttpResponse) -> Value {
     serde_json::from_str(&response.body).expect("the response is JSON")
-}
-
-pub(crate) fn status(response: &support::HttpResponse) -> String {
-    response_json(response)["status"]
-        .as_str()
-        .expect("a status")
-        .to_owned()
 }
 
 pub(crate) fn seed_base(
@@ -493,66 +482,57 @@ pub(crate) fn seed_base(
     terminal_token: &str,
     other_terminal_token: &str,
 ) {
-    let session_hash = hash_session_token(token);
-    let terminal_hash = hash_terminal_token(terminal_token);
-    let other_terminal_hash = hash_terminal_token(other_terminal_token);
-    for sql in [
-        format!(
-            "INSERT INTO users (id, google_sub, email, display_name, created_at, updated_at) \
-             VALUES ('{USER_ID}', 'sub-record-exercise', 'record-exercise@example.test', '記録の利用者', \
-              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO users (id, google_sub, email, display_name, created_at, updated_at) \
-             VALUES ('{OTHER_USER_ID}', 'sub-record-exercise-other', 'other@example.test', '別の利用者', \
-              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, expires_at) \
-             VALUES ('3f2504e0-4f89-41d3-9a0c-0305e82c4990', '{USER_ID}', '{session_hash}', \
-              '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO terminal_tokens (id, user_id, token_hash, created_at, last_seen_at) \
-             VALUES ('{TERMINAL_ID}', '{USER_ID}', '{terminal_hash}', '2026-01-01T00:00:00Z', \
-              '2026-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO terminal_tokens (id, user_id, token_hash, created_at, last_seen_at) \
-             VALUES ('{OTHER_TERMINAL_ID}', '{USER_ID}', '{other_terminal_hash}', \
-              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO training_sessions \
-             (id, user_id, date, started_at, memo, source_kind, owner_terminal_id, created_at, updated_at) \
-             VALUES ('{TRAINING_ID}', '{USER_ID}', '2026-11-12', '2026-11-12T03:00:00Z', '', 'empty', \
-              '{TERMINAL_ID}', '2026-11-12T03:00:00Z', '2026-11-12T03:00:00Z')"
-        ),
-        format!(
-            "INSERT INTO training_sessions \
-             (id, user_id, date, started_at, memo, source_kind, owner_terminal_id, created_at, updated_at) \
-             VALUES ('{FINISHED_TRAINING_ID}', '{USER_ID}', '2026-11-11', '2026-11-11T03:00:00Z', '', \
-              'empty', NULL, '2026-11-11T03:00:00Z', '2026-11-11T03:00:00Z')"
-        ),
-        format!(
-            "UPDATE training_sessions SET finished_at = '2020-01-01T04:00:00Z', \
-             total_weight_kg = 0.0 WHERE id = '{FINISHED_TRAINING_ID}'"
-        ),
-        format!(
-            "INSERT INTO training_sessions \
-             (id, user_id, date, started_at, memo, source_kind, created_at, updated_at) \
-             VALUES ('{OTHER_TRAINING_ID}', '{OTHER_USER_ID}', '2026-11-12', '2026-11-12T03:00:00Z', '', \
-              'empty', '2026-11-12T03:00:00Z', '2026-11-12T03:00:00Z')"
-        ),
-    ] {
-        server
-            .execute_d1_json(&sql)
-            .expect("the base rows must be seeded");
-    }
-}
-
-pub(crate) fn cookie(token: &str, terminal_token: &str) -> String {
-    format!("warrior_session={token}; warrior_terminal={terminal_token}")
+    record_common::seed_user(
+        server,
+        USER_ID,
+        "sub-record-exercise",
+        "record-exercise@example.test",
+        "記録の利用者",
+    );
+    record_common::seed_user(
+        server,
+        OTHER_USER_ID,
+        "sub-record-exercise-other",
+        "other@example.test",
+        "別の利用者",
+    );
+    record_common::seed_auth_session(
+        server,
+        "3f2504e0-4f89-41d3-9a0c-0305e82c4990",
+        USER_ID,
+        token,
+    );
+    record_common::seed_terminal(server, TERMINAL_ID, USER_ID, terminal_token);
+    record_common::seed_terminal(server, OTHER_TERMINAL_ID, USER_ID, other_terminal_token);
+    record_common::seed_session(
+        server,
+        TRAINING_ID,
+        USER_ID,
+        "2026-11-12",
+        Some(TERMINAL_ID),
+        None,
+    );
+    record_common::seed_session(
+        server,
+        FINISHED_TRAINING_ID,
+        USER_ID,
+        "2026-11-11",
+        None,
+        Some("2020-01-01T04:00:00Z"),
+    );
+    server
+        .execute_d1_json(&format!(
+            "UPDATE training_sessions SET total_weight_kg = 0.0 WHERE id = '{FINISHED_TRAINING_ID}'"
+        ))
+        .expect("the finished training must be updated");
+    record_common::seed_session(
+        server,
+        OTHER_TRAINING_ID,
+        OTHER_USER_ID,
+        "2026-11-12",
+        None,
+        None,
+    );
 }
 
 pub(crate) fn position(server: &DevServer, training_exercise_id: &str) -> i64 {
@@ -562,37 +542,6 @@ pub(crate) fn position(server: &DevServer, training_exercise_id: &str) -> i64 {
     )["position"]
         .as_i64()
         .expect("a position")
-}
-
-pub(crate) fn applied_count(server: &DevServer, operation_id: &str) -> i64 {
-    count_with(
-        server,
-        &format!(
-            "SELECT COUNT(*) AS count FROM applied_operations WHERE operation_id = '{operation_id}'"
-        ),
-    )
-}
-
-pub(crate) fn count(server: &DevServer, table: &str, id: &str) -> i64 {
-    count_with(
-        server,
-        &format!("SELECT COUNT(*) AS count FROM {table} WHERE id = '{id}'"),
-    )
-}
-
-pub(crate) fn count_with(server: &DevServer, sql: &str) -> i64 {
-    first_row(server, sql)["count"].as_i64().expect("a count")
-}
-
-pub(crate) fn first_row(server: &DevServer, sql: &str) -> Value {
-    server
-        .execute_d1_json(sql)
-        .expect("the query must run")
-        .get(0)
-        .and_then(|entry| entry.get("results"))
-        .and_then(|rows| rows.get(0))
-        .cloned()
-        .expect("a row")
 }
 
 pub(crate) fn seed_other_training_exercise(server: &DevServer) {
@@ -685,16 +634,4 @@ fn plank_snapshot() -> Value {
         "grip_mode": "none",
         "grip_options": []
     })
-}
-
-fn sql_text(value: Option<&str>) -> String {
-    value.map_or_else(|| "NULL".to_owned(), |text| format!("'{}'", text))
-}
-
-fn sql_number<T: ToString>(value: Option<T>) -> String {
-    value.map_or_else(|| "NULL".to_owned(), |value| value.to_string())
-}
-
-fn json_literal(value: &Value) -> String {
-    value.to_string().replace('\'', "''")
 }

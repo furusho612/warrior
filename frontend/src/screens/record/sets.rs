@@ -134,6 +134,7 @@ impl SetView {
             weight_kg: parse_number(&self.weight).unwrap_or(0.0),
             reps: parse_count(&self.reps).unwrap_or(0),
             duration_seconds: parse_duration(&self.duration),
+            completed: self.completed(),
             body_weight_kg: self.record.body_weight_kg,
             rpe: self.record.rpe,
             grip: grip_selection(&self.record),
@@ -153,7 +154,7 @@ impl SetView {
         }
     }
 
-    /// 0012 のセットの記録に変換する。入力が足りないときは None。
+    /// crate::set_calc のセットの記録に変換する。入力が足りないときは None。
     pub(super) fn to_record(&self, exercise_id: &str, mode: RecordMode) -> Option<SetRecord> {
         let kind = self.kind();
         let key = BestKey {
@@ -208,7 +209,8 @@ impl SetView {
 
 /// 前回のセットから、コピーする入力の値を作る。
 ///
-/// 自重種目の前回の重量は記録した時点の体重を含むため、いまの体重を引いて加重にする。
+/// 自重種目の前回の重量は記録した時点の体重を含むため、前回の記録時の体重を引いて
+/// 加重にする。前回の体重が無いときは、前回の重量を復元できないため加重を 0 とする。
 pub(super) fn previous_values(
     previous: &PreviousSet,
     mode: RecordMode,
@@ -216,10 +218,9 @@ pub(super) fn previous_values(
 ) -> Option<SetValues> {
     let segment = previous.segments.first()?;
     let weight = match mode {
-        RecordMode::BodyweightAndReps => {
-            let body = body_weight_kg.unwrap_or(0.0);
-            (segment.weight_kg - body).max(0.0)
-        }
+        RecordMode::BodyweightAndReps => previous
+            .body_weight_kg
+            .map_or(0.0, |body| (segment.weight_kg - body).max(0.0)),
         RecordMode::WeightAndReps => segment.weight_kg,
         RecordMode::Time => 0.0,
     };
@@ -237,6 +238,7 @@ pub(super) fn previous_values(
         body_weight_kg,
         rpe: previous.rpe,
         grip: previous.grip,
+        completed: false,
     })
 }
 
@@ -265,7 +267,7 @@ pub(super) fn SetTable(
                 }
             }
             div {
-                class: "max-h-[444px] overflow-y-auto border border-line bg-surface",
+                class: "h-[222px] overflow-y-auto border border-line bg-surface",
                 "data-set-table": "true",
                 "data-set-rows": "{rows.len()}",
                 "data-set-row-height": "44",
@@ -277,133 +279,15 @@ pub(super) fn SetTable(
                     }
                 }
                 for (index, row) in rows.iter().enumerate() {
-                    {
-                        let set_id = row.record.id.clone();
-                        let kind_id = row.record.id.clone();
-                        let complete_id = row.record.id.clone();
-                        let delete_id = row.record.id.clone();
-                        let up_id = row.record.id.clone();
-                        let down_id = row.record.id.clone();
-                        let weight_id = row.record.id.clone();
-                        let reps_id = row.record.id.clone();
-                        let duration_id = row.record.id.clone();
-                        let first = index == 0;
-                        let last = index + 1 == rows.len();
-                        let completed = row.completed();
-                        let ready = row.can_complete(if is_time { RecordMode::Time } else if is_bodyweight { RecordMode::BodyweightAndReps } else { RecordMode::WeightAndReps });
-                        let kind = row.kind();
-                        rsx! {
-                            div {
-                                class: "flex flex-col gap-1 border-b border-line p-2",
-                                "data-set-row": "true",
-                                "data-set-row-index": "{index}",
-                                "data-set-id": "{set_id}",
-                                "data-set-kind": "{kind.as_str()}",
-                                "data-set-completed": if completed { "true" } else { "false" },
-                                div { class: "flex flex-wrap items-center gap-1",
-                                    span { class: "w-5 shrink-0 text-[11px] text-text-sub", "{index + 1}" }
-                                    select {
-                                        class: "min-h-8 border border-line bg-bg px-1 text-[11px]",
-                                        "data-set-kind": "true",
-                                        "aria-label": "{text(Key::RecordSetKindLabel)}",
-                                        disabled,
-                                        value: "{kind.as_str()}",
-                                        onchange: move |event| {
-                                            if let Some(kind) = SetKind::parse(&event.value()) {
-                                                on_action.call(SetAction::Kind { set_id: kind_id.clone(), kind });
-                                            }
-                                        },
-                                        option { value: "normal", selected: kind == SetKind::Normal, "{text(Key::CalendarSetKindNormal)}" }
-                                        option { value: "warmup", selected: kind == SetKind::Warmup, "{text(Key::CalendarSetKindWarmup)}" }
-                                        option { value: "drop", selected: kind == SetKind::Drop, "{text(Key::CalendarSetKindDrop)}" }
-                                    }
-                                    button {
-                                        class: "min-h-8 border border-line px-1 text-[11px]",
-                                        "data-set-move-up": "true",
-                                        disabled: disabled || first,
-                                        onclick: move |_| on_action.call(SetAction::Move { set_id: up_id.clone(), delta: -1 }),
-                                        "{text(Key::RecordExerciseMoveUp)}"
-                                    }
-                                    button {
-                                        class: "min-h-8 border border-line px-1 text-[11px]",
-                                        "data-set-move-down": "true",
-                                        disabled: disabled || last,
-                                        onclick: move |_| on_action.call(SetAction::Move { set_id: down_id.clone(), delta: 1 }),
-                                        "{text(Key::RecordExerciseMoveDown)}"
-                                    }
-                                    button {
-                                        class: "min-h-8 border border-line px-1 text-[11px] text-primary",
-                                        "data-delete-set": "true",
-                                        disabled,
-                                        onclick: move |_| on_action.call(SetAction::Delete { set_id: delete_id.clone() }),
-                                        "{text(Key::RecordSetDelete)}"
-                                    }
-                                    button {
-                                        class: "min-h-8 border border-primary px-1 text-[11px] font-bold text-primary",
-                                        "data-set-complete": "true",
-                                        "data-set-complete-ready": if ready { "true" } else { "false" },
-                                        disabled: disabled || (!completed && !ready),
-                                        onclick: move |_| on_action.call(SetAction::Complete { set_id: complete_id.clone() }),
-                                        if completed {
-                                            "{text(Key::RecordSetCompleted)}"
-                                        } else {
-                                            "{text(Key::RecordSetComplete)}"
-                                        }
-                                    }
-                                }
-                                if is_time {
-                                    input {
-                                        class: "min-h-9 w-full border border-line bg-bg px-2 text-[13px]",
-                                        r#type: "number",
-                                        inputmode: "numeric",
-                                        min: "1",
-                                        step: "1",
-                                        placeholder: "{text(Key::RecordExerciseDuration)}",
-                                        "data-set-duration": "true",
-                                        value: "{row.duration}",
-                                        disabled,
-                                        oninput: move |event| on_action.call(SetAction::Input {
-                                            set_id: duration_id.clone(),
-                                            field: Field::Duration,
-                                            value: event.value(),
-                                        }),
-                                    }
-                                } else {
-                                    input {
-                                        class: "min-h-9 w-1/2 border border-line bg-bg px-2 text-[13px]",
-                                        r#type: "number",
-                                        inputmode: "decimal",
-                                        min: "0",
-                                        step: "0.5",
-                                        placeholder: if is_bodyweight { text(Key::RecordSetAddedWeight) } else { text(Key::RecordExerciseWeight) },
-                                        "data-set-weight": "true",
-                                        value: "{row.weight}",
-                                        disabled,
-                                        oninput: move |event| on_action.call(SetAction::Input {
-                                            set_id: weight_id.clone(),
-                                            field: Field::Weight,
-                                            value: event.value(),
-                                        }),
-                                    }
-                                    input {
-                                        class: "min-h-9 w-1/2 border border-line bg-bg px-2 text-[13px]",
-                                        r#type: "number",
-                                        inputmode: "numeric",
-                                        min: "1",
-                                        step: "1",
-                                        placeholder: "{text(Key::RecordExerciseReps)}",
-                                        "data-set-reps": "true",
-                                        value: "{row.reps}",
-                                        disabled,
-                                        oninput: move |event| on_action.call(SetAction::Input {
-                                            set_id: reps_id.clone(),
-                                            field: Field::Reps,
-                                            value: event.value(),
-                                        }),
-                                    }
-                                }
-                            }
-                        }
+                    SetRow {
+                        index,
+                        set: row.clone(),
+                        first: index == 0,
+                        last: index + 1 == rows.len(),
+                        is_time,
+                        is_bodyweight,
+                        disabled,
+                        on_action,
                     }
                 }
             }
@@ -414,12 +298,155 @@ pub(super) fn SetTable(
     }
 }
 
+/// セットの表の 1 行。
+#[component]
+fn SetRow(
+    index: usize,
+    set: SetView,
+    first: bool,
+    last: bool,
+    is_time: bool,
+    is_bodyweight: bool,
+    disabled: bool,
+    on_action: EventHandler<SetAction>,
+) -> Element {
+    let set_id = set.record.id.clone();
+    let kind_id = set.record.id.clone();
+    let complete_id = set.record.id.clone();
+    let delete_id = set.record.id.clone();
+    let up_id = set.record.id.clone();
+    let down_id = set.record.id.clone();
+    let weight_id = set.record.id.clone();
+    let reps_id = set.record.id.clone();
+    let duration_id = set.record.id.clone();
+    let completed = set.completed();
+    let mode = if is_time {
+        RecordMode::Time
+    } else if is_bodyweight {
+        RecordMode::BodyweightAndReps
+    } else {
+        RecordMode::WeightAndReps
+    };
+    let ready = set.can_complete(mode);
+    let kind = set.kind();
+    rsx! {
+        div {
+            class: "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1",
+            "data-set-row": "true",
+            "data-set-row-index": "{index}",
+            "data-set-id": "{set_id}",
+            "data-set-kind": "{kind.as_str()}",
+            "data-set-completed": if completed { "true" } else { "false" },
+            span { class: "w-4 shrink-0 text-[11px] text-text-sub", "{index + 1}" }
+            select {
+                class: "min-h-8 w-16 shrink-0 border border-line bg-bg px-1 text-[10px]",
+                "data-set-kind": "true",
+                "aria-label": "{text(Key::RecordSetKindLabel)}",
+                disabled,
+                value: "{kind.as_str()}",
+                onchange: move |event| {
+                    if let Some(kind) = SetKind::parse(&event.value()) {
+                        on_action.call(SetAction::Kind { set_id: kind_id.clone(), kind });
+                    }
+                },
+                option { value: "normal", selected: kind == SetKind::Normal, "{text(Key::RecordSetKindNormal)}" }
+                option { value: "warmup", selected: kind == SetKind::Warmup, "{text(Key::RecordSetKindWarmup)}" }
+                option { value: "drop", selected: kind == SetKind::Drop, "{text(Key::RecordSetKindDrop)}" }
+            }
+            if is_time {
+                input {
+                    class: "min-h-8 w-16 shrink-0 border border-line bg-bg px-1 text-[11px]",
+                    r#type: "number",
+                    inputmode: "numeric",
+                    min: "1",
+                    step: "1",
+                    placeholder: "{text(Key::RecordExerciseDuration)}",
+                    "data-set-duration": "true",
+                    value: "{set.duration}",
+                    disabled,
+                    oninput: move |event| on_action.call(SetAction::Input {
+                        set_id: duration_id.clone(),
+                        field: Field::Duration,
+                        value: event.value(),
+                    }),
+                }
+            } else {
+                input {
+                    class: "min-h-8 w-14 shrink-0 border border-line bg-bg px-1 text-[11px]",
+                    r#type: "number",
+                    inputmode: "decimal",
+                    min: "0",
+                    step: "0.5",
+                    placeholder: if is_bodyweight { text(Key::RecordSetAddedWeight) } else { text(Key::RecordExerciseWeight) },
+                    "data-set-weight": "true",
+                    value: "{set.weight}",
+                    disabled,
+                    oninput: move |event| on_action.call(SetAction::Input {
+                        set_id: weight_id.clone(),
+                        field: Field::Weight,
+                        value: event.value(),
+                    }),
+                }
+                input {
+                    class: "min-h-8 w-12 shrink-0 border border-line bg-bg px-1 text-[11px]",
+                    r#type: "number",
+                    inputmode: "numeric",
+                    min: "1",
+                    step: "1",
+                    placeholder: "{text(Key::RecordExerciseReps)}",
+                    "data-set-reps": "true",
+                    value: "{set.reps}",
+                    disabled,
+                    oninput: move |event| on_action.call(SetAction::Input {
+                        set_id: reps_id.clone(),
+                        field: Field::Reps,
+                        value: event.value(),
+                    }),
+                }
+            }
+            button {
+                class: "min-h-8 shrink-0 border border-line px-1 text-[10px]",
+                "data-set-move-up": "true",
+                disabled: disabled || first,
+                onclick: move |_| on_action.call(SetAction::Move { set_id: up_id.clone(), delta: -1 }),
+                "{text(Key::RecordExerciseMoveUp)}"
+            }
+            button {
+                class: "min-h-8 shrink-0 border border-line px-1 text-[10px]",
+                "data-set-move-down": "true",
+                disabled: disabled || last,
+                onclick: move |_| on_action.call(SetAction::Move { set_id: down_id.clone(), delta: 1 }),
+                "{text(Key::RecordExerciseMoveDown)}"
+            }
+            button {
+                class: "min-h-8 shrink-0 border border-primary px-1 text-[10px] font-bold text-primary",
+                "data-set-complete": "true",
+                "data-set-complete-ready": if ready { "true" } else { "false" },
+                disabled: disabled || (!completed && !ready),
+                onclick: move |_| on_action.call(SetAction::Complete { set_id: complete_id.clone() }),
+                if completed {
+                    "{text(Key::RecordSetCompleted)}"
+                } else {
+                    "{text(Key::RecordSetComplete)}"
+                }
+            }
+            button {
+                class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
+                "data-delete-set": "true",
+                disabled,
+                onclick: move |_| on_action.call(SetAction::Delete { set_id: delete_id.clone() }),
+                "{text(Key::RecordSetDelete)}"
+            }
+        }
+    }
+}
+
 /// セット種別の文言。
 pub(super) fn set_kind_text(kind: SetKind) -> &'static str {
     match kind {
-        SetKind::Normal => text(Key::CalendarSetKindNormal),
-        SetKind::Warmup => text(Key::CalendarSetKindWarmup),
-        SetKind::Drop => text(Key::CalendarSetKindDrop),
+        SetKind::Normal => text(Key::RecordSetKindNormal),
+        SetKind::Warmup => text(Key::RecordSetKindWarmup),
+        SetKind::Drop => text(Key::RecordSetKindDrop),
     }
 }
 
@@ -478,4 +505,63 @@ fn grip_selection(record: &SetRecordRow) -> Option<GripSelection> {
         .grip
         .as_deref()
         .and_then(|text| serde_json::from_str::<GripSelection>(text).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    //! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`。
+
+    use warrior_core::previous::PreviousSet;
+    use warrior_core::set_calc::{RecordMode, SetKind, SetSegment};
+    use wasm_bindgen_test::wasm_bindgen_test;
+    use wasm_bindgen_test::wasm_bindgen_test_configure;
+
+    use super::previous_values;
+
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    fn previous_set(body_weight_kg: Option<f64>, weight_kg: f64) -> PreviousSet {
+        PreviousSet {
+            kind: SetKind::Normal,
+            rpe: None,
+            grip: None,
+            body_weight_kg,
+            segments: vec![SetSegment {
+                weight_kg,
+                reps: 5,
+                momentum_reps: 0,
+                assisted_reps: 0,
+                left: None,
+                right: None,
+                duration_seconds: None,
+            }],
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn copies_the_added_weight_from_the_previous_body_weight() {
+        let previous = previous_set(Some(70.0), 80.0);
+        let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
+            .expect("the previous values");
+        assert_eq!(values.weight_kg, 10.0);
+        assert_eq!(values.body_weight_kg, Some(75.0));
+        assert_eq!(values.reps, 5);
+    }
+
+    #[wasm_bindgen_test]
+    fn copies_no_added_weight_without_the_previous_body_weight() {
+        let previous = previous_set(None, 0.0);
+        let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
+            .expect("the previous values");
+        assert_eq!(values.weight_kg, 0.0);
+        assert_eq!(values.reps, 5);
+    }
+
+    #[wasm_bindgen_test]
+    fn copies_the_weight_for_weight_and_reps() {
+        let previous = previous_set(Some(70.0), 80.0);
+        let values = previous_values(&previous, RecordMode::WeightAndReps, Some(75.0))
+            .expect("the previous values");
+        assert_eq!(values.weight_kg, 80.0);
+    }
 }

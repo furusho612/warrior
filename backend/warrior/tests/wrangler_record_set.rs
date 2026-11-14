@@ -10,7 +10,7 @@ mod helpers;
 mod support;
 
 use helpers::*;
-use serde_json::json;
+use serde_json::{json, Value};
 use support::DevServer;
 use warrior_core::base64url;
 
@@ -40,6 +40,11 @@ const EMPTY_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5630";
 const EMPTY_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5631";
 const EMPTY_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5632";
 const EMPTY_SECOND_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5633";
+const TAKEOVER_PORT: u16 = 8824;
+const TAKEOVER_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5640";
+const TAKEOVER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5641";
+const TAKEOVER_OLD_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5642";
+const TAKEOVER_NEW_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5643";
 
 #[test]
 fn set_operations_are_idempotent_scoped_and_keep_the_segments() {
@@ -178,9 +183,12 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
         UPDATE_TWO_SEGMENTS_OPERATION_ID,
         TRAINING_ID,
         BENCH_SET_ID,
-        1,
-        "warmup",
-        Some(70.0),
+        UpdateSpec {
+            position: 1,
+            kind: "warmup",
+            completed: false,
+            body_weight_kg: Some(70.0),
+        },
         vec![
             segment(BENCH_SEGMENT_ID, 1, 110.0, 6),
             segment(EXTRA_SEGMENT_ID, 2, 90.0, 8),
@@ -208,9 +216,12 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
         UPDATE_ONE_SEGMENT_OPERATION_ID,
         TRAINING_ID,
         BENCH_SET_ID,
-        1,
-        "drop",
-        Some(70.0),
+        UpdateSpec {
+            position: 1,
+            kind: "drop",
+            completed: false,
+            body_weight_kg: Some(70.0),
+        },
         vec![segment(BENCH_SEGMENT_ID, 1, 120.0, 7)],
     );
     let response = post(server, cookie, &one_segment);
@@ -322,9 +333,12 @@ fn reject_writes_without_the_editing_right(
         FOREIGN_UPDATE_OPERATION_ID,
         FINISHED_TRAINING_ID,
         BENCH_SET_ID,
-        1,
-        "normal",
-        Some(70.0),
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: Some(70.0),
+        },
         vec![segment(BENCH_SEGMENT_ID, 1, 999.0, 5)],
     );
     let response = post(server, cookie, &foreign);
@@ -343,9 +357,12 @@ fn reject_writes_without_the_editing_right(
         OTHER_TERMINAL_OPERATION_ID,
         TRAINING_ID,
         BENCH_SET_ID,
-        1,
-        "normal",
-        Some(70.0),
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: Some(70.0),
+        },
         vec![segment(BENCH_SEGMENT_ID, 1, 130.0, 5)],
     );
     let response = post(server, other_cookie, &other_terminal);
@@ -356,9 +373,12 @@ fn reject_writes_without_the_editing_right(
         NO_TERMINAL_OPERATION_ID,
         TRAINING_ID,
         BENCH_SET_ID,
-        1,
-        "normal",
-        Some(70.0),
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: Some(70.0),
+        },
         vec![segment(BENCH_SEGMENT_ID, 1, 130.0, 5)],
     );
     let response = post(server, session_only_cookie, &no_terminal);
@@ -475,16 +495,15 @@ fn a_completed_set_requires_values() {
         EMPTY_UPDATE_OPERATION_ID,
         TRAINING_ID,
         set_id,
-        1,
-        "normal",
-        None,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
         vec![segment(segment_id, 1, 100.0, 5)],
     );
     let response = post(&server, &user_cookie, &update);
-    assert_eq!(response.status, 200, "{}", response.body);
-
-    let complete = complete_operation(EMPTY_COMPLETE_OPERATION_ID, TRAINING_ID, set_id, true);
-    let response = post(&server, &user_cookie, &complete);
     assert_eq!(response.status, 200, "{}", response.body);
     assert_eq!(
         first_row(
@@ -498,18 +517,94 @@ fn a_completed_set_requires_values() {
         EMPTY_SECOND_UPDATE_OPERATION_ID,
         TRAINING_ID,
         set_id,
-        1,
-        "normal",
-        None,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
         vec![segment(segment_id, 1, 0.0, 0)],
     );
     let response = post(&server, &user_cookie, &empty_update);
-    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT completed FROM sets WHERE id = '{set_id}'")
+        )["completed"],
+        0,
+        "an update without values must clear the completion"
+    );
     assert_eq!(
         first_row(
             &server,
             &format!("SELECT weight_kg, reps FROM set_segments WHERE id = '{segment_id}'")
         ),
-        json!({"weight_kg": 100, "reps": 5})
+        json!({"weight_kg": 0, "reps": 0})
     );
+
+    let finish = server.request(
+        "POST",
+        &format!("/api/trainings/{TRAINING_ID}/finish"),
+        &[("Origin", ORIGIN), ("Cookie", &user_cookie)],
+    );
+    assert_eq!(finish.status, 200, "{}", finish.body);
+    let summary: Value = serde_json::from_str(&finish.body).expect("a summary");
+    assert_eq!(summary["set_count"], 0, "an incomplete set is not counted");
+    assert_eq!(summary["total_weight_kg"], 0.0);
+}
+
+#[test]
+fn a_takeover_moves_the_set_operations_to_the_new_terminal() {
+    let server = DevServer::start(TAKEOVER_PORT);
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let token = base64url::encode(&[71u8; 32]);
+    let terminal_token = base64url::encode(&[72u8; 32]);
+    let other_terminal_token = base64url::encode(&[73u8; 32]);
+    seed_base(&server, &token, &terminal_token, &other_terminal_token);
+    let user_cookie = cookie(&token, &terminal_token);
+    let other_cookie = cookie(&token, &other_terminal_token);
+
+    let takeover = server.request(
+        "POST",
+        &format!("/api/trainings/{TRAINING_ID}/takeover"),
+        &[("Origin", ORIGIN), ("Cookie", &other_cookie)],
+    );
+    assert_eq!(takeover.status, 200, "{}", takeover.body);
+
+    let old = create_operation(
+        TAKEOVER_OLD_OPERATION_ID,
+        TRAINING_ID,
+        BENCH_ROW_ID,
+        TAKEOVER_SET_ID,
+        SetSpec {
+            position: 1,
+            kind: "normal",
+            body_weight_kg: Some(70.0),
+        },
+        vec![segment(TAKEOVER_SEGMENT_ID, 1, 100.0, 5)],
+    );
+    let response = post(&server, &user_cookie, &old);
+    assert_eq!(response.status, 403, "{}", response.body);
+    assert_eq!(applied_count(&server, TAKEOVER_OLD_OPERATION_ID), 0);
+    assert_eq!(count(&server, "sets", TAKEOVER_SET_ID), 0);
+
+    let new = create_operation(
+        TAKEOVER_NEW_OPERATION_ID,
+        TRAINING_ID,
+        BENCH_ROW_ID,
+        TAKEOVER_SET_ID,
+        SetSpec {
+            position: 1,
+            kind: "normal",
+            body_weight_kg: Some(70.0),
+        },
+        vec![segment(TAKEOVER_SEGMENT_ID, 1, 100.0, 5)],
+    );
+    let response = post(&server, &other_cookie, &new);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(applied_count(&server, TAKEOVER_NEW_OPERATION_ID), 1);
+    assert_eq!(count(&server, "sets", TAKEOVER_SET_ID), 1);
 }

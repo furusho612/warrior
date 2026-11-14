@@ -2,7 +2,7 @@
 //!
 //! 対応する要求: `REQ-SET-002`、`REQ-LIB-004`、`REQ-PRF-005`。
 //! 通常、ウォームアップ、ドロップセットの総重量、推定 1RM、自己ベスト、部位別の
-//! セット数の扱いが 0012 の計算規則と一致することを確かめる。
+//! セット数の扱いが warrior_core::set_calc の計算規則と一致することを確かめる。
 
 use proptest::prelude::*;
 use warrior_core::jst::JstDate;
