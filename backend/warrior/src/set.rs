@@ -217,9 +217,10 @@ async fn precheck_update(
     if shape.mode == RecordMode::Time && validation::has_non_time_values(&payload.segments) {
         return Ok(Some(validation::time_value_rejection()));
     }
+    // 重量種目の完了は保存後の段で判定する。ここでは時間種目の入力だけを確かめる。
     if shape.mode == RecordMode::Time
         && payload.completed
-        && !validation::segments_are_complete(&payload.segments, shape)
+        && !validation::time_segments_are_complete(&payload.segments, shape.laterality)
     {
         return Ok(Some(response(
             ErrorCode::BadRequest,

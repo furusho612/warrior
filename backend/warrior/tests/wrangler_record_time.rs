@@ -61,6 +61,9 @@ const SEEDED_REPS_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565b";
 const SEEDED_REPS_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565c";
 const SEEDED_REPS_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565d";
 const SIDE_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565e";
+const PLANK_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b0";
+const PLANK_UPDATE_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b1";
+const PLANK_UPDATE_AGAIN_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b2";
 
 #[test]
 fn saves_time_sets_and_checks_the_duration_bests() {
@@ -84,6 +87,7 @@ fn saves_time_sets_and_checks_the_duration_bests() {
     reject_non_time_values(&server, &cookie);
     reject_invalid_durations(&server, &cookie);
     check_the_record(&server, &cookie);
+    update_the_plank_set_with_duration_only(&server, &cookie);
     complete_the_sets(&server, &cookie);
     finish_and_check_the_summary(&server, &cookie);
 }
@@ -497,6 +501,96 @@ fn check_the_record(server: &DevServer, cookie: &str) {
     assert!(side_segment["left_reps"].is_null());
     assert!(side_segment["right_weight_kg"].is_null());
     assert!(side_segment["right_reps"].is_null());
+}
+
+fn update_the_plank_set_with_duration_only(server: &DevServer, cookie: &str) {
+    let update = update_operation(
+        PLANK_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        PLANK_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: false,
+            body_weight_kg: None,
+        },
+        vec![duration_segment(PLANK_SEGMENT_ID, 1, 60)],
+    );
+    let response = post(server, cookie, &update);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(status(&response), "applied");
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{PLANK_SET_ID}'")
+        )["completed"],
+        0,
+        "a duration-only update without completion stays incomplete"
+    );
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT duration_seconds FROM set_segments WHERE id = '{PLANK_SEGMENT_ID}'")
+        )["duration_seconds"],
+        60
+    );
+    assert_eq!(applied_count(server, PLANK_UPDATE_OPERATION_ID), 1);
+
+    let complete = update_operation(
+        PLANK_UPDATE_COMPLETE_OPERATION_ID,
+        TRAINING_ID,
+        PLANK_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![duration_segment(PLANK_SEGMENT_ID, 1, 60)],
+    );
+    let response = post(server, cookie, &complete);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(status(&response), "applied");
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{PLANK_SET_ID}'")
+        )["completed"],
+        1
+    );
+    assert_eq!(applied_count(server, PLANK_UPDATE_COMPLETE_OPERATION_ID), 1);
+
+    let again = update_operation(
+        PLANK_UPDATE_AGAIN_OPERATION_ID,
+        TRAINING_ID,
+        PLANK_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![duration_segment(PLANK_SEGMENT_ID, 1, 120)],
+    );
+    let response = post(server, cookie, &again);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(status(&response), "applied");
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{PLANK_SET_ID}'")
+        )["completed"],
+        1,
+        "a completed time set stays complete after a duration-only update"
+    );
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT duration_seconds FROM set_segments WHERE id = '{PLANK_SEGMENT_ID}'")
+        )["duration_seconds"],
+        120
+    );
+    assert_eq!(applied_count(server, PLANK_UPDATE_AGAIN_OPERATION_ID), 1);
 }
 
 fn complete_the_sets(server: &DevServer, cookie: &str) {

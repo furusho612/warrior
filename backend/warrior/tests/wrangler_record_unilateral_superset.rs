@@ -38,6 +38,11 @@ const PARTIAL_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5942";
 const COMPLETE_NORMAL_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5950";
 const COMPLETE_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5951";
 const PARTIAL_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5952";
+const UPDATE_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a0";
+const UPDATE_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a1";
+const UPDATE_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a2";
+const PARTIAL_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a3";
+const SIDES_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a4";
 const FORBIDDEN_SUPERSET_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5960";
 const FORBIDDEN_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5961";
 
@@ -73,6 +78,7 @@ fn unilateral_sets_sum_both_sides_and_require_both_to_complete() {
     create_and_complete_the_normal_set(&server, &session_cookie);
     create_and_complete_the_drop_set(&server, &session_cookie);
     reject_the_partial_set(&server, &session_cookie);
+    a_payload_only_update_does_not_complete_a_unilateral_set(&server, &session_cookie);
     reject_a_superset_from_another_terminal(&server, &other_cookie);
     finish_and_check_the_unilateral_totals(&server, &session_cookie);
 }
@@ -264,6 +270,82 @@ fn reject_the_partial_set(server: &DevServer, cookie: &str) {
     assert_eq!(applied_count(server, PARTIAL_COMPLETE_OPERATION_ID), 0);
 }
 
+fn a_payload_only_update_does_not_complete_a_unilateral_set(server: &DevServer, cookie: &str) {
+    let create = create_operation(
+        UPDATE_CREATE_OPERATION_ID,
+        TRAINING_ID,
+        UNILATERAL_ROW_ID,
+        UPDATE_SET_ID,
+        SetSpec {
+            position: 4,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![segment(UPDATE_SEGMENT_ID, 1, 10.0, 5)],
+    );
+    let response = post(server, cookie, &create);
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    let partial = update_operation(
+        PARTIAL_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        UPDATE_SET_ID,
+        UpdateSpec {
+            position: 4,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![segment(UPDATE_SEGMENT_ID, 1, 10.0, 5)],
+    );
+    let response = post(server, cookie, &partial);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(status(&response), "applied");
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{UPDATE_SET_ID}'")
+        )["completed"],
+        0,
+        "a top-only update must not complete a unilateral set"
+    );
+    assert_eq!(applied_count(server, PARTIAL_UPDATE_OPERATION_ID), 1);
+
+    let sides = update_operation(
+        SIDES_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        UPDATE_SET_ID,
+        UpdateSpec {
+            position: 4,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![side_segment(UPDATE_SEGMENT_ID, 1, 10.0, 5, 12.0, 4)],
+    );
+    let response = post(server, cookie, &sides);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(status(&response), "applied");
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{UPDATE_SET_ID}'")
+        )["completed"],
+        1,
+        "both sides must complete the unilateral set"
+    );
+    assert_eq!(applied_count(server, SIDES_UPDATE_OPERATION_ID), 1);
+    assert_eq!(
+        first_row(
+            server,
+            &format!(
+                "SELECT left_reps, right_reps FROM set_segments WHERE id = '{UPDATE_SEGMENT_ID}'"
+            )
+        ),
+        json!({"left_reps": 5, "right_reps": 4})
+    );
+}
+
 fn reject_a_superset_from_another_terminal(server: &DevServer, other_cookie: &str) {
     let operation = superset_create_operation(
         FORBIDDEN_SUPERSET_OPERATION_ID,
@@ -285,8 +367,8 @@ fn finish_and_check_the_unilateral_totals(server: &DevServer, cookie: &str) {
     );
     assert_eq!(response.status, 200, "{}", response.body);
     let summary: Value = serde_json::from_str(&response.body).expect("a summary");
-    assert_eq!(summary["set_count"], 2);
-    assert_eq!(summary["total_weight_kg"].as_f64(), Some(307.0));
+    assert_eq!(summary["set_count"], 3);
+    assert_eq!(summary["total_weight_kg"].as_f64(), Some(405.0));
 }
 
 fn create_and_reorder_the_two_member_group(server: &DevServer, cookie: &str) {

@@ -183,38 +183,23 @@ pub(super) async fn completed_set_has_values(
     Ok(row.is_some_and(|row| row.segments > 0 && row.ready == row.segments))
 }
 
-/// 保存する段がすべて完了に必要な値を持つか。
-pub(super) fn segments_are_complete(segments: &[SetSegmentPayload], shape: ExerciseShape) -> bool {
+/// 保存する時間種目の段がすべて完了に必要な値を持つか。
+pub(super) fn time_segments_are_complete(
+    segments: &[SetSegmentPayload],
+    laterality: Laterality,
+) -> bool {
     !segments.is_empty()
-        && segments
-            .iter()
-            .all(|segment| match (shape.mode, shape.laterality) {
-                (RecordMode::Time, Laterality::Bilateral) => {
-                    segment.left.is_none()
-                        && segment.right.is_none()
-                        && segment.is_complete(RecordMode::Time)
-                }
-                (RecordMode::Time, Laterality::Unilateral) => {
-                    segment.duration_seconds.is_none()
-                        && segment.left.is_some()
-                        && segment.right.is_some()
-                        && segment.is_complete(RecordMode::Time)
-                }
-                (
-                    RecordMode::WeightAndReps | RecordMode::BodyweightAndReps,
-                    Laterality::Bilateral,
-                ) => {
-                    segment.left.is_none()
-                        && segment.right.is_none()
-                        && segment.is_complete(shape.mode)
-                }
-                (
-                    RecordMode::WeightAndReps | RecordMode::BodyweightAndReps,
-                    Laterality::Unilateral,
-                ) => {
-                    segment.left.is_some()
-                        && segment.right.is_some()
-                        && segment.is_complete(shape.mode)
-                }
-            })
+        && segments.iter().all(|segment| match laterality {
+            Laterality::Bilateral => {
+                segment.left.is_none()
+                    && segment.right.is_none()
+                    && segment.is_complete(RecordMode::Time)
+            }
+            Laterality::Unilateral => {
+                segment.duration_seconds.is_none()
+                    && segment.left.is_some()
+                    && segment.right.is_some()
+                    && segment.is_complete(RecordMode::Time)
+            }
+        })
 }
