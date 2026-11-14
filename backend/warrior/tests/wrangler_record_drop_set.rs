@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use support::DevServer;
 use warrior_core::base64url;
 
-const PORT: u16 = 8829;
+const PORT: u16 = 8840;
 
 const FIRST_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5810";
 const FIRST_DROP_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5811";

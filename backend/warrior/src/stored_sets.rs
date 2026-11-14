@@ -19,16 +19,16 @@ use crate::db::Db;
 
 /// 種目、セット、段を結合した 1 行。
 #[derive(Debug, Deserialize)]
-struct SetSegmentRow {
+pub(crate) struct SetSegmentRow {
     training_id: String,
     training_exercise_id: String,
-    snapshot: String,
+    pub(crate) snapshot: String,
     set_id: String,
-    kind: String,
-    set_rpe: Option<f64>,
-    grip: Option<String>,
-    body_weight_kg: Option<f64>,
-    segment_id: Option<String>,
+    pub(crate) kind: String,
+    pub(crate) set_rpe: Option<f64>,
+    pub(crate) grip: Option<String>,
+    pub(crate) body_weight_kg: Option<f64>,
+    pub(crate) segment_id: Option<String>,
     weight_kg: Option<f64>,
     reps: Option<i64>,
     momentum_reps: Option<i64>,
@@ -57,7 +57,7 @@ pub struct StoredExercise {
     pub set_body_weights: Vec<Option<f64>>,
 }
 
-const SET_SEGMENT_COLUMNS: &str = "te.training_id AS training_id, \
+pub(crate) const SET_SEGMENT_COLUMNS: &str = "te.training_id AS training_id, \
      te.id AS training_exercise_id, te.snapshot, \
      s.id AS set_id, s.kind AS kind, s.rpe AS set_rpe, s.grip AS grip, \
      s.body_weight_kg AS body_weight_kg, \
@@ -287,7 +287,7 @@ fn parse_set_kind(text: &str) -> Option<SetKind> {
     SetKind::parse(text)
 }
 
-fn segment_from_row(
+pub(crate) fn segment_from_row(
     row: &SetSegmentRow,
     laterality: Laterality,
     record_mode: RecordMode,

@@ -402,37 +402,8 @@ fn SetRow(
     let kind = set.kind();
     let is_drop = kind == SetKind::Drop;
     let number_text = number.map_or_else(|| "D".to_owned(), |number| number.to_string());
-    let mut pending_kind = use_signal(|| Option::<SetKind>::None);
-    let kind_set_id = set.record.id.clone();
     let segment_count = set.segments.len();
-    let on_kind = EventHandler::new(move |new_kind: SetKind| {
-        if needs_segment_confirmation(kind, new_kind, segment_count) {
-            pending_kind.set(Some(new_kind));
-        } else {
-            on_action.call(SetAction::Kind {
-                set_id: kind_set_id.clone(),
-                kind: new_kind,
-            });
-        }
-    });
-    let confirm_set_id = set.record.id.clone();
-    let on_kind_decision = EventHandler::new(move |decision: Option<SetKind>| {
-        if let Some(kind) = decision {
-            on_action.call(SetAction::Kind {
-                set_id: confirm_set_id.clone(),
-                kind,
-            });
-        }
-        pending_kind.set(None);
-    });
-    let segments = SegmentListState {
-        set_id: set_id.clone(),
-        segments: set.segments.clone(),
-        is_drop,
-        is_time,
-        is_bodyweight,
-        disabled,
-    };
+    let segments = segment_list_state(&set, is_drop, is_time, is_bodyweight, disabled);
     let buttons = RowButtonState {
         set_id: set.record.id.clone(),
         first_segment_id: set
@@ -458,6 +429,7 @@ fn SetRow(
         first_segment: set.segments.first().cloned(),
         is_time,
         is_bodyweight,
+        segment_count,
         buttons,
     };
     rsx! {
@@ -470,19 +442,12 @@ fn SetRow(
             "data-set-number": "{number_text}",
             "data-set-drop": if is_drop { "true" } else { "false" },
             "data-set-completed": if completed { "true" } else { "false" },
-            SetHeader { header, on_kind, on_action }
+            SetHeader { header, on_action }
             if !can_delete {
                 p {
                     class: "border-b border-line px-2 py-1 text-[10px] text-primary",
                     "data-set-delete-blocked": "true",
                     "{text(Key::RecordSetDeleteBlockedByDrop)}"
-                }
-            }
-            if let Some(pending) = (pending_kind)() {
-                KindChangeConfirm {
-
-                    pending,
-                    on_decide: on_kind_decision,
                 }
             }
             SegmentList { list: segments, on_action }
@@ -503,16 +468,13 @@ struct SetHeaderState {
     first_segment: Option<SegmentView>,
     is_time: bool,
     is_bodyweight: bool,
+    segment_count: usize,
     buttons: RowButtonState,
 }
 
 /// セットの行の番号、種別、最初の段、操作のボタン。
 #[component]
-fn SetHeader(
-    header: SetHeaderState,
-    on_kind: EventHandler<SetKind>,
-    on_action: EventHandler<SetAction>,
-) -> Element {
+fn SetHeader(header: SetHeaderState, on_action: EventHandler<SetAction>) -> Element {
     let SetHeaderState {
         set_id,
         number_text,
@@ -524,8 +486,31 @@ fn SetHeader(
         first_segment,
         is_time,
         is_bodyweight,
+        segment_count,
         buttons,
     } = header;
+    let mut pending_kind = use_signal(|| Option::<SetKind>::None);
+    let kind_set_id = set_id.clone();
+    let on_kind = EventHandler::new(move |new_kind: SetKind| {
+        if needs_segment_confirmation(kind, new_kind, segment_count) {
+            pending_kind.set(Some(new_kind));
+        } else {
+            on_action.call(SetAction::Kind {
+                set_id: kind_set_id.clone(),
+                kind: new_kind,
+            });
+        }
+    });
+    let confirm_set_id = set_id.clone();
+    let on_decide = EventHandler::new(move |decision: Option<SetKind>| {
+        if let Some(kind) = decision {
+            on_action.call(SetAction::Kind {
+                set_id: confirm_set_id.clone(),
+                kind,
+            });
+        }
+        pending_kind.set(None);
+    });
     rsx! {
         div {
             class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
@@ -553,6 +538,9 @@ fn SetHeader(
                 }
             }
             RowButtons { buttons, disabled, on_action }
+        }
+        if let Some(pending) = (pending_kind)() {
+            KindChangeConfirm { pending, on_decide }
         }
     }
 }
@@ -595,6 +583,23 @@ struct SegmentListState {
     is_time: bool,
     is_bodyweight: bool,
     disabled: bool,
+}
+
+fn segment_list_state(
+    set: &SetView,
+    is_drop: bool,
+    is_time: bool,
+    is_bodyweight: bool,
+    disabled: bool,
+) -> SegmentListState {
+    SegmentListState {
+        set_id: set.record.id.clone(),
+        segments: set.segments.clone(),
+        is_drop,
+        is_time,
+        is_bodyweight,
+        disabled,
+    }
 }
 
 /// セットの 2 つ目以降の段の行と、段を追加するボタン。

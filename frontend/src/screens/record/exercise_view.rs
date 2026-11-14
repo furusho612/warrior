@@ -430,7 +430,9 @@ pub(super) async fn copy_sets(
             return;
         }
     };
-    for set in &view.sets {
+    // 末尾から削除する。削除するセットの直後は常に空であり、直後のドロップセットが
+    // あるセットの削除を避けられる。
+    for set in view.sets.iter().rev() {
         let operation = match training_set::delete(&training_id, &set.record.id) {
             Ok(operation) => operation,
             Err(_) => {
