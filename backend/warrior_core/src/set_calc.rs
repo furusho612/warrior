@@ -686,6 +686,8 @@ fn validate_duration(duration: u32) -> Result<(), SetValidationError> {
 
 #[cfg(test)]
 mod tests {
+    //! 対応する要求: `REQ-SET-004`。
+
     use super::{
         estimated_one_rep_max, is_reference_one_rep_max, strict_reps, BestKey, PartRole,
         PersonalBest, RecordMode, SetKind, SetRecord, SetSegment, SetValidationError, Side,
@@ -846,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn a_unilateral_segment_needs_both_sides() {
+    fn req_set_004_a_unilateral_segment_needs_both_sides() {
         let segment = SetSegment {
             weight_kg: 0.0,
             reps: 0,
@@ -874,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn a_unilateral_drop_set_sums_both_sides_of_every_segment() {
+    fn req_set_004_a_unilateral_drop_set_sums_both_sides_of_every_segment() {
         let side_segment = |left: (f64, u32), right: (f64, u32)| SetSegment {
             weight_kg: 0.0,
             reps: 0,
@@ -908,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn unilateral_weight_sums_both_sides() {
+    fn req_set_004_unilateral_weight_sums_both_sides() {
         let record = record(
             SetKind::Normal,
             vec![SetSegment {
@@ -938,7 +940,7 @@ mod tests {
     }
 
     #[test]
-    fn unilateral_time_uses_the_max_and_the_sum() {
+    fn req_set_004_unilateral_time_uses_the_max_and_the_sum() {
         let record = SetRecord::new(
             key(),
             SetKind::Normal,

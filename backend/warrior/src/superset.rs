@@ -4,8 +4,8 @@
 //! 操作は端末の送信待ちの列から届き、`backend/warrior/src/sync.rs` が編集権を検査する。
 //! このモジュールは、同じ編集権の `EXISTS` 条件を各データ文に付け、組の適用と操作 ID の
 //! 保存を同じ `batch()` に入れる (ADR-002、ADR-003)。組の種目は同じトレーニングの
-//! 種目だけを許し、空の組を拒否する。削除は、種目の削除で解散した組の後始末のため、
-//! 既に無い組でも成功として扱う。
+//! 種目だけを許し、2 つ未満の組と、既にほかの組に属する種目を含む組を拒否する。
+//! 削除は、種目の削除で解散した組の後始末のため、既に無い組でも成功として扱う。
 
 use serde::Deserialize;
 use warrior_core::sql::{SqlStatement, SqlValue};
@@ -113,6 +113,16 @@ async fn precheck(
             "a superset member is not in the training",
         )));
     }
+    if let ValidatedPayload::SupersetCreate(payload) = &validated.payload {
+        if !members_without_group(db, user_id, training_id, &payload.superset_id, member_ids)
+            .await?
+        {
+            return Ok(Some(response(
+                ErrorCode::Conflict,
+                "a superset member already belongs to a group",
+            )));
+        }
+    }
     Ok(None)
 }
 
@@ -142,6 +152,41 @@ async fn members_in_training(
         .await?
         .map_or(0, |row| row.count);
     Ok(count == i64::try_from(member_ids.len()).unwrap_or(i64::MAX))
+}
+
+/// 組の種目が、同じトレーニングのほかの組に属していないか。
+///
+/// 同じ操作の再送は、作った組自身を除くことで通す。
+async fn members_without_group(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    superset_id: &str,
+    member_ids: &[String],
+) -> Result<bool> {
+    if member_ids.is_empty() {
+        return Ok(true);
+    }
+    let placeholders = vec!["?"; member_ids.len()].join(", ");
+    let mut bindings = vec![
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(training_id.to_owned()),
+        SqlValue::Text(superset_id.to_owned()),
+    ];
+    bindings.extend(member_ids.iter().map(|id| SqlValue::Text(id.clone())));
+    let count = db
+        .first::<CountRow>(&SqlStatement::new(
+            format!(
+                "SELECT COUNT(*) AS count FROM superset_members sm \
+                 JOIN supersets ss ON ss.id = sm.superset_id \
+                 WHERE sm.user_id = ? AND ss.training_id = ? AND ss.id != ? \
+                 AND sm.training_exercise_id IN ({placeholders})"
+            ),
+            bindings,
+        ))
+        .await?
+        .map_or(0, |row| row.count);
+    Ok(count == 0)
 }
 
 fn superset_statements(
@@ -404,6 +449,8 @@ fn member_insert_statement(
 
 #[cfg(test)]
 mod tests {
+    //! 対応する要求: `REQ-SET-005`。
+
     use serde_json::json;
     use warrior_core::sql::SqlValue;
     use warrior_core::sync::{

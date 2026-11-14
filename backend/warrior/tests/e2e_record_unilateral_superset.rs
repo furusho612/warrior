@@ -2,21 +2,24 @@
 //!
 //! 対応する要求: `REQ-SET-004`、`REQ-SET-005`。
 //! 左右別のセットに左右の値を入力し、スーパーセットを組み、組の途中の種目の完了では
-//! レストタイマーが起動せず、最後の種目の完了で起動することを確かめる。
+//! レストタイマーが起動せず、最後の種目の完了で起動することを確かめる。組に属さない
+//! 種目の完了でタイマーが起動すること、組の並びが種目の順に従うことも確かめる。
 
 mod support;
 
-use serde_json::{json, Value};
+use serde_json::json;
 use std::time::{Duration, Instant};
 use support::browser::{self, Browser};
 use support::record_common;
-use support::{DevServer, TestOidc};
+use support::{current_user_id, seed_profile, DevServer, TestOidc};
 use thirtyfour::prelude::*;
 
 const UNILATERAL_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000018";
 const BENCH_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
-const SERVER_PORT: u16 = 8828;
-const PROVIDER_PORT: u16 = 8829;
+const UNILATERAL_NAME: &str = "ワンハンドダンベルロウ";
+const BENCH_NAME: &str = "ベンチプレス";
+const SERVER_PORT: u16 = 8836;
+const PROVIDER_PORT: u16 = 8837;
 
 #[tokio::test]
 async fn records_a_unilateral_superset_and_starts_the_timer_on_the_last_member() {
@@ -67,34 +70,54 @@ async fn records_a_unilateral_superset_and_starts_the_timer_on_the_last_member()
     .await;
     browser::add_exercise(&driver, UNILATERAL_EXERCISE_ID).await;
     browser::add_exercise(&driver, BENCH_EXERCISE_ID).await;
-    browser::select_exercise(&driver, UNILATERAL_EXERCISE_ID).await;
 
+    // 組に属さない種目のセットの完了はレストタイマーを起動する。
+    browser::select_exercise(&driver, BENCH_EXERCISE_ID).await;
+    let bench_set_before_group = add_set(&driver).await;
+    fill_bench_set(&driver, &bench_set_before_group).await;
+    wait_for_complete_ready(&driver, &bench_set_before_group).await;
+    complete_set(&driver, &bench_set_before_group).await;
+    browser::wait_for_attribute(&driver, "[data-session-id]", "data-set-events", "1").await;
+    browser::wait_for_attribute(&driver, "[data-session-id]", "data-rest-timer-events", "1").await;
+    wait_for_bench_set(&server, &bench_set_before_group).await;
+
+    // 後ろの種目を選び、前の種目を候補にして組を作る。組の並びは種目の順に従う。
+    create_superset_with(&driver, UNILATERAL_EXERCISE_ID).await;
+    assert_eq!(group_member_count(&driver).await, 2);
+    assert_eq!(
+        group_member_names(&driver).await,
+        vec![UNILATERAL_NAME.to_owned(), BENCH_NAME.to_owned()],
+        "a superset must order its members by the exercise order"
+    );
+    wait_for_superset(&server, &training_id).await;
+
+    browser::select_exercise(&driver, UNILATERAL_EXERCISE_ID).await;
     let unilateral_set = add_set(&driver).await;
     fill_unilateral_set(&driver, &unilateral_set, (10, 5), (12, 4)).await;
+    assert_eq!(
+        side_labels(&driver, &unilateral_set).await,
+        vec!["左".to_owned(), "右".to_owned()],
+        "a unilateral set must show the left and right labels"
+    );
     wait_for_complete_ready(&driver, &unilateral_set).await;
 
-    create_superset_with(&driver, BENCH_EXERCISE_ID).await;
-    assert_eq!(group_member_count(&driver).await, 2);
-
     complete_set(&driver, &unilateral_set).await;
-    browser::wait_for_attribute(&driver, "[data-session-id]", "data-set-events", "1").await;
+    browser::wait_for_attribute(&driver, "[data-session-id]", "data-set-events", "2").await;
     assert_eq!(
         browser::attribute(&driver, "[data-session-id]", "data-rest-timer-events").await,
-        "0",
+        "1",
         "a middle member of a superset must not start the rest timer"
     );
     wait_for_unilateral_set(&server, &training_id, &unilateral_set).await;
 
     browser::select_exercise(&driver, BENCH_EXERCISE_ID).await;
     let bench_set = add_set(&driver).await;
-    browser::set_input(&driver, &weight_selector(&bench_set), "100").await;
-    browser::set_input(&driver, &reps_selector(&bench_set), "5").await;
+    fill_bench_set(&driver, &bench_set).await;
     wait_for_complete_ready(&driver, &bench_set).await;
     complete_set(&driver, &bench_set).await;
-    browser::wait_for_attribute(&driver, "[data-session-id]", "data-set-events", "2").await;
-    browser::wait_for_attribute(&driver, "[data-session-id]", "data-rest-timer-events", "1").await;
+    browser::wait_for_attribute(&driver, "[data-session-id]", "data-set-events", "3").await;
+    browser::wait_for_attribute(&driver, "[data-session-id]", "data-rest-timer-events", "2").await;
     wait_for_bench_set(&server, &bench_set).await;
-    wait_for_superset(&server, &training_id).await;
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
     finish_and_check_the_summary(&driver).await;
@@ -138,7 +161,7 @@ async fn add_set(driver: &WebDriver) -> String {
     browser::wait_for_present(driver, "[data-add-set]").await;
     browser::click(driver, "[data-add-set]").await;
     browser::wait_for_present(driver, "[data-set-row]").await;
-    let rows = set_ids(driver).await;
+    let rows = browser::set_ids(driver).await;
     rows.last().cloned().expect("the new set id")
 }
 
@@ -148,12 +171,6 @@ async fn fill_unilateral_set(
     left: (u32, u32),
     right: (u32, u32),
 ) {
-    browser::set_input(
-        driver,
-        &side_selector(set_id, "left", "weight"),
-        &left.0.to_string(),
-    )
-    .await;
     browser::set_input(
         driver,
         &side_selector(set_id, "left", "reps"),
@@ -172,14 +189,34 @@ async fn fill_unilateral_set(
     );
     browser::set_input(
         driver,
-        &side_selector(set_id, "right", "weight"),
-        &right.0.to_string(),
+        &side_selector(set_id, "right", "reps"),
+        &right.1.to_string(),
+    )
+    .await;
+    assert_eq!(
+        browser::attribute(
+            driver,
+            &format!("[data-set-id=\"{set_id}\"] [data-set-complete]"),
+            "data-set-complete-ready"
+        )
+        .await,
+        "false",
+        "an empty weight must not complete a unilateral set"
+    );
+    // 重量欄に 0 を明示すると完了できる。空の欄とは区別する。
+    browser::set_input(driver, &side_selector(set_id, "left", "weight"), "0").await;
+    browser::set_input(driver, &side_selector(set_id, "right", "weight"), "0").await;
+    wait_for_complete_ready(driver, set_id).await;
+    browser::set_input(
+        driver,
+        &side_selector(set_id, "left", "weight"),
+        &left.0.to_string(),
     )
     .await;
     browser::set_input(
         driver,
-        &side_selector(set_id, "right", "reps"),
-        &right.1.to_string(),
+        &side_selector(set_id, "right", "weight"),
+        &right.0.to_string(),
     )
     .await;
 }
@@ -188,9 +225,14 @@ async fn create_superset_with(driver: &WebDriver, exercise_id: &str) {
     let candidate = format!("[data-superset-candidate][data-exercise-id=\"{exercise_id}\"]");
     browser::wait_for_present(driver, &candidate).await;
     browser::click(driver, &candidate).await;
-    wait_for_enabled(driver, "[data-superset-create]").await;
+    browser::wait_for_enabled(driver, "[data-superset-create]").await;
     browser::click(driver, "[data-superset-create]").await;
     browser::wait_for_present(driver, "[data-superset-group]").await;
+}
+
+async fn fill_bench_set(driver: &WebDriver, set_id: &str) {
+    browser::set_input(driver, &weight_selector(set_id), "100").await;
+    browser::set_input(driver, &reps_selector(set_id), "5").await;
 }
 
 async fn complete_set(driver: &WebDriver, set_id: &str) {
@@ -218,30 +260,6 @@ async fn wait_for_complete_ready(driver: &WebDriver, set_id: &str) {
     .await;
 }
 
-async fn wait_for_enabled(driver: &WebDriver, selector: &str) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let enabled = browser::eval_json(
-            driver,
-            "const done = arguments[arguments.length - 1]; \
-             const element = document.querySelector(arguments[0]); \
-             done(JSON.stringify(element ? !element.disabled : false));",
-            vec![json!(selector)],
-        )
-        .await
-        .as_bool()
-        .unwrap_or(false);
-        if enabled {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the element {selector} did not become enabled"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
 async fn group_member_count(driver: &WebDriver) -> usize {
     let value = browser::eval_json(
         driver,
@@ -253,13 +271,35 @@ async fn group_member_count(driver: &WebDriver) -> usize {
     value.as_u64().unwrap_or(0) as usize
 }
 
-async fn set_ids(driver: &WebDriver) -> Vec<String> {
+async fn group_member_names(driver: &WebDriver) -> Vec<String> {
     let value = browser::eval_json(
         driver,
         "const done = arguments[arguments.length - 1]; \
-         done(JSON.stringify(Array.from(document.querySelectorAll('[data-set-row]')) \
-           .map((element) => element.getAttribute('data-set-id'))));",
+         done(JSON.stringify(Array.from(document.querySelectorAll('[data-superset-member]')) \
+           .map((element) => element.textContent)));",
         Vec::new(),
+    )
+    .await;
+    value
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn side_labels(driver: &WebDriver, set_id: &str) -> Vec<String> {
+    let value = browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         done(JSON.stringify(Array.from(document.querySelectorAll(arguments[0])) \
+           .map((element) => element.textContent)));",
+        vec![json!(format!(
+            "[data-set-id=\"{set_id}\"] [data-set-side-label]"
+        ))],
     )
     .await;
     value
@@ -379,34 +419,10 @@ async fn finish_and_check_the_summary(driver: &WebDriver) {
     browser::wait_for_route(driver, "/summary/:training_id").await;
     assert_eq!(
         browser::attribute(driver, "[data-summary]", "data-set-count").await,
-        "2"
+        "3"
     );
     assert_eq!(
         browser::attribute(driver, "[data-summary]", "data-total-weight-kg").await,
-        "598"
+        "1098"
     );
-}
-
-async fn current_user_id(driver: &WebDriver) -> String {
-    let me = browser::eval_string(
-        driver,
-        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
-        Vec::new(),
-    )
-    .await;
-    serde_json::from_str::<Value>(&me)
-        .expect("the me response is JSON")
-        .get("id")
-        .and_then(|value| value.as_str())
-        .expect("the user id")
-        .to_owned()
-}
-
-fn seed_profile(server: &DevServer, user_id: &str) {
-    server
-        .execute_d1_json(&format!(
-            "INSERT INTO profiles (user_id, weight_kg, created_at, updated_at) \
-             VALUES ('{user_id}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ))
-        .expect("the profile must be seeded");
 }

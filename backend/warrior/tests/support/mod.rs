@@ -597,3 +597,29 @@ pub fn unique_user_id() -> String {
         &text[20..32]
     )
 }
+
+/// ログイン中の利用者の ID を返す。
+pub async fn current_user_id(driver: &thirtyfour::WebDriver) -> String {
+    let me = browser::eval_string(
+        driver,
+        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
+        Vec::new(),
+    )
+    .await;
+    serde_json::from_str::<serde_json::Value>(&me)
+        .expect("the me response is JSON")
+        .get("id")
+        .and_then(|value| value.as_str())
+        .expect("the user id")
+        .to_owned()
+}
+
+/// 記録に使う体重を身体情報へ入れる。
+pub fn seed_profile(server: &DevServer, user_id: &str) {
+    server
+        .execute_d1_json(&format!(
+            "INSERT INTO profiles (user_id, weight_kg, created_at, updated_at) \
+             VALUES ('{user_id}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .expect("the profile must be seeded");
+}

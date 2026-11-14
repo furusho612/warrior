@@ -484,12 +484,12 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
 }
 
 fn same_side(
-    side: Option<&warrior_core::set_calc::SideValue>,
+    side: Option<&warrior_core::sync::SetSidePayload>,
     weight: Option<f64>,
     reps: Option<i64>,
 ) -> bool {
     match side {
         None => weight.is_none() && reps.is_none(),
-        Some(side) => weight == Some(side.weight_kg) && reps == Some(i64::from(side.reps)),
+        Some(side) => weight == side.weight_kg && reps == Some(i64::from(side.reps)),
     }
 }

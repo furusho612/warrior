@@ -8,7 +8,7 @@ use warrior_core::training_record::{SupersetMemberRecord, TrainingExerciseRecord
 use wasm_bindgen::JsValue;
 use web_sys::{IdbObjectStore, IdbTransactionMode};
 
-use super::superset::{delete_members, read_superset_rows};
+use super::superset::{delete_members, put_superset, read_superset_rows};
 use super::{abort, indexeddb, outbox, put_rows, Storage, StorageError, Store, StoredSuperset};
 
 impl Storage {
@@ -250,7 +250,8 @@ impl Storage {
 
     /// サーバーの記録にある種目の位置を端末へ戻す。
     ///
-    /// 送信待ちの列と、種目以外の行には触れない。並べ替えの破棄で使う。
+    /// 種目の並べ替えに追随した組の並びもサーバーの記録へ戻す。送信待ちの列と、
+    /// 種目以外の行には触れない。並べ替えの破棄で使う。
     pub async fn restore_training_exercise_positions(
         &self,
         record: &TrainingRecord,
@@ -258,7 +259,11 @@ impl Storage {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::TrainingExercises.name()],
+            &[
+                Store::TrainingExercises.name(),
+                Store::Supersets.name(),
+                Store::SupersetMembers.name(),
+            ],
             IdbTransactionMode::Readwrite,
         )?;
         match restore_training_exercise_positions_steps(&transaction, record).await {
@@ -353,6 +358,32 @@ async fn restore_training_exercise_positions_steps(
         let mut updated = row.clone();
         updated.position = server.position;
         indexeddb::put(&store, &indexeddb::to_js(&updated)?).await?;
+    }
+    restore_training_supersets(transaction, record, training_id).await
+}
+
+/// サーバーの記録にある組と種目を端末へ戻す。
+async fn restore_training_supersets(
+    transaction: &indexeddb::Transaction,
+    record: &TrainingRecord,
+    training_id: &str,
+) -> Result<(), StorageError> {
+    let supersets = transaction.store(Store::Supersets.name())?;
+    let members = transaction.store(Store::SupersetMembers.name())?;
+    let local = read_superset_rows(&supersets).await?;
+    for row in local.iter().filter(|row| row.training_id == training_id) {
+        delete_members(&members, &row.id).await?;
+        indexeddb::delete_entry(&supersets, &JsValue::from_str(&row.id)).await?;
+    }
+    for superset in record
+        .supersets
+        .iter()
+        .filter(|superset| superset.training_id == training_id)
+    {
+        put_superset(&supersets, superset).await?;
+        for member in &superset.members {
+            indexeddb::put(&members, &indexeddb::to_js(member)?).await?;
+        }
     }
     Ok(())
 }

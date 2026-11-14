@@ -73,3 +73,18 @@
 `frontend/src/screens/record.rs` に左右の列、組の表示、組の作成と解除を置く。
 `backend/warrior/tests/e2e_record_unilateral_superset.rs` に E2E を追加する。
 `backend/pbt/tests/superset.rs` に性質テストを置く。
+
+実装では、計画に挙げたファイルに加えて次のファイルを変更した。
+
+- `backend/warrior_core/src/sync.rs`、`backend/warrior_core/src/sync_set.rs`、`backend/warrior_core/src/sync_superset.rs`、`backend/warrior_core/src/superset.rs`: 左右の段の重量を任意にし、組の種目が 2 つ未満の組を拒否する。
+- `backend/warrior/src/set.rs`、`backend/warrior/src/set/bindings.rs`: 種目の左右の指定と記録方式を読み、段の形と完了の値を保存の前に検証する。
+- `backend/warrior/src/training_session_exercise.rs`: 種目の削除と並べ替えで組を追随させる。
+- `frontend/src/screens/record/exercise_view.rs`、`exercises.rs`、`set_inputs.rs`、`set_table.rs`、`sets.rs`、`superset_panel.rs`: 左右の入力と表示、組の楽観更新と重複した作成の防止を置く。
+- `frontend/src/storage/exercise.rs`、`set.rs`、`superset.rs`、`frontend/src/superset.rs`、`frontend/src/training_set.rs`: 左右の値と組の保存、復元、送信待ちの列への追加を置く。
+- `backend/warrior/src/set/tests.rs`、`backend/warrior/tests/wrangler_record_unilateral_superset.rs`、`backend/warrior/tests/support/`、`frontend/tests/storage_exercise.rs`、`frontend/tests/storage_set.rs`、`frontend/tests/storage_superset.rs`、`frontend/tests/support/mod.rs`: 左右の値、組の子操作、破棄の復元を確かめるテストと、E2E とブラウザテストの共通の準備を置く。
+- `backend/warrior/src/lib.rs`、`backend/warrior_core/src/lib.rs`、`frontend/src/lib.rs`、`frontend/src/screens/record.rs`、`frontend/src/storage/mod.rs`: module を登録する。
+- `backend/pbt/tests/set_calc.rs`、`backend/warrior/tests/e2e_calendar.rs`、`e2e_ownership.rs`、`e2e_record_drop_set.rs`、`e2e_record_exercise.rs`、`e2e_record_set.rs`、`backend/warrior/tests/support/browser.rs`、`backend/warrior/tests/support/mod.rs`: 要求 ID と共通のテスト支援を合わせる。
+- `CHANGES.md`: 利用者向けの変更履歴を追加する。
+- `mise.toml`: 結合テストと E2E の一覧へこの issue のテストを追加する。
+
+計画のファイルを分けた理由は、`backend/warrior/src/set.rs` と `frontend/src/screens/record/sets.rs` が code-style の 1000 行の閾値に達したためである。`backend/warrior/src/set/bindings.rs` に SQL のバインド値と操作 ID の条件を、`frontend/src/screens/record/set_table.rs` にセットの表の描画を移した。

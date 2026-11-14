@@ -6,6 +6,7 @@
 
 use dioxus::prelude::*;
 use warrior_core::exercise::RecordMode;
+use warrior_core::set_calc::Side;
 
 use super::sets::{SegmentView, SetAction};
 use crate::text::{text, Key};
@@ -29,17 +30,34 @@ pub(super) enum Field {
     RightReps,
 }
 
+/// セットの段の入力に必要な状態。
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct SegmentInputsState {
+    /// 段の状態。
+    pub(super) segment: SegmentView,
+    /// セットの ID。
+    pub(super) set_id: String,
+    /// 記録方式。
+    pub(super) mode: RecordMode,
+    /// 左右の列を使うか。
+    pub(super) lateral: bool,
+    /// 編集できないか。
+    pub(super) disabled: bool,
+}
+
 /// 1 つの段の入力の欄。
 #[component]
 pub(super) fn SegmentInputs(
-    segment: SegmentView,
-    set_id: String,
-    mode: RecordMode,
-    is_bodyweight: bool,
-    is_lateral: bool,
-    disabled: bool,
+    state: SegmentInputsState,
     on_action: EventHandler<SetAction>,
 ) -> Element {
+    let SegmentInputsState {
+        segment,
+        set_id,
+        mode,
+        lateral,
+        disabled,
+    } = state;
     if mode == RecordMode::Time {
         return rsx! {
             DurationInput {
@@ -50,32 +68,33 @@ pub(super) fn SegmentInputs(
             }
         };
     }
-    if is_lateral {
+    if lateral {
         let right_segment = segment.clone();
         let right_set_id = set_id.clone();
         return rsx! {
             SideFields {
                 segment,
                 set_id,
-                side: "left",
-                is_bodyweight,
+                side: Side::Left,
+                mode,
                 disabled,
                 on_action,
             }
             SideFields {
                 segment: right_segment,
                 set_id: right_set_id,
-                side: "right",
-                is_bodyweight,
+                side: Side::Right,
+                mode,
                 disabled,
                 on_action,
             }
         };
     }
     let weight_set_id = set_id.clone();
-    let reps_set_id = set_id.clone();
+    let reps_set_id = set_id;
     let weight_id = segment.record.id.clone();
     let reps_id = segment.record.id.clone();
+    let is_bodyweight = mode == RecordMode::BodyweightAndReps;
     rsx! {
         input {
             class: "min-h-8 w-14 shrink-0 border border-line bg-bg px-1 text-[11px]",
@@ -119,32 +138,47 @@ pub(super) fn SegmentInputs(
 fn SideFields(
     segment: SegmentView,
     set_id: String,
-    side: &'static str,
-    is_bodyweight: bool,
+    side: Side,
+    mode: RecordMode,
     disabled: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
-    let left = side == "left";
+    let left = side == Side::Left;
     let (weight, reps) = if left {
         (segment.left_weight.clone(), segment.left_reps.clone())
     } else {
         (segment.right_weight.clone(), segment.right_reps.clone())
     };
-    let weight_field = if left {
-        Field::LeftWeight
+    let (weight_field, reps_field) = if left {
+        (Field::LeftWeight, Field::LeftReps)
     } else {
-        Field::RightWeight
+        (Field::RightWeight, Field::RightReps)
     };
-    let reps_field = if left {
-        Field::LeftReps
-    } else {
-        Field::RightReps
+    let (label, weight_key, reps_key, side_name) = match side {
+        Side::Left => (
+            Key::RecordSetLeft,
+            Key::RecordSetLeftWeight,
+            Key::RecordSetLeftReps,
+            "left",
+        ),
+        Side::Right => (
+            Key::RecordSetRight,
+            Key::RecordSetRightWeight,
+            Key::RecordSetRightReps,
+            "right",
+        ),
     };
+    let is_bodyweight = mode == RecordMode::BodyweightAndReps;
     let weight_set_id = set_id.clone();
     let reps_set_id = set_id;
     let weight_id = segment.record.id.clone();
     let reps_id = segment.record.id.clone();
     rsx! {
+        span {
+            class: "shrink-0 text-[10px] text-text-sub",
+            "data-set-side-label": "{side_name}",
+            "{text(label)}"
+        }
         input {
             class: "min-h-8 w-14 shrink-0 border border-line bg-bg px-1 text-[11px]",
             r#type: "number",
@@ -152,8 +186,9 @@ fn SideFields(
             min: "0",
             step: "0.5",
             placeholder: if is_bodyweight { text(Key::RecordSetAddedWeight) } else { text(Key::RecordExerciseWeight) },
+            "aria-label": "{text(weight_key)}",
             "data-set-side-weight": "true",
-            "data-side": "{side}",
+            "data-side": "{side_name}",
             value: "{weight}",
             disabled,
             oninput: move |event| on_action.call(SetAction::Input {
@@ -170,8 +205,9 @@ fn SideFields(
             min: "1",
             step: "1",
             placeholder: "{text(Key::RecordExerciseReps)}",
+            "aria-label": "{text(reps_key)}",
             "data-set-side-reps": "true",
-            "data-side": "{side}",
+            "data-side": "{side_name}",
             value: "{reps}",
             disabled,
             oninput: move |event| on_action.call(SetAction::Input {

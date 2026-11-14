@@ -255,28 +255,14 @@ async fn reload_the_finished_record(driver: &WebDriver, server: &DevServer, trai
         .click()
         .await
         .expect("the reload button must be clickable");
-    wait_for_enabled(driver, "textarea[data-memo]").await;
-    wait_for_enabled(driver, "button[data-finish]").await;
+    browser::wait_for_enabled(driver, "textarea[data-memo]").await;
+    browser::wait_for_enabled(driver, "button[data-finish]").await;
     wait_for_absent(driver, "[data-view-only]").await;
     assert_eq!(
         d1_memo(server, training_id),
         "A のメモBC",
         "reloading must not change the server"
     );
-}
-
-async fn wait_for_enabled(driver: &WebDriver, selector: &str) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    loop {
-        if element_disabled(driver, selector).await == Some(false) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "{selector} did not become enabled"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
 }
 
 async fn wait_for_absent(driver: &WebDriver, selector: &str) {

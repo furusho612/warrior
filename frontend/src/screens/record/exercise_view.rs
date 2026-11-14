@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
+use warrior_core::exercise::{ExerciseSnapshot, RecordMode};
 use warrior_core::previous::{
     exercise_difference, total_weight_difference, ExerciseDifference, PreviousExercise,
     PreviousTraining, TotalWeightDifference,
@@ -20,7 +20,7 @@ use warrior_core::training_record::TrainingExerciseRecord;
 
 use super::set_events::{SetCompleted, SetCompletedEvents};
 use super::sets::{
-    kind_allowed, move_allowed, previous_values, Field, SegmentView, SetAction, SetView,
+    is_lateral, kind_allowed, move_allowed, previous_values, Field, SegmentView, SetAction, SetView,
 };
 use crate::ids::{new_uuid, now_iso};
 use crate::storage;
@@ -56,10 +56,6 @@ pub(super) struct ExerciseView {
     pub(super) superset: Option<SupersetGroupView>,
 }
 
-fn is_lateral(snapshot: &ExerciseSnapshot) -> bool {
-    snapshot.laterality == Laterality::Unilateral && snapshot.record_mode != RecordMode::Time
-}
-
 /// セットの保存が同時に走らないようにする印。
 #[derive(Clone, Default)]
 pub(super) struct SetSaver {
@@ -85,13 +81,11 @@ struct CurrentTotals {
 }
 
 fn current_totals(view: &ExerciseView) -> CurrentTotals {
+    let mode = view.snapshot.record_mode;
+    let lateral = is_lateral(view.snapshot.laterality, mode);
     let mut totals = CurrentTotals::default();
     for set in &view.sets {
-        let Some(record) = set.to_record(
-            &view.snapshot.exercise_id,
-            view.snapshot.record_mode,
-            is_lateral(&view.snapshot),
-        ) else {
+        let Some(record) = set.to_record(&view.snapshot.exercise_id, mode, lateral) else {
             continue;
         };
         totals.total_weight_kg += record.total_weight_kg();
@@ -143,7 +137,8 @@ pub(super) fn update_set_input(
     else {
         return;
     };
-    let lateral = is_lateral(&view.snapshot);
+    let mode = view.snapshot.record_mode;
+    let lateral = is_lateral(view.snapshot.laterality, mode);
     let Some(set) = view.sets.iter_mut().find(|set| set.record.id == set_id) else {
         return;
     };
@@ -163,7 +158,7 @@ pub(super) fn update_set_input(
         Field::RightWeight => segment.right_weight = value,
         Field::RightReps => segment.right_reps = value,
     }
-    if set.completed() && !set.values(lateral).is_complete() {
+    if set.completed() && !set.values(lateral, mode).is_complete() {
         set.record.completed = 0;
     }
     set.bump();
@@ -218,7 +213,8 @@ pub(super) fn append_segment(
     else {
         return false;
     };
-    let lateral = is_lateral(&view.snapshot);
+    let lateral = is_lateral(view.snapshot.laterality, view.snapshot.record_mode);
+    let mode = view.snapshot.record_mode;
     let Some(set) = view.sets.iter_mut().find(|set| set.record.id == set_id) else {
         return false;
     };
@@ -230,8 +226,12 @@ pub(super) fn append_segment(
         return false;
     };
     let now = now_iso();
+    let side_weight = match mode {
+        RecordMode::BodyweightAndReps => Some(0.0),
+        RecordMode::WeightAndReps | RecordMode::Time => None,
+    };
     let side = lateral.then_some(SegmentSideValues {
-        weight_kg: 0.0,
+        weight_kg: side_weight,
         reps: 0,
     });
     set.record.completed = 0;
@@ -247,10 +247,10 @@ pub(super) fn append_segment(
             momentum_reps: 0,
             assisted_reps: 0,
             duration_seconds: None,
-            left_weight_kg: side.map(|side| side.weight_kg),
+            left_weight_kg: side.and_then(|side| side.weight_kg),
             left_reps: side.map(|side| i64::from(side.reps)),
             left_duration_seconds: None,
-            right_weight_kg: side.map(|side| side.weight_kg),
+            right_weight_kg: side.and_then(|side| side.weight_kg),
             right_reps: side.map(|side| i64::from(side.reps)),
             right_duration_seconds: None,
             created_at: now.clone(),
@@ -322,8 +322,12 @@ pub(super) async fn add_set(
         .max()
         .unwrap_or(0)
         .saturating_add(1);
-    let side = is_lateral(&view.snapshot).then_some(SegmentSideValues {
-        weight_kg: 0.0,
+    let lateral = is_lateral(view.snapshot.laterality, view.snapshot.record_mode);
+    let side = lateral.then_some(SegmentSideValues {
+        weight_kg: match view.snapshot.record_mode {
+            RecordMode::BodyweightAndReps => Some(0.0),
+            RecordMode::WeightAndReps | RecordMode::Time => None,
+        },
         reps: 0,
     });
     let values = SetValues {
@@ -386,10 +390,13 @@ pub(super) async fn save_set_loop(
     if !saver.start(&set_id) {
         return;
     }
-    let lateral = lateral_for_set(views, &set_id);
+    let Some((mode, lateral)) = settings_for_set(views, &set_id) else {
+        saver.finish(&set_id);
+        return;
+    };
     while let Some(set) = find_set(views, &set_id) {
         let revision = set.revision;
-        let values = set.values(lateral);
+        let values = set.values(lateral, mode);
         let segment_records = set
             .segments
             .iter()
@@ -543,7 +550,7 @@ pub(super) async fn complete_set(
         return;
     };
     let completed = !set.completed();
-    let lateral = is_lateral(&view.snapshot);
+    let lateral = is_lateral(view.snapshot.laterality, view.snapshot.record_mode);
     if completed && !set.can_complete(view.snapshot.record_mode, lateral) {
         set_error(
             error,
@@ -573,7 +580,7 @@ pub(super) async fn complete_set(
     };
     // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
     if completed {
-        let values = set.values(lateral);
+        let values = set.values(lateral, view.snapshot.record_mode);
         let segments = set
             .segments
             .iter()
@@ -795,7 +802,13 @@ pub(super) async fn save_superset_group(
             members.push(candidate);
         }
     }
-    let Ok(members) = SupersetMembers::new(members) else {
+    // 組の並びは選択の順ではなく、種目の並びに従う。
+    let ordered = (views)()
+        .iter()
+        .map(|view| view.record.id.clone())
+        .filter(|id| members.contains(id))
+        .collect::<Vec<_>>();
+    let Ok(members) = SupersetMembers::new(ordered) else {
         set_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
@@ -803,12 +816,18 @@ pub(super) async fn save_superset_group(
         set_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
-    let position = storage
-        .training_supersets(&training_id)
-        .await
-        .map(|groups| groups.iter().map(|group| group.position).max().unwrap_or(0))
-        .unwrap_or(0)
-        .saturating_add(1);
+    let position = match storage.training_supersets(&training_id).await {
+        Ok(groups) => groups
+            .iter()
+            .map(|group| group.position)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1),
+        Err(_) => {
+            set_error(error, Key::RecordSupersetSaveFailed);
+            return false;
+        }
+    };
     let (record, operation) = match crate::superset::create(&training_id, position, &members) {
         Ok(rows) => rows,
         Err(_) => {
@@ -824,6 +843,13 @@ pub(super) async fn save_superset_group(
         set_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
+    apply_superset_group(
+        views,
+        SupersetGroupView {
+            id: record.id,
+            member_ids: members.as_slice().to_vec(),
+        },
+    );
     sync::flush_in_background();
     true
 }
@@ -832,6 +858,7 @@ pub(super) async fn save_superset_group(
 pub(super) async fn dissolve_superset(
     training_id: String,
     superset_id: String,
+    views: Signal<Vec<ExerciseView>>,
     error: Signal<Option<String>>,
 ) -> bool {
     let Ok(storage) = storage::current().await else {
@@ -853,8 +880,35 @@ pub(super) async fn dissolve_superset(
         set_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
+    clear_superset_group(views, &superset_id);
     sync::flush_in_background();
     true
+}
+
+/// 組の作成を画面へ反映する。
+fn apply_superset_group(mut views: Signal<Vec<ExerciseView>>, group: SupersetGroupView) {
+    let mut list = (views)();
+    for view in &mut list {
+        if group.member_ids.contains(&view.record.id) {
+            view.superset = Some(group.clone());
+        }
+    }
+    views.set(list);
+}
+
+/// 組の解散を画面へ反映する。
+fn clear_superset_group(mut views: Signal<Vec<ExerciseView>>, superset_id: &str) {
+    let mut list = (views)();
+    for view in &mut list {
+        if view
+            .superset
+            .as_ref()
+            .is_some_and(|group| group.id == superset_id)
+        {
+            view.superset = None;
+        }
+    }
+    views.set(list);
 }
 
 fn find_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<SetView> {
@@ -865,11 +919,14 @@ fn find_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<SetView> {
         .cloned()
 }
 
-fn lateral_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> bool {
+fn settings_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<(RecordMode, bool)> {
     (views)()
         .iter()
         .find(|view| view.sets.iter().any(|set| set.record.id == set_id))
-        .is_some_and(|view| is_lateral(&view.snapshot))
+        .map(|view| {
+            let mode = view.snapshot.record_mode;
+            (mode, is_lateral(view.snapshot.laterality, mode))
+        })
 }
 
 fn find_view_and_set(

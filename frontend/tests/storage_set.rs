@@ -1,11 +1,13 @@
 //! セットと段の端末内の保存、並べ替え、完了、削除のブラウザのテスト。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-003`、`REQ-NFR-003`、`REQ-NFR-005`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-003`、`REQ-SET-004`、`REQ-NFR-003`、`REQ-NFR-005`。
 //! セットの追加、更新、削除、並べ替え、完了が送信待ちの列を通り、段がセットの更新で
 //! 全置換され、削除でセットと一緒に消えることを確かめる。
 
-use warrior_core::set_calc::{RecordMode, SetKind, SideValue};
-use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload, SetCreatePayload};
+use warrior_core::set_calc::{RecordMode, SetKind};
+use warrior_core::sync::{
+    Operation, OperationKind, SessionUpdatePayload, SetCreatePayload, SetSidePayload,
+};
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use warrior_frontend::storage::{DiscardOutcome, Store};
 use warrior_frontend::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
@@ -120,11 +122,11 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
             reps: 0,
             duration_seconds: None,
             left: Some(SegmentSideValues {
-                weight_kg: 10.0,
+                weight_kg: Some(10.0),
                 reps: 5,
             }),
             right: Some(SegmentSideValues {
-                weight_kg: 12.0,
+                weight_kg: Some(12.0),
                 reps: 4,
             }),
         }],
@@ -153,16 +155,16 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
         serde_json::from_value(operation.payload.clone()).expect("the create payload");
     assert_eq!(
         payload.segments[0].left,
-        Some(SideValue {
-            weight_kg: 10.0,
+        Some(SetSidePayload {
+            weight_kg: Some(10.0),
             reps: 5,
             duration_seconds: None,
         })
     );
     assert_eq!(
         payload.segments[0].right,
-        Some(SideValue {
-            weight_kg: 12.0,
+        Some(SetSidePayload {
+            weight_kg: Some(12.0),
             reps: 4,
             duration_seconds: None,
         })
@@ -174,7 +176,7 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
 
     let mut partial = values.clone();
     partial.segments[0].right = Some(SegmentSideValues {
-        weight_kg: 0.0,
+        weight_kg: Some(0.0),
         reps: 0,
     });
     assert!(!partial.completed_with_values());

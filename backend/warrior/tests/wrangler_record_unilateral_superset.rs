@@ -1,9 +1,10 @@
 //! 左右別のセットとスーパーセットの結合テスト。
 //!
 //! 対応する要求: `REQ-SET-004`、`REQ-SET-005`。
-//! 左右別のセットが左右の値を保存し、総重量が左右の合算になり、どちらかが空の
-//! セットを完了できないことを確かめる。スーパーセットの組が同じトレーニングの
-//! 種目だけを受け付け、種目の削除で 2 つ未満になった組を解散することを確かめる。
+//! 左右別のセットが左右の値を保存し、総重量が左右の合算になり、左右の片方または両方が
+//! 無いセットを作成・完了できないことを確かめる。スーパーセットの組が同じトレーニングの
+//! 種目だけを受け付け、既に組に属する種目を含む組を拒否し、種目の削除で 2 つ未満になった
+//! 組を解散することを確かめる。
 
 #[allow(dead_code)]
 #[path = "support/record_set.rs"]
@@ -15,8 +16,8 @@ use serde_json::{json, Value};
 use support::{record_common, DevServer};
 use warrior_core::base64url;
 
-const UNILATERAL_PORT: u16 = 8831;
-const SUPERSET_PORT: u16 = 8832;
+const UNILATERAL_PORT: u16 = 8838;
+const SUPERSET_PORT: u16 = 8839;
 
 const UNILATERAL_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5910";
 const UNILATERAL_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5911";
@@ -35,6 +36,19 @@ const DROP_SEGMENT_TWO_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5933";
 const PARTIAL_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5940";
 const PARTIAL_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5941";
 const PARTIAL_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5942";
+const NO_SIDE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5990";
+const NO_SIDE_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5991";
+const NO_SIDE_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5992";
+const NO_WEIGHT_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5993";
+const NO_WEIGHT_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5994";
+const NO_WEIGHT_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5995";
+const NO_WEIGHT_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c599b";
+const NO_WEIGHT_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c599c";
+const DRAFT_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5996";
+const DRAFT_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5997";
+const DRAFT_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5998";
+const DRAFT_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5999";
+const DRAFT_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c599a";
 const COMPLETE_NORMAL_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5950";
 const COMPLETE_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5951";
 const PARTIAL_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5952";
@@ -49,6 +63,10 @@ const DELETE_SUPERSET_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5974
 const DELETE_SUPERSET_AGAIN_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5975";
 const EMPTY_SUPERSET_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5976";
 const EMPTY_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5977";
+const ONE_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a1";
+const ONE_MEMBER_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a2";
+const DUPLICATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a3";
+const DUPLICATE_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a4";
 const FOREIGN_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5978";
 const FOREIGN_MEMBER_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5979";
 const THREE_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5980";
@@ -73,6 +91,7 @@ fn unilateral_sets_sum_both_sides_and_require_both_to_complete() {
     create_and_complete_the_normal_set(&server, &session_cookie);
     create_and_complete_the_drop_set(&server, &session_cookie);
     reject_the_partial_set(&server, &session_cookie);
+    reject_the_set_without_sides(&server, &session_cookie);
     reject_a_superset_from_another_terminal(&server, &other_cookie);
     finish_and_check_the_unilateral_totals(&server, &session_cookie);
 }
@@ -91,6 +110,7 @@ fn supersets_keep_members_in_order_and_dissolve_when_one_remains() {
     seed_superset_exercises(&server);
 
     create_and_reorder_the_two_member_group(&server, &session_cookie);
+    reject_a_duplicate_group(&server, &session_cookie);
     delete_the_two_member_group(&server, &session_cookie);
     reject_the_empty_and_foreign_groups(&server, &session_cookie);
     dissolve_the_three_member_group(&server, &session_cookie);
@@ -241,7 +261,29 @@ fn reject_the_partial_set(server: &DevServer, cookie: &str) {
         })],
     );
     let response = post(server, cookie, &operation);
-    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(count(server, "sets", PARTIAL_SET_ID), 0);
+    assert_eq!(applied_count(server, PARTIAL_OPERATION_ID), 0);
+
+    // 左右の片方だけを持つセットは保存できないため、直接用意して完了の検証だけを行う。
+    record_common::seed_set(
+        server,
+        PARTIAL_SET_ID,
+        USER_ID,
+        UNILATERAL_ROW_ID,
+        3,
+        "normal",
+        0,
+    );
+    server
+        .execute_d1_json(&format!(
+            "INSERT INTO set_segments \
+             (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, \
+              left_weight_kg, left_reps, created_at, updated_at) \
+             VALUES ('{PARTIAL_SEGMENT_ID}', '{USER_ID}', '{PARTIAL_SET_ID}', 1, 0.0, 0, 0, 0, \
+              10.0, 5, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .expect("the partial segment must be seeded");
 
     let response = post(
         server,
@@ -262,6 +304,178 @@ fn reject_the_partial_set(server: &DevServer, cookie: &str) {
         0
     );
     assert_eq!(applied_count(server, PARTIAL_COMPLETE_OPERATION_ID), 0);
+}
+
+fn reject_the_set_without_sides(server: &DevServer, cookie: &str) {
+    let operation = create_operation(
+        NO_SIDE_OPERATION_ID,
+        TRAINING_ID,
+        UNILATERAL_ROW_ID,
+        NO_SIDE_SET_ID,
+        SetSpec {
+            position: 4,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![json!({
+            "segment_id": NO_SIDE_SEGMENT_ID,
+            "position": 1,
+            "weight_kg": 100.0,
+            "reps": 5,
+            "momentum_reps": 0,
+            "assisted_reps": 0,
+            "duration_seconds": null,
+            "left": null,
+            "right": null
+        })],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(count(server, "sets", NO_SIDE_SET_ID), 0);
+    assert_eq!(applied_count(server, NO_SIDE_OPERATION_ID), 0);
+
+    reject_a_missing_side_weight(server, cookie);
+    reject_a_completed_update_and_complete_without_reps(server, cookie);
+}
+
+fn reject_a_missing_side_weight(server: &DevServer, cookie: &str) {
+    let segments = vec![json!({
+        "segment_id": NO_WEIGHT_SEGMENT_ID,
+        "position": 1,
+        "weight_kg": 0.0,
+        "reps": 0,
+        "momentum_reps": 0,
+        "assisted_reps": 0,
+        "duration_seconds": null,
+        "left": {"weight_kg": null, "reps": 5, "duration_seconds": null},
+        "right": {"weight_kg": 12.0, "reps": 4, "duration_seconds": null}
+    })];
+    let operation = create_operation(
+        NO_WEIGHT_OPERATION_ID,
+        TRAINING_ID,
+        UNILATERAL_ROW_ID,
+        NO_WEIGHT_SET_ID,
+        SetSpec {
+            position: 5,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        segments.clone(),
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    // 重量欄が空の左右別のセットは完了できない。
+    let operation = update_operation(
+        NO_WEIGHT_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        NO_WEIGHT_SET_ID,
+        UpdateSpec {
+            position: 5,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        segments,
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{NO_WEIGHT_SET_ID}'")
+        )["completed"],
+        0,
+        "an update must not complete a set whose weight is missing"
+    );
+    assert_eq!(applied_count(server, NO_WEIGHT_UPDATE_OPERATION_ID), 1);
+
+    let response = post(
+        server,
+        cookie,
+        &complete_operation(
+            NO_WEIGHT_COMPLETE_OPERATION_ID,
+            TRAINING_ID,
+            NO_WEIGHT_SET_ID,
+            true,
+        ),
+    );
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{NO_WEIGHT_SET_ID}'")
+        )["completed"],
+        0
+    );
+    assert_eq!(applied_count(server, NO_WEIGHT_COMPLETE_OPERATION_ID), 0);
+}
+
+fn reject_a_completed_update_and_complete_without_reps(server: &DevServer, cookie: &str) {
+    let segments = vec![json!({
+        "segment_id": DRAFT_SEGMENT_ID,
+        "position": 1,
+        "weight_kg": 0.0,
+        "reps": 0,
+        "momentum_reps": 0,
+        "assisted_reps": 0,
+        "duration_seconds": null,
+        "left": {"weight_kg": 10.0, "reps": 0, "duration_seconds": null},
+        "right": {"weight_kg": 12.0, "reps": 0, "duration_seconds": null}
+    })];
+    let operation = create_operation(
+        DRAFT_OPERATION_ID,
+        TRAINING_ID,
+        UNILATERAL_ROW_ID,
+        DRAFT_SET_ID,
+        SetSpec {
+            position: 6,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        segments.clone(),
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    let operation = update_operation(
+        DRAFT_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        DRAFT_SET_ID,
+        UpdateSpec {
+            position: 6,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        segments,
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{DRAFT_SET_ID}'")
+        )["completed"],
+        0,
+        "an update must not complete a set without reps"
+    );
+    assert_eq!(applied_count(server, DRAFT_UPDATE_OPERATION_ID), 1);
+
+    let response = post(
+        server,
+        cookie,
+        &complete_operation(DRAFT_COMPLETE_OPERATION_ID, TRAINING_ID, DRAFT_SET_ID, true),
+    );
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{DRAFT_SET_ID}'")
+        )["completed"],
+        0
+    );
+    assert_eq!(applied_count(server, DRAFT_COMPLETE_OPERATION_ID), 0);
 }
 
 fn reject_a_superset_from_another_terminal(server: &DevServer, other_cookie: &str) {
@@ -362,6 +576,16 @@ fn reject_the_empty_and_foreign_groups(server: &DevServer, cookie: &str) {
     assert_eq!(count(server, "supersets", EMPTY_SUPERSET_ID), 0);
 
     let operation = superset_create_operation(
+        ONE_MEMBER_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        ONE_MEMBER_SUPERSET_ID,
+        &[FINISHED_ROW_ID],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(count(server, "supersets", ONE_MEMBER_SUPERSET_ID), 0);
+
+    let operation = superset_create_operation(
         FOREIGN_MEMBER_OPERATION_ID,
         FINISHED_TRAINING_ID,
         FOREIGN_MEMBER_SUPERSET_ID,
@@ -370,6 +594,19 @@ fn reject_the_empty_and_foreign_groups(server: &DevServer, cookie: &str) {
     let response = post(server, cookie, &operation);
     assert_eq!(response.status, 400, "{}", response.body);
     assert_eq!(count(server, "supersets", FOREIGN_MEMBER_SUPERSET_ID), 0);
+}
+
+fn reject_a_duplicate_group(server: &DevServer, cookie: &str) {
+    let operation = superset_create_operation(
+        DUPLICATE_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        DUPLICATE_SUPERSET_ID,
+        &[SECOND_ROW_ID, THIRD_ROW_ID],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(count(server, "supersets", DUPLICATE_SUPERSET_ID), 0);
+    assert_eq!(applied_count(server, DUPLICATE_OPERATION_ID), 0);
 }
 
 fn dissolve_the_three_member_group(server: &DevServer, cookie: &str) {

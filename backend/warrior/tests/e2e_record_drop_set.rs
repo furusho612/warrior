@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use support::browser::{self, Browser};
 use support::record_common;
-use support::{DevServer, TestOidc};
+use support::{current_user_id, seed_profile, DevServer, TestOidc};
 use thirtyfour::components::SelectElement;
 use thirtyfour::prelude::*;
 
@@ -213,7 +213,7 @@ async fn add_set(driver: &WebDriver) -> String {
     browser::wait_for_present(driver, "[data-add-set]").await;
     browser::click(driver, "[data-add-set]").await;
     browser::wait_for_present(driver, "[data-set-row]").await;
-    let rows = set_ids(driver).await;
+    let rows = browser::set_ids(driver).await;
     rows.last().cloned().expect("the new set id")
 }
 
@@ -252,18 +252,6 @@ async fn option_disabled(driver: &WebDriver, set_id: &str, kind: &str) -> bool {
     .await
     .as_bool()
     .unwrap_or(false)
-}
-
-async fn set_ids(driver: &WebDriver) -> Vec<String> {
-    let value = browser::eval_json(
-        driver,
-        "const done = arguments[arguments.length - 1]; \
-         done(JSON.stringify(Array.from(document.querySelectorAll('[data-set-row]')) \
-           .map((element) => element.getAttribute('data-set-id'))));",
-        Vec::new(),
-    )
-    .await;
-    values(value)
 }
 
 async fn segment_ids(driver: &WebDriver, set_id: &str) -> Vec<String> {
@@ -329,30 +317,6 @@ async fn finish_and_check_the_summary(driver: &WebDriver) {
         browser::attribute(driver, "[data-summary]", "data-total-weight-kg").await,
         "1740"
     );
-}
-
-async fn current_user_id(driver: &WebDriver) -> String {
-    let me = browser::eval_string(
-        driver,
-        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
-        Vec::new(),
-    )
-    .await;
-    serde_json::from_str::<Value>(&me)
-        .expect("the me response is JSON")
-        .get("id")
-        .and_then(|value| value.as_str())
-        .expect("the user id")
-        .to_owned()
-}
-
-fn seed_profile(server: &DevServer, user_id: &str) {
-    server
-        .execute_d1_json(&format!(
-            "INSERT INTO profiles (user_id, weight_kg, created_at, updated_at) \
-             VALUES ('{user_id}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ))
-        .expect("the profile must be seeded");
 }
 
 async fn wait_for_complete_ready(driver: &WebDriver, set_id: &str) {

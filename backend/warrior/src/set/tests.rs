@@ -3,16 +3,17 @@
 //! 対応する要求: `REQ-SET-001`、`REQ-SET-002`。
 
 use serde_json::json;
-use warrior_core::set_calc::{SetKind, SideValue};
+use warrior_core::set_calc::SetKind;
 use warrior_core::sql::SqlValue;
 use warrior_core::sync::{
     Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
-    SetReorderPayload, SetSegmentPayload, SetUpdatePayload, ValidatedOperation, ValidatedPayload,
+    SetReorderPayload, SetSegmentPayload, SetSidePayload, SetUpdatePayload, ValidatedOperation,
+    ValidatedPayload,
 };
 
+use super::bindings::{applied_exists, ownership_condition_placeholder, segment_bindings};
 use super::{
-    applied_exists, delete_set_statement, ownership_condition_placeholder, same_set_ids,
-    segment_bindings, set_statements, update_set_statement, ExerciseOwnership,
+    delete_set_statement, same_set_ids, set_statements, update_set_statement, ExerciseOwnership,
 };
 
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5301";
@@ -82,6 +83,7 @@ fn the_create_statements_scope_the_set_and_the_segments() {
         &validated,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
+        None,
     )
     .expect("data statements");
     assert!(data
@@ -145,6 +147,7 @@ fn the_update_and_delete_statements_keep_the_training_scope() {
         &update,
         ExerciseOwnership::Finished,
         NOW,
+        None,
     );
     assert!(statement
         .sql()
@@ -185,6 +188,7 @@ fn every_set_statement_uses_the_applied_operation_condition() {
         &create,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
+        None,
     )
     .expect("data statements");
     for child in &data.children {
@@ -201,7 +205,7 @@ fn every_set_statement_uses_the_applied_operation_condition() {
             set_id: SET_ID.to_owned(),
         }),
     );
-    let data = set_statements(USER_ID, &delete, ExerciseOwnership::Finished, NOW)
+    let data = set_statements(USER_ID, &delete, ExerciseOwnership::Finished, NOW, None)
         .expect("data statements");
     assert_eq!(data.children.len(), 1);
     assert!(data.children[0]
@@ -225,6 +229,7 @@ fn the_reorder_statement_numbers_the_positions_from_one() {
         &validated,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
+        None,
     )
     .expect("data statements");
     assert!(data.main.sql().contains("position = CASE id"));
@@ -253,7 +258,7 @@ fn the_complete_statement_sets_the_completed_flag() {
         OperationKind::SetComplete,
         ValidatedPayload::SetComplete(payload),
     );
-    let data = set_statements(USER_ID, &validated, ExerciseOwnership::Finished, NOW)
+    let data = set_statements(USER_ID, &validated, ExerciseOwnership::Finished, NOW, None)
         .expect("data statements");
     assert!(data.main.sql().contains("UPDATE sets SET completed = ?"));
     assert_eq!(data.main.bindings()[0], SqlValue::Integer(1));
@@ -276,8 +281,8 @@ fn set_ids_match_regardless_of_the_input_order() {
 fn segment_bindings_keep_the_sides_and_the_durations() {
     let mut segment = segment();
     segment.duration_seconds = Some(30);
-    segment.left = Some(SideValue {
-        weight_kg: 10.0,
+    segment.left = Some(SetSidePayload {
+        weight_kg: Some(10.0),
         reps: 4,
         duration_seconds: Some(20),
     });

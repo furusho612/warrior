@@ -1,14 +1,16 @@
 //! 種目の木の端末内の保存、並べ替え、削除と、失敗した操作の破棄のブラウザのテスト。
 //!
-//! 対応する要求: `REQ-REC-002`、`REQ-NFR-005`。
+//! 対応する要求: `REQ-REC-002`、`REQ-NFR-005`、`REQ-SET-005`。
 //! 種目の作成、削除、並べ替えが送信待ちの列を通り、削除でセットと段と参照が消えること、
 //! 失敗した作成の破棄で対象の行だけが消え、失敗した削除の破棄でサーバーの記録から
 //! 対象の種目だけを戻せることを確かめる。
 
 use serde_json::json;
+use warrior_core::superset::SupersetMembers;
 use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload};
 use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 use warrior_frontend::storage::{DiscardOutcome, Store};
+use warrior_frontend::superset;
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -489,6 +491,21 @@ async fn discarding_a_failed_exercise_reorder_restores_positions_and_keeps_other
             .await
             .expect("the exercise must succeed");
     }
+    let members = SupersetMembers::new(vec![
+        EXERCISE_ROW_ID.to_owned(),
+        OTHER_EXERCISE_ROW_ID.to_owned(),
+    ])
+    .expect("a group of two");
+    let (record, operation) =
+        superset::create(TRAINING_ID, 1, &members).expect("the group creation");
+    storage
+        .save_superset_create(&record, &operation)
+        .await
+        .expect("the group must be saved");
+    storage
+        .mark_success(&operation.operation_id)
+        .await
+        .expect("the group creation must succeed");
     storage
         .put_record(
             Store::Sets,
@@ -509,6 +526,18 @@ async fn discarding_a_failed_exercise_reorder_restores_positions_and_keeps_other
         )
         .await
         .expect("the reorder must be saved");
+    let groups = storage
+        .training_supersets(TRAINING_ID)
+        .await
+        .expect("the groups must be readable");
+    assert_eq!(
+        groups[0]
+            .members
+            .iter()
+            .map(|member| member.training_exercise_id.clone())
+            .collect::<Vec<_>>(),
+        vec![OTHER_EXERCISE_ROW_ID.to_owned(), EXERCISE_ROW_ID.to_owned()]
+    );
     storage
         .mark_sending(REORDER_EXERCISE_ID)
         .await
@@ -545,6 +574,20 @@ async fn discarding_a_failed_exercise_reorder_restores_positions_and_keeps_other
     assert_eq!(exercises[0].position, 1);
     assert_eq!(exercises[1].id, OTHER_EXERCISE_ROW_ID);
     assert_eq!(exercises[1].position, 2);
+    let groups = storage
+        .training_supersets(TRAINING_ID)
+        .await
+        .expect("the groups must be readable");
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].id, EXERCISE_SUPERSET_ID);
+    assert_eq!(
+        groups[0]
+            .members
+            .iter()
+            .map(|member| member.training_exercise_id.clone())
+            .collect::<Vec<_>>(),
+        vec![EXERCISE_ROW_ID.to_owned(), OTHER_EXERCISE_ROW_ID.to_owned()]
+    );
     assert_eq!(record_ids(&storage, Store::Sets).await, vec![OTHER_SET_ID]);
     let entries = storage.outbox_entries().await.expect("the outbox");
     assert_eq!(entries.len(), 1);

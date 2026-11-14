@@ -29,6 +29,7 @@ mod failed_operations;
 mod ownership;
 mod set_events;
 mod set_inputs;
+mod set_table;
 mod sets;
 mod superset_panel;
 
