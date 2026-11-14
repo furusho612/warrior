@@ -31,6 +31,7 @@ pub fn validate(profile: &Profile) -> Result<(), Key> {
 
 fn error_key(error: ProfileError) -> Key {
     match error {
+        ProfileError::Empty => Key::ProfileInvalidEmpty,
         ProfileError::HeightOutOfRange => Key::ProfileInvalidHeight,
         ProfileError::WeightOutOfRange => Key::ProfileInvalidWeight,
         ProfileError::FutureBirthDate => Key::ProfileInvalidBirthDate,
@@ -90,6 +91,18 @@ impl ProfileForm {
             training_days_per_week: self.training_days_per_week,
             activity_level: self.activity_level,
         })
+    }
+
+    /// すべての入力が空か。
+    pub fn is_empty(&self) -> bool {
+        self.height_cm.trim().is_empty()
+            && self.weight_kg.trim().is_empty()
+            && self.birth_date.trim().is_empty()
+            && self.sex.is_none()
+            && self.training_experience.is_none()
+            && self.goal.is_none()
+            && self.training_days_per_week.is_none()
+            && self.activity_level.is_none()
     }
 }
 

@@ -142,6 +142,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let save_error = use_signal(|| Option::<String>::None);
     let view_only = use_signal(|| false);
     let profile_prompt = use_signal(|| false);
+    let profile_checked = use_signal(|| false);
     let status = use_signal(SyncStatus::default);
     let failed = use_signal(Vec::<OutboxEntry>::new);
     let confirmed = use_signal(String::new);
@@ -177,9 +178,11 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
 
     use_effect(move || {
         let mut profile_prompt = profile_prompt;
+        let mut profile_checked = profile_checked;
         spawn(async move {
             if let Ok(profile) = crate::profile::fetch().await {
                 profile_prompt.set(profile.is_none_or(|profile| profile.body_profile().is_none()));
+                profile_checked.set(true);
             }
         });
     });
@@ -205,6 +208,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-route": "/record/:training_id",
             "data-session-id": training_id,
             "data-persisted-memo": "{persisted}",
+            "data-profile-checked": if profile_checked() { "true" } else { "false" },
             RecordHeader { signals, state_signals }
             RecordOwnership {
                 training_id: training_id.clone(),

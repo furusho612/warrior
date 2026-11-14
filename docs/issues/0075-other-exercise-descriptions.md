@@ -43,6 +43,6 @@
 
 ## 解決方法
 
-`migrations/0010_exercise_descriptions.sql` に、106 種の `instructions`、`cautions`、`tips` の UPDATE を置く。
+`migrations/0011_exercise_descriptions.sql` に、106 種の `instructions`、`cautions`、`tips` の UPDATE を置く。
 `backend/warrior/tests/exercise_seed.rs` に、106 種の 3 列が空でないことを確かめるテストを追加する。
 0039 と 0040 は、既存の列を表示し、入力を保存する。

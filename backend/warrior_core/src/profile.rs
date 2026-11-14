@@ -1,8 +1,11 @@
 //! 身体情報と目的の設定 (PRD の「身体情報」「目的」「入力と保存の上限」「安全」)。
 //!
 //! 保存するのは最新値だけであり、身体情報を更新しても、セットを記録した時点の体重は
-//! [`BodyWeightAtRecord`] が保つ。身長、体重、生年月日、性別が揃っているときだけ、
-//! 体重を使う計算を行う。
+//! [`BodyWeightAtRecord`] が保つ。基礎代謝は身長、体重、生年月日、性別が揃っているときだけ
+//! 計算する。BMI と記録時の体重は、身長と体重、または体重だけで計算できる。
+//!
+//! 対応する要求: `REQ-PRF-001`、`REQ-PRF-002`、`REQ-PRF-003`、`REQ-PRF-004`、
+//! `REQ-PRF-005`、`REQ-LIB-004`、`REQ-NFR-018`、`REQ-NFR-019`。
 
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +54,7 @@ impl TrainingExperience {
 
 /// 利用者の身体情報、目的、日数、活動量。未入力の項目は None で持つ。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Profile {
     /// 身長 (cm)。
     pub height_cm: Option<f64>,
@@ -74,6 +77,8 @@ pub struct Profile {
 /// 入力の検証の誤り。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileError {
+    /// すべての項目が未入力である。
+    Empty,
     /// 身長が 100 cm 以上 250 cm 以下でない。
     HeightOutOfRange,
     /// 体重が 20 kg 以上 300 kg 以下でない。
@@ -114,15 +119,13 @@ impl BodyWeightAtRecord {
     /// 記録した時点の体重から作る。正の有限の値でない体重は無いものとして扱う。
     pub fn new(body_weight_kg: Option<f64>) -> Self {
         Self {
-            body_weight_kg: body_weight_kg.filter(|weight| weight.is_finite() && *weight > 0.0),
+            body_weight_kg: body_weight_kg.filter(is_valid_body_weight),
         }
     }
 
-    /// 身体情報から、セットを記録した時点の体重を取る。
-    ///
-    /// 4 つの身体情報が揃っていないときは、体重を使う計算をしない。
+    /// 身体情報の体重から、セットを記録した時点の体重を取る。
     pub fn from_profile(profile: &Profile) -> Self {
-        Self::new(profile.body_profile().map(|body| body.weight_kg))
+        Self::new(profile.weight_kg)
     }
 
     /// 記録した時点の体重。
@@ -132,12 +135,37 @@ impl BodyWeightAtRecord {
 
     /// 体重にセットごとの加重を足した重量。体重が無いときは None。
     pub fn set_weight_kg(self, added_weight_kg: f64) -> Option<f64> {
-        self.body_weight_kg.map(|weight| weight + added_weight_kg)
+        bodyweight_set_weight(self.body_weight_kg, added_weight_kg)
     }
 }
 
+/// 記録した時点の体重にセットごとの加重を足した重量。
+///
+/// 体重が None、0 以下、NaN、無限大のときは、重量を計算せず None を返す。
+pub fn bodyweight_set_weight(body_weight_kg: Option<f64>, added_weight_kg: f64) -> Option<f64> {
+    body_weight_kg
+        .filter(is_valid_body_weight)
+        .map(|weight| weight + added_weight_kg)
+}
+
+fn is_valid_body_weight(weight: &f64) -> bool {
+    weight.is_finite() && *weight > 0.0
+}
+
 impl Profile {
-    /// 体重を使う計算に必要な 4 つの身体情報。揃っていないときは None。
+    /// すべての項目が未入力か。
+    pub fn is_empty(&self) -> bool {
+        self.height_cm.is_none()
+            && self.weight_kg.is_none()
+            && self.birth_date.is_none()
+            && self.sex.is_none()
+            && self.training_experience.is_none()
+            && self.goal.is_none()
+            && self.training_days_per_week.is_none()
+            && self.activity_level.is_none()
+    }
+
+    /// 基礎代謝に必要な 4 つの身体情報。揃っていないときは None。
     pub fn body_profile(&self) -> Option<NutritionProfile> {
         Some(NutritionProfile {
             height_cm: self.height_cm?,
@@ -152,13 +180,14 @@ impl Profile {
         nutrition::age_on(self.birth_date?, today).ok()
     }
 
-    /// BMI。身体情報が揃っていないときは None。
+    /// BMI。身長と体重が揃っていないときは None。
     ///
     /// 丸めずに [`LOW_BMI`] と比較する。
     pub fn bmi(&self) -> Option<f64> {
-        let body = self.body_profile()?;
-        let height_m = body.height_cm / 100.0;
-        Some(body.weight_kg / (height_m * height_m))
+        let height_cm = self.height_cm?;
+        let weight_kg = self.weight_kg?;
+        let height_m = height_cm / 100.0;
+        Some(weight_kg / (height_m * height_m))
     }
 
     /// 指定した日付での基礎代謝。身体情報が揃っていないときは None。
@@ -169,6 +198,9 @@ impl Profile {
     }
 
     /// 指定した日付での注意書きの要否。
+    ///
+    /// 満年齢は生年月日から、BMI は身長と体重から求める。BMI の判定には生年月日と性別を
+    /// 必要としない。
     pub fn safety_notice_on(&self, today: JstDate) -> SafetyNotice {
         SafetyNotice {
             underage: self.age_on(today).is_some_and(|age| age < ADULT_AGE),
@@ -178,8 +210,12 @@ impl Profile {
 
     /// 入力の範囲と、計算した基礎代謝が正の値になることを検証する。
     ///
-    /// 未入力の項目は検証しない。4 つの身体情報が揃っているときだけ基礎代謝を計算する。
+    /// 空のプロフィールは拒否する。未入力の項目は検証しない。4 つの身体情報が揃っている
+    /// ときだけ基礎代謝を計算する。
     pub fn validate(&self, today: JstDate) -> Result<(), ProfileError> {
+        if self.is_empty() {
+            return Err(ProfileError::Empty);
+        }
         if let Some(height) = self.height_cm {
             if !(HEIGHT_MIN_CM..=HEIGHT_MAX_CM).contains(&height) {
                 return Err(ProfileError::HeightOutOfRange);
@@ -216,13 +252,14 @@ mod tests {
     //! 身体情報と目的の設定の例示テスト。
     //!
     //! 対応する要求: `REQ-PRF-001`、`REQ-PRF-003`、`REQ-PRF-004`、`REQ-PRF-005`、
-    //! `REQ-NFR-018`、`REQ-NFR-019`。保存の置き換えは結合テストと性質テストが担う。
+    //! `REQ-LIB-004`、`REQ-NFR-018`、`REQ-NFR-019`。保存の置き換えは結合テストと性質テストが担う。
 
     use serde_json::json;
 
     use super::{
-        BodyWeightAtRecord, Profile, ProfileError, SafetyNotice, TrainingExperience, ADULT_AGE,
-        HEIGHT_MAX_CM, HEIGHT_MIN_CM, LOW_BMI, WEIGHT_MAX_KG, WEIGHT_MIN_KG,
+        bodyweight_set_weight, BodyWeightAtRecord, Profile, ProfileError, SafetyNotice,
+        TrainingExperience, ADULT_AGE, HEIGHT_MAX_CM, HEIGHT_MIN_CM, LOW_BMI, WEIGHT_MAX_KG,
+        WEIGHT_MIN_KG,
     };
     use crate::jst::JstDate;
     use crate::nutrition::{ActivityLevel, Goal, Sex};
@@ -399,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn req_prf_005_body_weight_calculations_need_the_four_body_fields() {
+    fn req_prf_001_basal_metabolism_needs_the_four_body_fields() {
         for field in 0..4 {
             let mut input = profile();
             match field {
@@ -409,15 +446,41 @@ mod tests {
                 _ => input.sex = None,
             }
             assert_eq!(input.body_profile(), None);
-            assert_eq!(input.bmi(), None);
             assert_eq!(input.basal_metabolism_on(today()), None);
-            assert_eq!(input.safety_notice_on(today()), SafetyNotice::default());
-            assert_eq!(
-                BodyWeightAtRecord::from_profile(&input).set_weight_kg(10.0),
-                None
-            );
             assert_eq!(input.validate(today()), Ok(()));
         }
+    }
+
+    #[test]
+    fn req_nfr_018_reports_low_bmi_with_only_the_height_and_weight() {
+        let input = Profile {
+            height_cm: Some(150.0),
+            weight_kg: Some(40.0),
+            ..Profile::default()
+        };
+        let bmi = input.bmi().expect("the height and weight are present");
+        assert!((bmi - 17.777_777_777_777_78).abs() < 1e-12);
+        assert_eq!(
+            input.safety_notice_on(today()),
+            SafetyNotice {
+                underage: false,
+                underweight: true
+            }
+        );
+        assert_eq!(input.body_profile(), None);
+        assert_eq!(input.basal_metabolism_on(today()), None);
+        assert_eq!(input.validate(today()), Ok(()));
+        let recorded = BodyWeightAtRecord::from_profile(&input);
+        assert_eq!(recorded.body_weight_kg(), Some(40.0));
+        assert_eq!(recorded.set_weight_kg(5.0), Some(45.0));
+    }
+
+    #[test]
+    fn req_prf_002_rejects_an_empty_profile() {
+        assert_eq!(
+            Profile::default().validate(today()),
+            Err(ProfileError::Empty)
+        );
     }
 
     #[test]
@@ -427,8 +490,12 @@ mod tests {
         assert_eq!(recorded.body_weight_kg(), Some(70.0));
         assert_eq!(recorded.set_weight_kg(10.0), Some(80.0));
         assert_eq!(recorded.set_weight_kg(0.0), Some(70.0));
-        assert_eq!(BodyWeightAtRecord::new(None).set_weight_kg(10.0), None);
-        assert_eq!(BodyWeightAtRecord::new(Some(0.0)).set_weight_kg(10.0), None);
+        assert_eq!(bodyweight_set_weight(None, 10.0), None);
+        assert_eq!(bodyweight_set_weight(Some(0.0), 10.0), None);
+        assert_eq!(bodyweight_set_weight(Some(-1.0), 10.0), None);
+        assert_eq!(bodyweight_set_weight(Some(f64::NAN), 10.0), None);
+        assert_eq!(bodyweight_set_weight(Some(f64::INFINITY), 10.0), None);
+        assert_eq!(bodyweight_set_weight(Some(70.0), 10.0), Some(80.0));
     }
 
     #[test]
@@ -463,5 +530,12 @@ mod tests {
         );
         let restored: Profile = serde_json::from_value(value).expect("deserializable profile");
         assert_eq!(restored, profile());
+    }
+
+    #[test]
+    fn req_prf_001_rejects_unknown_fields() {
+        let mut value = serde_json::to_value(profile()).expect("serializable profile");
+        value["unknown"] = json!(1);
+        assert!(serde_json::from_value::<Profile>(value).is_err());
     }
 }

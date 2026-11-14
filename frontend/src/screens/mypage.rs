@@ -39,6 +39,7 @@ fn ProfileSettings() -> Element {
     });
 
     let saved_profile = saved();
+    let editable = loaded() && load_error().is_none() && !form().is_empty();
 
     rsx! {
         div {
@@ -58,6 +59,7 @@ fn ProfileSettings() -> Element {
                 button {
                     r#type: "button",
                     class: "min-h-11 border border-line px-3 text-[13px]",
+                    "data-profile-retry": "true",
                     onclick: move |_| {
                         let mut reload = reload;
                         reload += 1;
@@ -72,7 +74,7 @@ fn ProfileSettings() -> Element {
                 r#type: "button",
                 class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
                 "data-profile-save": "true",
-                disabled: saving(),
+                disabled: saving() || !editable,
                 onclick: move |_| {
                     spawn(save_profile(form, saving, save_error, saved, save_count));
                 },

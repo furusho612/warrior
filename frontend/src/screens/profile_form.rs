@@ -271,7 +271,7 @@ pub fn ProfileSummary(profile: Profile) -> Element {
     let age = current_date.and_then(|date| profile.age_on(date));
     let bmi = profile.bmi();
     let age_value = age.map(|age| age.to_string()).unwrap_or_default();
-    let bmi_value = bmi.map(|bmi| format!("{bmi:.1}")).unwrap_or_default();
+    let bmi_value = bmi.map(|bmi| format!("{bmi:.2}")).unwrap_or_default();
 
     rsx! {
         dl { class: "flex flex-wrap gap-x-4 gap-y-1 text-[13px]",

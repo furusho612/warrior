@@ -18,6 +18,7 @@ pub fn OnboardingPanel(on_done: EventHandler<()>) -> Element {
     let saved = use_signal(|| Option::<Profile>::None);
     let saved_profile = saved();
     let has_saved = saved_profile.is_some();
+    let empty = form().is_empty();
 
     rsx! {
         section {
@@ -47,7 +48,7 @@ pub fn OnboardingPanel(on_done: EventHandler<()>) -> Element {
                         r#type: "button",
                         class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
                         "data-onboarding-save": "true",
-                        disabled: saving(),
+                        disabled: saving() || empty,
                         onclick: move |_| {
                             spawn(register(form, saving, error, saved));
                         },

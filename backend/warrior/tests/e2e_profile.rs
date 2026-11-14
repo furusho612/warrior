@@ -1,7 +1,7 @@
 //! 身体情報と目的の設定の E2E。
 //!
 //! 対応する要求: `REQ-PRF-001`、`REQ-PRF-002`、`REQ-PRF-003`、`REQ-PRF-004`、
-//! `REQ-PRF-005`、`REQ-MYP-001`、`REQ-NFR-018`。
+//! `REQ-PRF-005`、`REQ-LIB-004`、`REQ-MYP-001`、`REQ-NFR-018`、`REQ-NFR-019`。
 //! 初回の登録、更新、目的と日数の変更、注意書きの表示と非表示、身体情報を飛ばした記録、
 //! マイページからの登録、身体情報の入力を促す案内を実ブラウザで確かめる。
 //! Safari は対象外とする。Worker は 8820、テスト専用の OIDC の提供者は 8821 を使う。
@@ -49,6 +49,7 @@ async fn registers_updates_and_skips_the_body_profile() {
     let driver = browser::open(Browser::Chrome, &driver_process).await;
 
     register_from_onboarding(&driver, &server, &provider).await;
+    check_mypage_load_failure(&driver, &server).await;
     update_and_check_the_limits(&driver, &server).await;
     browser::logout(&driver).await;
     skip_and_register_from_mypage(&driver, &server, &provider).await;
@@ -60,6 +61,10 @@ async fn registers_updates_and_skips_the_body_profile() {
 async fn register_from_onboarding(driver: &WebDriver, server: &DevServer, provider: &TestOidc) {
     login(driver, server, provider, SUB_A).await;
     wait_for_onboarding(driver, true).await;
+    assert!(
+        !is_enabled(driver, "[data-onboarding-save]").await,
+        "the empty onboarding form must not be saved"
+    );
 
     let birth_date = birth_date_years_ago(10);
     set_input(driver, "[data-profile-field=\"height\"] input", "170").await;
@@ -121,6 +126,49 @@ async fn register_from_onboarding(driver: &WebDriver, server: &DevServer, provid
         "true",
     )
     .await;
+}
+
+async fn check_mypage_load_failure(driver: &WebDriver, server: &DevServer) {
+    driver
+        .goto(server.origin())
+        .await
+        .expect("the home must open");
+    browser::wait_for_route(driver, "/").await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-profile-checked]",
+        "data-profile-checked",
+        "true",
+    )
+    .await;
+
+    browser::offline(driver, true).await;
+    click(driver, "a[href=\"/mypage\"]").await;
+    browser::wait_for_route(driver, "/mypage").await;
+    browser::wait_for_attribute(driver, "[data-profile-retry]", "data-profile-retry", "true").await;
+    assert_eq!(
+        browser::attribute(driver, "[data-profile-settings]", "data-profile-loaded").await,
+        "false",
+        "a failed load must leave the profile not loaded"
+    );
+    assert!(
+        !is_enabled(driver, "[data-profile-save]").await,
+        "the save must be disabled after a failed load"
+    );
+
+    browser::offline(driver, false).await;
+    click(driver, "[data-profile-retry]").await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-profile-settings]",
+        "data-profile-loaded",
+        "true",
+    )
+    .await;
+    assert!(
+        is_enabled(driver, "[data-profile-save]").await,
+        "the save must be enabled after the retry"
+    );
 }
 
 async fn update_and_check_the_limits(driver: &WebDriver, server: &DevServer) {
@@ -266,6 +314,13 @@ async fn skip_and_register_from_mypage(
         .await
         .expect("the home must open");
     browser::wait_for_route(driver, "/").await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-profile-checked]",
+        "data-profile-checked",
+        "true",
+    )
+    .await;
     wait_for_selector_absent(driver, "[data-onboarding]").await;
     start_and_finish_training(driver, false).await;
 }
@@ -280,6 +335,7 @@ async fn start_and_finish_training(driver: &WebDriver, prompt_expected: bool) {
     .await;
     click(driver, "[data-start]").await;
     browser::wait_for_route(driver, "/record/:training_id").await;
+    browser::wait_for_attribute(driver, "[data-session-id]", "data-profile-checked", "true").await;
     if prompt_expected {
         browser::wait_for_attribute(
             driver,
@@ -312,6 +368,13 @@ async fn login(driver: &WebDriver, server: &DevServer, provider: &TestOidc, sub:
 }
 
 async fn wait_for_onboarding(driver: &WebDriver, visible: bool) {
+    browser::wait_for_attribute(
+        driver,
+        "[data-profile-checked]",
+        "data-profile-checked",
+        "true",
+    )
+    .await;
     if visible {
         browser::wait_for_attribute(
             driver,
@@ -364,6 +427,16 @@ async fn click(driver: &WebDriver, selector: &str) {
         .click()
         .await
         .unwrap_or_else(|error| panic!("the element {selector} must be clickable: {error}"));
+}
+
+async fn is_enabled(driver: &WebDriver, selector: &str) -> bool {
+    driver
+        .find(By::Css(selector))
+        .await
+        .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"))
+        .is_enabled()
+        .await
+        .unwrap_or_else(|error| panic!("the element {selector} must report enabled: {error}"))
 }
 
 async fn wait_for_save(driver: &WebDriver, expected: &str) {

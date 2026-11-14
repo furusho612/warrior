@@ -1,7 +1,7 @@
 //! 身体情報と目的の設定の結合テスト。
 //!
 //! 対応する要求: `REQ-PRF-001`、`REQ-PRF-002`、`REQ-PRF-003`、`REQ-PRF-004`、
-//! `REQ-PRF-005`、`REQ-NFR-018`、`REQ-NFR-019`。
+//! `REQ-PRF-005`、`REQ-LIB-004`、`REQ-NFR-018`、`REQ-NFR-019`。
 //! 未登録は 200 の `null`、更新は最新値の置き換え、入力の範囲の拒否、目的と日数の変更、
 //! 自重種目のセットが記録時の体重を保つことを確かめる。
 //! 種目とセットは D1 に置き、記録画面は使わない。
@@ -13,7 +13,8 @@ use support::{DevServer, HttpResponse};
 use warrior_core::auth::hash_session_token;
 use warrior_core::base64url;
 use warrior_core::calendar::CalendarDayDetail;
-use warrior_core::nutrition::{ActivityLevel, Goal, Sex};
+use warrior_core::jst::JstDate;
+use warrior_core::nutrition::{Goal, Sex};
 use warrior_core::profile::{Profile, TrainingExperience};
 use warrior_core::training_record::TrainingRecord;
 
@@ -57,6 +58,15 @@ fn the_profile_round_trips_and_replaces_the_latest_value() {
     );
     assert_eq!(without_origin.status, 403);
 
+    let unauthenticated = server.request_with_body(
+        "PUT",
+        "/api/profile",
+        &[("Origin", ORIGIN)],
+        &full_profile().to_string(),
+    );
+    assert_eq!(unauthenticated.status, 401);
+    assert_eq!(put_profile(&server, &cookie, &json!({})).status, 400);
+
     let created = put_profile(&server, &cookie, &full_profile());
     assert_eq!(created.status, 200, "{}", created.body);
     let created_profile: Profile =
@@ -87,11 +97,16 @@ fn the_profile_round_trips_and_replaces_the_latest_value() {
     assert_eq!(profile_count(&server, USER_ID), 1);
     let stored: Profile =
         serde_json::from_str(&get_profile(&server, &cookie).body).expect("the updated profile");
-    assert_eq!(stored.height_cm, Some(180.0));
-    assert_eq!(stored.weight_kg, Some(75.0));
-    assert_eq!(stored.goal, Some(Goal::Diet));
-    assert_eq!(stored.training_days_per_week, Some(7));
-    assert_eq!(stored.activity_level, Some(ActivityLevel::High));
+    assert_eq!(
+        stored,
+        serde_json::from_value(updated.clone()).expect("the updated input profile")
+    );
+    assert_eq!(stored.birth_date, Some(JstDate::new(1995, 2, 3).unwrap()));
+    assert_eq!(stored.sex, Some(Sex::Female));
+    assert_eq!(
+        stored.training_experience,
+        Some(TrainingExperience::Advanced)
+    );
 
     reject_out_of_range_values(&server, &cookie, &stored);
     accept_the_boundaries(&server, &cookie);
@@ -151,6 +166,10 @@ fn reject_out_of_range_values(server: &DevServer, cookie: &str, stored: &Profile
         "activity_level": "normal"
     });
     assert_eq!(put_profile(server, cookie, &invalid_choice).status, 400);
+
+    let mut unknown = serde_json::to_value(stored).expect("serializable profile");
+    unknown["unknown"] = json!(1);
+    assert_eq!(put_profile(server, cookie, &unknown).status, 400);
 }
 
 fn accept_the_boundaries(server: &DevServer, cookie: &str) {

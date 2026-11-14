@@ -1,4 +1,4 @@
-//! `GET /api/profile` と `PUT /api/profile`。
+//! 身体情報の取得と更新の HTTP ハンドラ。
 //!
 //! 最新値だけを 1 行に保存する。未登録の利用者は 200 で `null` を返す。
 //! 入力の検証は `warrior_core::profile` が持ち、このモジュールは保存と応答だけを行う。
@@ -64,9 +64,14 @@ pub async fn update(mut request: Request, context: RouteContext<()>) -> Result<R
     let Some(authenticated) = session::resolve(&request, &env).await? else {
         return Ok(response(ErrorCode::Unauthorized, "authentication required"));
     };
-    let input: Profile = match request.json().await {
-        Ok(input) => input,
-        Err(_) => return Ok(response(ErrorCode::BadRequest, "the profile is invalid")),
+    let input: Profile = match request
+        .text()
+        .await
+        .ok()
+        .and_then(|body| serde_json::from_str::<Profile>(&body).ok())
+    {
+        Some(input) => input,
+        None => return Ok(response(ErrorCode::BadRequest, "the profile is invalid")),
     };
     let Some(today) = today() else {
         console_error!("the current Japan date is invalid");

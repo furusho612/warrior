@@ -14,11 +14,15 @@ pub fn HomeScreen() -> Element {
     let starting = use_signal(|| false);
     let error = use_signal(|| Option::<String>::None);
     let mut show_onboarding = use_signal(|| false);
+    let profile_checked = use_signal(|| false);
 
     use_effect(move || {
+        let mut show_onboarding = show_onboarding;
+        let mut profile_checked = profile_checked;
         spawn(async move {
-            if let Ok(None) = crate::profile::fetch().await {
-                show_onboarding.set(true);
+            if let Ok(profile) = crate::profile::fetch().await {
+                show_onboarding.set(profile.is_none());
+                profile_checked.set(true);
             }
         });
     });
@@ -40,34 +44,36 @@ pub fn HomeScreen() -> Element {
     let close_onboarding = EventHandler::new(move |_: ()| show_onboarding.set(false));
 
     rsx! {
-        ScreenFrame {
-            title: text(Key::HomeTitle).to_owned(),
-            description: text(Key::HomeDescription).to_owned(),
-            action: rsx! {
-                if show_onboarding() {
-                    OnboardingPanel { on_done: close_onboarding }
-                }
-                button {
-                    class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
-                    "data-start": "true",
-                    "data-active-session-checked": if checked_now { "true" } else { "false" },
-                    disabled: !checked_now || busy,
-                    onclick: move |_| {
-                        spawn(start_empty_session(starting, error));
-                    },
-                    "{text(Key::HomeStart)}"
-                }
-                if let Some(message) = error() {
-                    p { class: "text-[13px] text-primary", "{message}" }
+        div { "data-profile-checked": if profile_checked() { "true" } else { "false" },
+            ScreenFrame {
+                title: text(Key::HomeTitle).to_owned(),
+                description: text(Key::HomeDescription).to_owned(),
+                action: rsx! {
+                    if show_onboarding() {
+                        OnboardingPanel { on_done: close_onboarding }
+                    }
                     button {
-                        class: "min-h-11 border border-line px-3 text-[13px]",
+                        class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+                        "data-start": "true",
+                        "data-active-session-checked": if checked_now { "true" } else { "false" },
+                        disabled: !checked_now || busy,
                         onclick: move |_| {
                             spawn(start_empty_session(starting, error));
                         },
-                        "{text(Key::RecordRetry)}"
+                        "{text(Key::HomeStart)}"
                     }
-                }
-            },
+                    if let Some(message) = error() {
+                        p { class: "text-[13px] text-primary", "{message}" }
+                        button {
+                            class: "min-h-11 border border-line px-3 text-[13px]",
+                            onclick: move |_| {
+                                spawn(start_empty_session(starting, error));
+                            },
+                            "{text(Key::RecordRetry)}"
+                        }
+                    }
+                },
+            }
         }
     }
 }
