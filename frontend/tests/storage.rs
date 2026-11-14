@@ -1,8 +1,7 @@
-//! IndexedDB の保存、送信待ちの列、編集権を失った記録、サーバーの記録での置き換え、
-//! 移行、アカウント削除のブラウザのテスト。
+//! IndexedDB の保存、送信待ちの列の更新、編集権を失った記録、サーバーの記録での置き換え、
+//! 移行、アカウント削除、セットと段の保存のブラウザのテスト。
 //!
-//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`、`REQ-NFR-015`、
-//! `REQ-REC-002`。
+//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`、`REQ-NFR-015`。
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
 //! 永続ストレージの拒否を強制する API はないため、`request_persistence` の結果に
 //! かかわらず保存が続くことで、保存が許可の結果に依存しないことを確かめる。
@@ -29,8 +28,8 @@ wasm_bindgen_test_configure!(run_in_browser);
 mod support;
 
 use support::{
-    create_operation, create_operation_for, create_operation_with_memo, database_name, session,
-    session_with_id, TRAINING_ID,
+    create_and_confirm, create_operation, create_operation_for, create_operation_with_memo,
+    database_name, open, server_record, session, session_with_id, TRAINING_ID,
 };
 
 const OTHER_TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4300";
@@ -56,93 +55,10 @@ fn update_operation(operation_id: &str, memo: &str) -> Operation {
     }
 }
 
-async fn open(name: &str) -> Storage {
-    Storage::open_with(name, 2)
-        .await
-        .expect("the database must open")
-}
-
-fn server_record(training_id: &str, memo: &str) -> TrainingRecord {
-    serde_json::from_value(json!({
-        "session": {
-            "id": training_id,
-            "date": "2026-11-12",
-            "started_at": "2026-11-12T03:00:00Z",
-            "memo": memo,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T04:00:00Z"
-        },
-        "exercises": [{
-            "id": "exercise-1",
-            "training_id": training_id,
-            "exercise_id": "bench-press",
-            "snapshot": "{}",
-            "position": 1,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }],
-        "sets": [{
-            "id": "set-1",
-            "training_exercise_id": "exercise-1",
-            "position": 1,
-            "kind": "normal",
-            "completed": 1,
-            "rpe": 8.0,
-            "grip": null,
-            "recorded_at": null,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }],
-        "segments": [{
-            "id": "segment-1",
-            "set_id": "set-1",
-            "position": 1,
-            "weight_kg": 100.0,
-            "reps": 5,
-            "momentum_reps": 0,
-            "assisted_reps": 0,
-            "duration_seconds": null,
-            "left_weight_kg": null,
-            "left_reps": null,
-            "left_duration_seconds": null,
-            "right_weight_kg": null,
-            "right_reps": null,
-            "right_duration_seconds": null,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }],
-        "supersets": [{
-            "id": "superset-1",
-            "training_id": training_id,
-            "position": 1,
-            "members": [{
-                "superset_id": "superset-1",
-                "training_exercise_id": "exercise-1",
-                "position": 1
-            }],
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }]
-    }))
-    .expect("the server record must deserialize")
-}
-
 fn finished_server_record(training_id: &str, memo: &str) -> TrainingRecord {
     let mut record = server_record(training_id, memo);
     record.session.finished_at = Some("2026-11-12T04:00:00Z".to_owned());
     record
-}
-
-/// メモをサーバーが受理した状態のトレーニングを作る。
-async fn create_and_confirm(storage: &Storage, memo: &str) {
-    storage
-        .save_session_create(&session(memo), &create_operation_with_memo(CREATE_ID, memo))
-        .await
-        .expect("the create must be saved");
-    storage
-        .mark_success(CREATE_ID)
-        .await
-        .expect("the create must succeed");
 }
 
 #[wasm_bindgen_test]

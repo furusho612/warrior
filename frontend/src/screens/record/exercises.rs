@@ -36,10 +36,12 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
     let mut last_tree = use_signal(|| 0u64);
     let reload_effect = reload;
     let tree_revision = signals.tree_revision;
+    let exercise_revision = signals.exercise_revision;
     let route_id = training_id.clone();
     use_effect(move || {
         let _ = (reload_effect)();
         let tree = (tree_revision)();
+        let _ = (exercise_revision)();
         let preserve_inputs = tree == *last_tree.peek();
         last_tree.set(tree);
         let id = route_id.clone();

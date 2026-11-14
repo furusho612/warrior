@@ -117,6 +117,7 @@ struct RecordSignals {
     persisted_memo: Signal<String>,
     memo_revision: Signal<u64>,
     tree_revision: Signal<u64>,
+    exercise_revision: Signal<u64>,
     save_error: Signal<Option<String>>,
     view_only: Signal<bool>,
 }
@@ -142,6 +143,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let persisted_memo = use_signal(String::new);
     let memo_revision = use_signal(|| 0u64);
     let tree_revision = use_signal(|| 0u64);
+    let exercise_revision = use_signal(|| 0u64);
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let view_only = use_signal(|| false);
@@ -157,6 +159,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         persisted_memo,
         memo_revision,
         tree_revision,
+        exercise_revision,
         save_error,
         view_only,
     };
@@ -537,9 +540,16 @@ fn FailedOperations(
                                 let operation_id = entry.operation.operation_id.clone();
                                 let training_id = entry.operation.training_id.clone();
                                 let operation_kind = entry.operation.kind;
+                                let training_exercise_id = entry
+                                    .operation
+                                    .payload
+                                    .get("training_exercise_id")
+                                    .and_then(|value| value.as_str())
+                                    .map(str::to_owned);
                                 move |_| {
                                     let operation_id = operation_id.clone();
                                     let training_id = training_id.clone();
+                                    let training_exercise_id = training_exercise_id.clone();
                                     spawn(async move {
                                         match sync::discard_operation(&operation_id).await {
                                             Some(DiscardOutcome::SessionDeleted) => {
@@ -556,8 +566,8 @@ fn FailedOperations(
                                             }
                                             Some(DiscardOutcome::ExerciseDeleted) => {
                                                 signals
-                                                    .tree_revision
-                                                    .set((signals.tree_revision)() + 1);
+                                                    .exercise_revision
+                                                    .set((signals.exercise_revision)() + 1);
                                                 refresh_state(&training_id, state_signals).await;
                                             }
                                             Some(DiscardOutcome::OperationsRemoved)
@@ -567,15 +577,20 @@ fn FailedOperations(
                                                         | OperationKind::TrainingExerciseReorder
                                                 ) =>
                                             {
-                                                if !ownership::reload_record(
+                                                if !restore_discarded_exercise(
                                                     &training_id,
-                                                    signals,
+                                                    training_exercise_id.as_deref(),
+                                                    operation_kind,
                                                 )
                                                 .await
                                                 {
                                                     signals.save_error.set(Some(
                                                         text(Key::RecordReloadFailed).to_owned(),
                                                     ));
+                                                } else {
+                                                    signals.exercise_revision.set(
+                                                        (signals.exercise_revision)() + 1,
+                                                    );
                                                 }
                                                 refresh_state(&training_id, state_signals).await;
                                             }
@@ -590,6 +605,35 @@ fn FailedOperations(
                 }
             }
         }
+    }
+}
+
+async fn restore_discarded_exercise(
+    training_id: &str,
+    training_exercise_id: Option<&str>,
+    kind: OperationKind,
+) -> bool {
+    let Ok(record) = training_api::record(training_id).await else {
+        return false;
+    };
+    let Ok(storage) = storage::current().await else {
+        return false;
+    };
+    match kind {
+        OperationKind::TrainingExerciseDelete => {
+            let Some(training_exercise_id) = training_exercise_id else {
+                return false;
+            };
+            storage
+                .restore_training_exercise(&record, training_exercise_id)
+                .await
+                .is_ok()
+        }
+        OperationKind::TrainingExerciseReorder => storage
+            .restore_training_exercise_positions(&record)
+            .await
+            .is_ok(),
+        _ => false,
     }
 }
 

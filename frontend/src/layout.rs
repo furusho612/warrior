@@ -12,14 +12,9 @@ use crate::text::{text, Key};
 pub fn AppShell() -> Element {
     let current = router().current::<Route>();
     let route_name = crate::routes::route_name(&current);
-    let record = matches!(
-        current,
-        Route::Record {} | Route::RecordSession { .. } | Route::RecordExerciseSelect { .. }
-    );
+    let record = matches!(current, Route::Record {} | Route::RecordSession { .. });
     let record_training_id = match &current {
-        Route::RecordSession { training_id } | Route::RecordExerciseSelect { training_id } => {
-            Some(training_id.clone())
-        }
+        Route::RecordSession { training_id } => Some(training_id.clone()),
         _ => None,
     };
 

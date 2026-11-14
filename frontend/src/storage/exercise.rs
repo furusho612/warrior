@@ -234,7 +234,7 @@ struct MemberRow {
     training_exercise_id: String,
 }
 
-async fn read_rows<T: serde::de::DeserializeOwned>(
+pub(super) async fn read_rows<T: serde::de::DeserializeOwned>(
     store: &IdbObjectStore,
 ) -> Result<Vec<T>, StorageError> {
     indexeddb::get_all(store)

@@ -1,11 +1,7 @@
-//! IndexedDB の保存、送信待ちの列、編集権を失った記録、サーバーの記録での置き換え、
-//! 移行、アカウント削除のブラウザのテスト。
+//! セッションと送信待ちの列の保存、更新の統合、失敗した操作の破棄のブラウザのテスト。
 //!
-//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`、`REQ-NFR-015`、
-//! `REQ-REC-002`。
+//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-005`。
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
-//! 永続ストレージの拒否を強制する API はないため、`request_persistence` の結果に
-//! かかわらず保存が続くことで、保存が許可の結果に依存しないことを確かめる。
 //! セットと段は `put_record` で保存し、outbox の操作は作らない。セットの同期操作は
 //! まだ無い。
 
@@ -16,7 +12,7 @@ use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionUpdatePayload,
 };
 use warrior_core::training_session::{BestKind, PersonalBestItem};
-use warrior_frontend::storage::{DiscardOutcome, Storage, Store};
+use warrior_frontend::storage::{DiscardOutcome, Store};
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -24,7 +20,10 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 mod support;
 
-use support::{create_operation, create_operation_with_memo, database_name, session, TRAINING_ID};
+use support::{
+    create_and_confirm, create_operation, create_operation_with_memo, database_name, open, session,
+    TRAINING_ID,
+};
 
 const CREATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4302";
 const UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4303";
@@ -47,24 +46,7 @@ fn update_operation(operation_id: &str, memo: &str) -> Operation {
     }
 }
 
-async fn open(name: &str) -> Storage {
-    Storage::open_with(name, 2)
-        .await
-        .expect("the database must open")
-}
-
 /// メモをサーバーが受理した状態のトレーニングを作る。
-async fn create_and_confirm(storage: &Storage, memo: &str) {
-    storage
-        .save_session_create(&session(memo), &create_operation_with_memo(CREATE_ID, memo))
-        .await
-        .expect("the create must be saved");
-    storage
-        .mark_success(CREATE_ID)
-        .await
-        .expect("the create must succeed");
-}
-
 #[wasm_bindgen_test]
 async fn saves_a_session_and_its_operations_and_lists_the_outbox_in_order() {
     let name = database_name("order");

@@ -74,7 +74,7 @@ pub fn ExerciseSelectScreen(training_id: String) -> Element {
                 }
             } else if let Some(list) = list {
                 if list.is_empty() {
-                    p { class: "text-[13px] text-text-sub", "{text(Key::RecordExerciseEmpty)}" }
+                    p { class: "text-[13px] text-text-sub", "{text(Key::LibraryEmpty)}" }
                 }
                 div { class: "flex flex-col gap-1", "data-exercise-choices": "true",
                     for exercise in list {

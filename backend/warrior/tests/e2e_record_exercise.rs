@@ -139,6 +139,15 @@ async fn add_exercise(driver: &WebDriver, exercise_id: &str) {
         .await
         .expect("the add exercise button must be clickable");
     browser::wait_for_route(driver, "/record/:training_id/exercises").await;
+    assert!(
+        driver.find(By::Css("[data-exercise-rail]")).await.is_err(),
+        "the exercise selection must not show the record rail"
+    );
+    assert!(
+        driver.find(By::Css("[data-rest-timer]")).await.is_err(),
+        "the exercise selection must not show the rest timer"
+    );
+    wait_for_selector(driver, "[data-exercise-choose]").await;
     let selector = format!("[data-exercise-choose][data-exercise-id=\"{exercise_id}\"]");
     let button = driver
         .find(By::Css(&selector))

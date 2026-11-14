@@ -43,6 +43,8 @@ const CREATE_BENCH_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4970";
 const CREATE_PLANK_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4971";
 const REORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4973";
 const SAME_ORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4974";
+const SUBSET_REORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4979";
+const STALE_REORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4980";
 const DELETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4975";
 const FINISHED_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4976";
 const GRIP_JSON: &str = r#"{"grip":{"style":"pronated","width":"medium"}}"#;
@@ -184,6 +186,27 @@ fn reorder_the_exercises(server: &DevServer, cookie: &str) {
         1,
         "a reorder with the same order must record the operation"
     );
+    assert_eq!(position(server, PLANK_ROW_ID), 1);
+    assert_eq!(position(server, BENCH_ROW_ID), 2);
+
+    let subset = post(
+        server,
+        cookie,
+        &reorder_operation(SUBSET_REORDER_OPERATION_ID, &[PLANK_ROW_ID]),
+    );
+    assert_eq!(subset.status, 409, "{}", subset.body);
+    assert_eq!(applied_count(server, SUBSET_REORDER_OPERATION_ID), 0);
+    assert_eq!(position(server, PLANK_ROW_ID), 1);
+    assert_eq!(position(server, BENCH_ROW_ID), 2);
+
+    // 現在の種目に無い行 ID を含む古い本文は、ID の集合が一致しないため 409 になる。
+    let stale = post(
+        server,
+        cookie,
+        &reorder_operation(STALE_REORDER_OPERATION_ID, &[BENCH_ROW_ID, DELETED_ROW_ID]),
+    );
+    assert_eq!(stale.status, 409, "{}", stale.body);
+    assert_eq!(applied_count(server, STALE_REORDER_OPERATION_ID), 0);
     assert_eq!(position(server, PLANK_ROW_ID), 1);
     assert_eq!(position(server, BENCH_ROW_ID), 2);
 }
