@@ -213,6 +213,55 @@ pub async fn click_text(driver: &WebDriver, label: &str) {
     button.click().await.expect("the button must be clickable");
 }
 
+/// セレクタの要素を押す。
+pub async fn click(driver: &WebDriver, selector: &str) {
+    let element = driver
+        .find(By::Css(selector))
+        .await
+        .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
+    element
+        .click()
+        .await
+        .unwrap_or_else(|error| panic!("the element {selector} must be clickable: {error}"));
+}
+
+/// 数値の入力要素を空にして、値を入れる。
+pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
+    let input = driver
+        .find(By::Css(selector))
+        .await
+        .unwrap_or_else(|error| panic!("the input {selector} must exist: {error}"));
+    input
+        .clear()
+        .await
+        .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
+    input
+        .send_keys(value)
+        .await
+        .unwrap_or_else(|error| panic!("the input {selector} must be typed: {error}"));
+}
+
+/// 種目をライブラリから記録へ追加する。
+pub async fn add_exercise(driver: &WebDriver, exercise_id: &str) {
+    wait_for_present(driver, "[data-add-exercise]").await;
+    click(driver, "[data-add-exercise]").await;
+    wait_for_route(driver, "/record/:training_id/exercises").await;
+    wait_for_present(driver, "[data-exercise-choose]").await;
+    let selector = format!("[data-exercise-choose][data-exercise-id=\"{exercise_id}\"]");
+    click(driver, &selector).await;
+    wait_for_route(driver, "/record/:training_id").await;
+    let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
+    wait_for_present(driver, &row).await;
+}
+
+/// レールの種目を選ぶ。
+pub async fn select_exercise(driver: &WebDriver, exercise_id: &str) {
+    let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
+    wait_for_present(driver, &row).await;
+    click(driver, &row).await;
+    wait_for_attribute(driver, &row, "data-selected", "true").await;
+}
+
 /// ページを開き、本文が現れるまで待って返す。
 pub async fn get_text(driver: &WebDriver, url: &str) -> String {
     driver.goto(url).await.expect("the page must open");
@@ -323,16 +372,67 @@ pub async fn assert_no_panic(driver: &WebDriver) {
     assert!(panics.is_empty(), "the page panicked: {panics:?}");
 }
 
+/// 通信の復帰をブラウザへ知らせる。
+pub async fn online(driver: &WebDriver) {
+    driver
+        .execute(
+            "window.dispatchEvent(new Event('online'));",
+            Vec::<serde_json::Value>::new(),
+        )
+        .await
+        .expect("the online event must be dispatched");
+}
+
+/// 要素が現れるまで待つ。
+pub async fn wait_for_present(driver: &WebDriver, selector: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if driver.find(By::Css(selector)).await.is_ok() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the selector {selector} did not appear"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 要素が消えるまで待つ。
+pub async fn wait_for_absent(driver: &WebDriver, selector: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if driver.find(By::Css(selector)).await.is_err() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the selector {selector} did not disappear"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 /// 入力要素の値が期待値になるまで待つ。
 pub async fn wait_for_value(driver: &WebDriver, selector: &str, expected: &str) {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    wait_for_value_within(driver, selector, expected, Duration::from_secs(60)).await;
+}
+
+/// 入力要素の値が、指定した時間の中で期待値になるまで待つ。
+pub async fn wait_for_value_within(
+    driver: &WebDriver,
+    selector: &str,
+    expected: &str,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
     loop {
         if value(driver, selector).await == expected {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "the value of {selector} did not become {expected}"
+            "the value of {selector} did not become {expected} within {timeout:?}"
         );
         std::thread::sleep(POLL_INTERVAL);
     }

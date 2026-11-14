@@ -47,20 +47,24 @@ pub async fn clear_forbidden(meta: &IdbObjectStore, training_id: &str) -> Result
 }
 
 /// 編集権を失ったトレーニングの ID を返す。
+///
+/// メタには送信の順序など別の行もあるため、印のキーだけを読み、その行を
+/// `MetaRecord` として復元する。
 pub async fn forbidden_trainings(meta: &IdbObjectStore) -> Result<Vec<String>, StorageError> {
-    let mut trainings = indexeddb::get_all(meta)
-        .await?
-        .iter()
-        .map(from_js::<MetaRecord>)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .filter_map(|record| {
-            record
-                .key
-                .strip_prefix(FORBIDDEN_KEY_PREFIX)
-                .map(str::to_owned)
-        })
-        .collect::<Vec<_>>();
+    let mut trainings = Vec::new();
+    for value in indexeddb::get_all(meta).await? {
+        let Ok(key) = js_sys::Reflect::get(&value, &JsValue::from_str("key")) else {
+            continue;
+        };
+        let Some(key) = key.as_string() else {
+            continue;
+        };
+        let Some(training_id) = key.strip_prefix(FORBIDDEN_KEY_PREFIX) else {
+            continue;
+        };
+        from_js::<MetaRecord>(&value)?;
+        trainings.push(training_id.to_owned());
+    }
     trainings.sort();
     Ok(trainings)
 }

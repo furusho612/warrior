@@ -24,14 +24,18 @@ use warrior_core::training_record::TrainingRecord;
 pub mod indexeddb;
 pub mod outbox;
 
+mod body_weight;
+mod discard;
 mod exercise;
+mod set;
 
 pub use indexeddb::request_persistence;
+pub use set::StoredSet;
 
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
 /// スキーマの版。
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// 端末内の保存の誤り。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,8 +90,19 @@ pub enum DiscardOutcome {
     MemoReverted(Box<SessionRecord>),
     /// 種目の作成の破棄で、端末の種目と配下の行を削除した。
     ExerciseDeleted,
+    /// セットの作成の破棄で、端末のセットと段を削除した。
+    SetDeleted,
     /// 操作だけを削除した。
     OperationsRemoved,
+}
+
+/// 破棄した操作の復元の結果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreOutcome {
+    /// 復元した。
+    Restored,
+    /// より新しい送信待ちの操作があるため復元を見送った。
+    Deferred,
 }
 
 /// IndexedDB のオブジェクトストア。
@@ -109,6 +124,8 @@ pub enum Store {
     Outbox,
     /// 同期のメタ。
     Meta,
+    /// 身体情報の体重のキャッシュ。
+    BodyWeight,
 }
 
 impl Store {
@@ -123,6 +140,7 @@ impl Store {
             Self::SupersetMembers => "superset_members",
             Self::Outbox => "outbox",
             Self::Meta => "meta",
+            Self::BodyWeight => "body_weight",
         }
     }
 }
@@ -531,7 +549,7 @@ impl Storage {
             ],
             IdbTransactionMode::Readwrite,
         )?;
-        match discard_steps(&transaction, operation_id).await {
+        match discard::steps(&transaction, operation_id).await {
             Ok(outcome) => {
                 transaction.finish().await?;
                 Ok(outcome)
@@ -575,6 +593,35 @@ impl Storage {
         let trainings = outbox::forbidden_trainings(&meta).await?;
         transaction.finish().await?;
         Ok(trainings)
+    }
+
+    /// 身体情報の体重を端末内へキャッシュする。None のときはキャッシュを消す。
+    pub async fn cache_body_weight(&self, body_weight_kg: Option<f64>) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::BodyWeight.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let store = transaction.store(Store::BodyWeight.name())?;
+        match body_weight::save(&store, body_weight_kg).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
+    }
+
+    /// キャッシュした身体情報の体重を返す。
+    pub async fn cached_body_weight(&self) -> Result<Option<f64>, StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::BodyWeight.name()],
+            IdbTransactionMode::Readonly,
+        )?;
+        let store = transaction.store(Store::BodyWeight.name())?;
+        let weight = body_weight::cached(&store).await?;
+        transaction.finish().await?;
+        Ok(weight)
     }
 
     /// サーバーに保存済みの記録で、端末の記録と送信待ちの列を置き換える。
@@ -765,7 +812,12 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
         }
         OperationKind::TrainingExerciseCreate
         | OperationKind::TrainingExerciseDelete
-        | OperationKind::TrainingExerciseReorder => Err(StorageError::InvalidOperation(
+        | OperationKind::TrainingExerciseReorder
+        | OperationKind::SetCreate
+        | OperationKind::SetUpdate
+        | OperationKind::SetDelete
+        | OperationKind::SetReorder
+        | OperationKind::SetComplete => Err(StorageError::InvalidOperation(
             "the operation has no memo".to_owned(),
         )),
     }
@@ -801,51 +853,6 @@ async fn retry_steps(
         write_outbox_differences(&outbox_store, &entries, &updated).await?;
     }
     Ok(())
-}
-
-async fn discard_steps(
-    transaction: &indexeddb::Transaction,
-    operation_id: &str,
-) -> Result<DiscardOutcome, StorageError> {
-    let outbox_store = transaction.store(Store::Outbox.name())?;
-    let entries = outbox::read(&outbox_store).await?;
-    let Some(target) = entries
-        .iter()
-        .find(|entry| entry.operation.operation_id == operation_id)
-        .cloned()
-    else {
-        return Ok(DiscardOutcome::OperationsRemoved);
-    };
-
-    let mut updated = entries.clone();
-    let removed = discard_transition(&mut updated, operation_id);
-    for removed_id in removed {
-        indexeddb::delete_entry(&outbox_store, &JsValue::from_str(&removed_id)).await?;
-    }
-
-    if target.operation.kind == OperationKind::TrainingSessionCreate {
-        exercise::delete_session_tree(transaction, &target.operation.training_id).await?;
-        return Ok(DiscardOutcome::SessionDeleted);
-    }
-    if target.operation.kind == OperationKind::TrainingExerciseCreate {
-        let training_exercise_id = exercise::payload_training_exercise_id(&target.operation)?;
-        exercise::delete_training_exercise_rows(transaction, &training_exercise_id).await?;
-        return Ok(DiscardOutcome::ExerciseDeleted);
-    }
-    if target.operation.kind != OperationKind::TrainingSessionUpdate {
-        return Ok(DiscardOutcome::OperationsRemoved);
-    }
-
-    let has_newer_update = updated.iter().any(|entry| {
-        entry.operation.training_id == target.operation.training_id
-            && entry.operation.kind == OperationKind::TrainingSessionUpdate
-            && entry.operation.sequence > target.operation.sequence
-    });
-    if has_newer_update {
-        return Ok(DiscardOutcome::OperationsRemoved);
-    }
-
-    revert_session_memo(transaction, &target.operation.training_id).await
 }
 
 async fn mark_success_steps(
@@ -921,22 +928,4 @@ async fn write_outbox_differences(
         }
     }
     Ok(())
-}
-
-/// 新しい操作を送信待ちの列に加える。
-///
-/// 未解決の作成があれば、その作成を親にして Blocked で積む。親が成功して列から消えたら
-/// `mark_success` が Pending に戻す。
-async fn revert_session_memo(
-    transaction: &indexeddb::Transaction,
-    training_id: &str,
-) -> Result<DiscardOutcome, StorageError> {
-    let sessions = transaction.store(Store::TrainingSessions.name())?;
-    let Some(value) = indexeddb::get(&sessions, &JsValue::from_str(training_id)).await? else {
-        return Ok(DiscardOutcome::OperationsRemoved);
-    };
-    let mut session: SessionRecord = indexeddb::from_js(&value)?;
-    session.memo = session.confirmed_memo.clone();
-    indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
-    Ok(DiscardOutcome::MemoReverted(Box::new(session)))
 }

@@ -22,6 +22,7 @@ pub mod set_calc;
 pub mod sql;
 pub mod sync;
 mod sync_exercise;
+mod sync_set;
 pub mod training_record;
 pub mod training_session;
 pub mod webauthn;

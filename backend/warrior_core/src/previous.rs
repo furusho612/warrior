@@ -42,6 +42,9 @@ pub struct PreviousSet {
     pub rpe: Option<f64>,
     /// 記録時のグリップの選択。選ばない種目は None。
     pub grip: Option<GripSelection>,
+    /// 記録した時点の体重 (kg)。身体情報が無いときは None。
+    #[serde(default)]
+    pub body_weight_kg: Option<f64>,
     /// 段の値。ドロップセットは複数の段を持つ。
     pub segments: Vec<SetSegment>,
 }

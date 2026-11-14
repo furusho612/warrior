@@ -53,6 +53,8 @@ pub struct StoredExercise {
     pub sets: Vec<SetRecord>,
     /// セットごとのグリップの選択の JSON。`sets` と同じ並びである。
     pub set_grips: Vec<Option<String>>,
+    /// セットごとの記録した時点の体重 (kg)。`sets` と同じ並びである。
+    pub set_body_weights: Vec<Option<f64>>,
 }
 
 const SET_SEGMENT_COLUMNS: &str = "te.training_id AS training_id, \
@@ -155,6 +157,7 @@ struct StoredSet {
     kind: String,
     rpe: Option<f64>,
     grip: Option<String>,
+    body_weight_kg: Option<f64>,
     segments: Vec<SetSegment>,
 }
 
@@ -225,6 +228,7 @@ fn build_training(
                     kind: row.kind.clone(),
                     rpe: row.set_rpe,
                     grip: row.grip.clone(),
+                    body_weight_kg: row.body_weight_kg,
                     segments,
                 });
             }
@@ -235,6 +239,7 @@ fn build_training(
     for group in groups {
         let mut sets = Vec::new();
         let mut set_grips = Vec::new();
+        let mut set_body_weights = Vec::new();
         for set in group.sets {
             if set.segments.is_empty() {
                 return Err(BuildSetsError::MissingSegments);
@@ -258,12 +263,14 @@ fn build_training(
             .map_err(BuildSetsError::InvalidSetRecord)?;
             sets.push(record);
             set_grips.push(set.grip);
+            set_body_weights.push(set.body_weight_kg);
         }
         exercises.push(StoredExercise {
             training_id: training_id.to_owned(),
             snapshot: group.snapshot,
             sets,
             set_grips,
+            set_body_weights,
         });
     }
     Ok(exercises)

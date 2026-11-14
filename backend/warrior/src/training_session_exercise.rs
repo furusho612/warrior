@@ -39,7 +39,7 @@ pub enum ExerciseOwnership<'a> {
     Finished,
 }
 
-fn ownership_condition(
+pub(crate) fn ownership_condition(
     user_id: &str,
     training_id: &str,
     ownership: ExerciseOwnership<'_>,
@@ -304,6 +304,7 @@ fn previous_exercise_from(
                     .cloned()
                     .flatten()
                     .and_then(|grip| serde_json::from_str::<GripSelection>(&grip).ok()),
+                body_weight_kg: exercise.set_body_weights.get(index).copied().flatten(),
                 segments: record.segments().to_vec(),
             });
         }
@@ -832,10 +833,13 @@ mod tests {
                 .expect("a normal set"),
             ],
             set_grips: vec![None, None],
+            set_body_weights: vec![Some(70.0), Some(70.0)],
         }];
         let previous = previous_exercise_from(&exercises, &key).expect("a previous exercise");
         assert_eq!(previous.sets.len(), 2);
         assert_eq!(previous.sets[0].kind, SetKind::Warmup);
+        assert_eq!(previous.sets[0].body_weight_kg, Some(70.0));
+        assert_eq!(previous.sets[1].body_weight_kg, Some(70.0));
         assert_eq!(previous.total_weight_kg, 500.0);
         assert_eq!(previous.total_duration_seconds, 0);
         assert_eq!(previous.max_duration_seconds, 0);

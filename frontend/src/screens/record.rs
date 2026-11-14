@@ -13,23 +13,28 @@ use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
     SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
+use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::ids::{new_uuid, now_iso};
 use crate::routes::{navigate, Route};
-use crate::storage::{self, ReplacePurpose, StorageError};
+use crate::storage::{self, ReplacePurpose, RestoreOutcome, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
 use crate::training_session as training_api;
 use crate::training_session::TrainingApiError;
 
+mod exercise_view;
 mod exercises;
 mod failed_operations;
 mod ownership;
+mod set_events;
+mod sets;
 
 use exercises::ExerciseSection;
 use failed_operations::FailedOperations;
 use ownership::RecordOwnership;
+use set_events::{SetCompleted, SetCompletedEvents};
 
 #[component]
 pub fn RecordScreen() -> Element {
@@ -157,6 +162,9 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let confirming = use_signal(|| false);
     let ownership_busy = use_signal(|| false);
     let ownership_error = use_signal(|| Option::<String>::None);
+    let completed_events = use_signal(Vec::<SetCompleted>::new);
+    let completed_event_signal = SetCompletedEvents(completed_events);
+    use_context_provider(|| completed_event_signal);
     let signals = RecordSignals {
         session,
         memo,
@@ -190,7 +198,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         let mut profile_prompt = profile_prompt;
         let mut profile_checked = profile_checked;
         spawn(async move {
-            if let Ok(profile) = crate::profile::fetch().await {
+            if let Ok(profile) = crate::profile::fetch_and_cache().await {
                 profile_prompt.set(profile.is_none_or(|profile| profile.body_profile().is_none()));
                 profile_checked.set(true);
             }
@@ -211,6 +219,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
 
     let persisted = (signals.persisted_memo)();
     let failed_entries = (state_signals.failed)();
+    let completed_event_count = completed_event_signal.count();
 
     rsx! {
         section {
@@ -218,6 +227,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-route": "/record/:training_id",
             "data-session-id": training_id,
             "data-persisted-memo": "{persisted}",
+            "data-set-events": "{completed_event_count}",
             "data-profile-checked": if profile_checked() { "true" } else { "false" },
             RecordHeader { signals, state_signals }
             RecordOwnership {
@@ -534,31 +544,57 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
 }
 
 async fn restore_discarded_exercise(
-    training_id: &str,
+    record: &TrainingRecord,
     training_exercise_id: Option<&str>,
     kind: OperationKind,
-) -> bool {
-    let Ok(record) = training_api::record(training_id).await else {
-        return false;
-    };
-    let Ok(storage) = storage::current().await else {
-        return false;
-    };
+    after_sequence: u64,
+) -> Result<RestoreOutcome, ()> {
+    let storage = storage::current().await.map_err(|_| ())?;
     match kind {
         OperationKind::TrainingExerciseDelete => {
             let Some(training_exercise_id) = training_exercise_id else {
-                return false;
+                return Err(());
             };
             storage
-                .restore_training_exercise(&record, training_exercise_id)
+                .restore_training_exercise_with_outcome(
+                    record,
+                    training_exercise_id,
+                    after_sequence,
+                )
                 .await
-                .is_ok()
+                .map_err(|_| ())
         }
         OperationKind::TrainingExerciseReorder => storage
-            .restore_training_exercise_positions(&record)
+            .restore_training_exercise_positions_with_outcome(record, after_sequence)
             .await
-            .is_ok(),
-        _ => false,
+            .map_err(|_| ()),
+        _ => Err(()),
+    }
+}
+
+async fn restore_discarded_set(
+    record: &TrainingRecord,
+    set_id: Option<&str>,
+    training_exercise_id: Option<&str>,
+    kind: OperationKind,
+    after_sequence: u64,
+) -> Result<RestoreOutcome, ()> {
+    let storage = storage::current().await.map_err(|_| ())?;
+    match kind {
+        OperationKind::SetUpdate | OperationKind::SetComplete | OperationKind::SetDelete => {
+            let Some(set_id) = set_id else {
+                return Err(());
+            };
+            storage
+                .restore_set_with_outcome(record, set_id, after_sequence)
+                .await
+                .map_err(|_| ())
+        }
+        OperationKind::SetReorder => storage
+            .restore_set_positions_with_outcome(record, training_exercise_id, after_sequence)
+            .await
+            .map_err(|_| ()),
+        _ => Err(()),
     }
 }
 
@@ -868,6 +904,11 @@ fn operation_label(kind: OperationKind) -> &'static str {
         OperationKind::TrainingExerciseCreate => text(Key::RecordOperationExerciseCreate),
         OperationKind::TrainingExerciseDelete => text(Key::RecordOperationExerciseDelete),
         OperationKind::TrainingExerciseReorder => text(Key::RecordOperationExerciseReorder),
+        OperationKind::SetCreate => text(Key::RecordOperationSetCreate),
+        OperationKind::SetUpdate => text(Key::RecordOperationSetUpdate),
+        OperationKind::SetDelete => text(Key::RecordOperationSetDelete),
+        OperationKind::SetReorder => text(Key::RecordOperationSetReorder),
+        OperationKind::SetComplete => text(Key::RecordOperationSetComplete),
     }
 }
 

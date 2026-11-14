@@ -397,6 +397,44 @@ async fn a_blocked_migration_keeps_the_data_and_adds_the_new_index() {
 }
 
 #[wasm_bindgen_test]
+async fn opening_version_three_creates_the_body_weight_store_and_keeps_the_meta_rows() {
+    let name = database_name("migrate-body-weight");
+    let v2 = Storage::open_with(&name, 2)
+        .await
+        .expect("the version 2 database must open");
+    v2.mark_training_forbidden(TRAINING_ID)
+        .await
+        .expect("the training must be marked");
+
+    let v3 = Storage::open_with(&name, 3)
+        .await
+        .expect("the version 3 database must open");
+    assert_eq!(
+        v3.forbidden_trainings()
+            .await
+            .expect("the meta store must be readable"),
+        vec![TRAINING_ID.to_owned()],
+        "the upgrade must keep the editing right loss"
+    );
+    v3.cache_body_weight(Some(70.0))
+        .await
+        .expect("the body weight store must exist after the upgrade");
+    assert_eq!(
+        v3.cached_body_weight().await.expect("the cache"),
+        Some(70.0)
+    );
+    assert_eq!(
+        v3.forbidden_trainings()
+            .await
+            .expect("the meta store must be readable"),
+        vec![TRAINING_ID.to_owned()],
+        "the body weight cache must not change the meta rows"
+    );
+
+    v3.clear_account().await.expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
 async fn a_version_one_session_gets_the_confirmed_memo_from_its_memo() {
     let name = database_name("migrate-confirmed");
     let v1 = Storage::open_with(&name, 1)
@@ -474,7 +512,7 @@ async fn clear_account_removes_the_database_the_outbox_and_advances_the_generati
         .expect("the outbox read must work")
         .is_empty());
 
-    let reopened = Storage::open_with(&name, 2)
+    let reopened = Storage::open_with(&name, 3)
         .await
         .expect("the database must reopen");
     assert_eq!(
@@ -638,12 +676,21 @@ async fn forbidden_trainings_are_sorted_and_only_a_takeover_clears_them() {
         .mark_training_forbidden(TRAINING_ID)
         .await
         .expect("marking the same training again must not duplicate it");
+    storage
+        .cache_body_weight(Some(70.0))
+        .await
+        .expect("the body weight must be cached");
+    assert_eq!(
+        storage.cached_body_weight().await.expect("the cache"),
+        Some(70.0)
+    );
     assert_eq!(
         storage
             .forbidden_trainings()
             .await
             .expect("the meta store must be readable"),
-        vec![OTHER_TRAINING_ID.to_owned(), TRAINING_ID.to_owned()]
+        vec![OTHER_TRAINING_ID.to_owned(), TRAINING_ID.to_owned()],
+        "the body weight cache must not hide the editing right loss"
     );
 
     storage
