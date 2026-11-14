@@ -3,13 +3,15 @@
 //! 対応する要求: `REQ-NFR-015`、`REQ-NFR-006`。
 //! Chrome の 2 つの WebDriver セッションは別のプロファイルを使うため、Cookie と IndexedDB を
 //! 共有しない。開始した端末だけが編集でき、ほかの端末は閲覧のみになり、引き継いだ端末が
-//! 編集できること、元の端末が閲覧のみになることを確かめる。
+//! 編集できること、元の端末が書き込みと終了で 403 になり閲覧のみになること、読み直しで
+//! 閲覧のみが解けないこと、同じ利用者でログインし直すと編集権に再接続することを確かめる。
+//! 端末トークンが応答とログに出ないことも確かめる。
 //! SafariDriver は 1 つのブラウザを共有し、プロファイルを分けられないため対象外とする。
 //! ほかの E2E と同時に走れるよう、Worker は 8805、テスト専用の OIDC の提供者は 8806 を使う。
 
 mod support;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
@@ -80,15 +82,14 @@ async fn the_starting_terminal_edits_and_the_other_terminal_takes_over() {
     type_memo(&driver_b, "B").await;
     wait_for_d1_memo(&server, &training_id, "A のメモB").await;
 
-    type_memo(&driver_a, "A").await;
-    browser::wait_for_attribute(&driver_a, "[data-view-only]", "data-view-only", "true").await;
-    assert_eq!(
-        d1_memo(&server, &training_id),
-        "A のメモB",
-        "the terminal that lost the editing right must not write"
-    );
+    relogin_with_the_same_terminal(&driver_b, &server, &training_id).await;
+    type_memo(&driver_b, "C").await;
+    wait_for_d1_memo(&server, &training_id, "A のメモBC").await;
 
-    check_terminal_tokens(&driver_a, &driver_b, &server).await;
+    finish_as_the_losing_terminal(&driver_a, &server, &training_id).await;
+    reload_the_server_record(&driver_a, &server, &training_id).await;
+
+    check_terminal_tokens(&driver_a, &driver_b, &server, &training_id).await;
     switch_account_and_drop_the_old_terminal(&driver_b, &server, &provider).await;
 
     browser::assert_no_panic(&driver_a).await;
@@ -169,7 +170,7 @@ async fn takeover(driver: &WebDriver) {
         .click()
         .await
         .expect("the takeover button must be clickable");
-    browser::wait_for_text(driver, "元の端末にだけある未保存の変更は失われます").await;
+    browser::wait_for_text(driver, "この端末の未保存の変更は失われます").await;
     driver
         .find(By::Css("[data-takeover-confirm]"))
         .await
@@ -179,7 +180,91 @@ async fn takeover(driver: &WebDriver) {
         .expect("the confirmation must be clickable");
 }
 
-async fn check_terminal_tokens(driver_a: &WebDriver, driver_b: &WebDriver, server: &DevServer) {
+/// 引き継がれた後、元の端末の最初の操作が終了でも 403 で閲覧のみになる。
+async fn finish_as_the_losing_terminal(driver: &WebDriver, server: &DevServer, training_id: &str) {
+    driver
+        .find(By::Css("button[data-finish]"))
+        .await
+        .expect("the finish button must exist")
+        .click()
+        .await
+        .expect("the finish button must be clickable");
+    browser::wait_for_attribute(driver, "[data-view-only]", "data-view-only", "true").await;
+    assert!(
+        !is_finished(server, training_id),
+        "the rejected finish must not finish the training"
+    );
+    assert_eq!(
+        d1_memo(server, training_id),
+        "A のメモBC",
+        "the rejected finish must not write"
+    );
+    wait_for_disabled(driver, "button[data-finish]").await;
+    wait_for_disabled(driver, "textarea[data-memo]").await;
+}
+
+/// 閲覧のみになった後で読み直しても、閲覧のみのままで、入力と終了は無効のままである。
+async fn reload_the_server_record(driver: &WebDriver, server: &DevServer, training_id: &str) {
+    driver
+        .find(By::Css("[data-reload-server]"))
+        .await
+        .expect("the reload button must exist")
+        .click()
+        .await
+        .expect("the reload button must be clickable");
+    browser::wait_for_value(driver, "textarea[data-memo]", "A のメモBC").await;
+    browser::wait_for_attribute(driver, "[data-view-only]", "data-view-only", "true").await;
+    wait_for_disabled(driver, "textarea[data-memo]").await;
+    wait_for_disabled(driver, "button[data-finish]").await;
+    assert_eq!(
+        d1_memo(server, training_id),
+        "A のメモBC",
+        "reloading must not change the server"
+    );
+}
+
+async fn wait_for_disabled(driver: &WebDriver, selector: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if element_disabled(driver, selector).await {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{selector} did not become disabled"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+async fn element_disabled(driver: &WebDriver, selector: &str) -> bool {
+    browser::eval_json(
+        driver,
+        "const element = document.querySelector(arguments[0]); \
+         const done = arguments[arguments.length - 1]; \
+         done(JSON.stringify(element ? element.disabled : null));",
+        vec![json!(selector)],
+    )
+    .await
+        == json!(true)
+}
+
+fn is_finished(server: &DevServer, training_id: &str) -> bool {
+    let result = server
+        .execute_d1_json(&format!(
+            "SELECT COUNT(*) AS count FROM training_sessions \
+             WHERE id = '{training_id}' AND finished_at IS NOT NULL"
+        ))
+        .expect("the session must be readable");
+    first_count(&result) == Some(1)
+}
+
+async fn check_terminal_tokens(
+    driver_a: &WebDriver,
+    driver_b: &WebDriver,
+    server: &DevServer,
+    training_id: &str,
+) {
     let token_a = terminal_cookie(driver_a).await;
     let token_b = terminal_cookie(driver_b).await;
     assert_ne!(
@@ -212,6 +297,34 @@ async fn check_terminal_tokens(driver_a: &WebDriver, driver_b: &WebDriver, serve
     assert!(hashes.contains(&hash_terminal_token(&token_b)));
     assert!(!hashes.contains(&token_a), "D1 must not store the token");
     assert!(!hashes.contains(&token_b), "D1 must not store the token");
+
+    let session_b = session_cookie(driver_b).await;
+    let cookie = format!("warrior_session={session_b}; warrior_terminal={token_b}");
+    let origin = server.origin();
+    let response = server.request(
+        "GET",
+        &format!("/api/trainings/{training_id}"),
+        &[("Origin", origin.as_str()), ("Cookie", cookie.as_str())],
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert!(
+        response.body.contains("A のメモBC"),
+        "the record response must hold the record: {}",
+        response.body
+    );
+    assert!(
+        !response.body.contains(&token_a) && !response.body.contains(&token_b),
+        "the response must not contain a terminal token"
+    );
+    let logs = server.log_lines().join("\n");
+    assert!(
+        !logs.contains(&token_a),
+        "the log must not contain the token"
+    );
+    assert!(
+        !logs.contains(&token_b),
+        "the log must not contain the token"
+    );
 }
 
 async fn switch_account_and_drop_the_old_terminal(
@@ -284,6 +397,30 @@ async fn switch_account_and_drop_the_old_terminal(
     );
 }
 
+/// ログアウトして同じ利用者でログインし直しても、同じ端末トークンで編集権に再接続する。
+async fn relogin_with_the_same_terminal(driver: &WebDriver, server: &DevServer, training_id: &str) {
+    let token = terminal_cookie(driver).await;
+    browser::logout(driver).await;
+    driver
+        .goto(format!("{}/login", server.origin()))
+        .await
+        .expect("the login page must open");
+    browser::wait_for_route(driver, "/login").await;
+    browser::click_text(driver, "Google でログイン").await;
+    // 記録中のトレーニングがあるため、ホームではなく記録画面が開く。
+    browser::wait_for_route(driver, "/record/:training_id").await;
+    assert_eq!(
+        terminal_cookie(driver).await,
+        token,
+        "the same user must reconnect with the same terminal token"
+    );
+    assert_eq!(
+        browser::attribute(driver, "[data-session-id]", "data-session-id").await,
+        training_id
+    );
+    browser::wait_for_value(driver, "textarea[data-memo]", "A のメモB").await;
+}
+
 async fn terminal_cookie(driver: &WebDriver) -> String {
     let cookies = driver
         .get_all_cookies()
@@ -299,6 +436,18 @@ async fn terminal_cookie(driver: &WebDriver) -> String {
         "the terminal token must be 32 bytes in base64url"
     );
     terminal.value.clone()
+}
+
+async fn session_cookie(driver: &WebDriver) -> String {
+    let cookies = driver
+        .get_all_cookies()
+        .await
+        .expect("the browser cookies must be readable");
+    cookies
+        .iter()
+        .find(|cookie| cookie.name == "warrior_session")
+        .map(|cookie| cookie.value.clone())
+        .expect("the session cookie must exist")
 }
 
 /// 別のアカウントのログインで、端末トークンの Cookie が新しい値になるまで待つ。

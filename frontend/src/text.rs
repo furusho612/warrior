@@ -84,7 +84,7 @@ text_keys! {
     RecordOperationUpdate => "トレーニングの更新",
     RecordViewOnly => "ほかの端末で記録中です。この端末では閲覧のみできます。",
     RecordTakeover => "引き継ぐ",
-    RecordTakeoverConfirm => "引き継ぐと、元の端末にだけある未保存の変更は失われます。引き継ぎますか。",
+    RecordTakeoverConfirm => "引き継ぐと、元の端末にだけある未保存の変更と、この端末の未保存の変更は失われます。引き継ぎますか。",
     RecordTakeoverAccept => "引き継ぎを実行する",
     RecordTakeoverCancel => "キャンセル",
     RecordTakeoverFailed => "記録を引き継げませんでした。通信を確認して、もう一度お試しください。",

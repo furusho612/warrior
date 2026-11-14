@@ -15,6 +15,8 @@ pub enum TrainingApiError {
     Rejected,
     /// トレーニングが見つからない。
     NotFound,
+    /// ほかの端末が記録中のトレーニングを編集しようとした。
+    Forbidden,
     /// 終了済みのトレーニングは引き継げない。
     Conflict,
     /// 応答の本文が期待する形に一致しない。
@@ -79,6 +81,7 @@ async fn request_body(method: &str, url: &str) -> Result<String, TrainingApiErro
 
 fn status_error(status: u16) -> TrainingApiError {
     match status {
+        403 => TrainingApiError::Forbidden,
         404 => TrainingApiError::NotFound,
         409 => TrainingApiError::Conflict,
         _ => TrainingApiError::Rejected,
@@ -92,9 +95,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn the_status_codes_map_to_the_failures_the_screen_shows() {
+        assert_eq!(status_error(403), TrainingApiError::Forbidden);
         assert_eq!(status_error(404), TrainingApiError::NotFound);
         assert_eq!(status_error(409), TrainingApiError::Conflict);
-        assert_eq!(status_error(403), TrainingApiError::Rejected);
+        assert_eq!(status_error(400), TrainingApiError::Rejected);
         assert_eq!(status_error(500), TrainingApiError::Rejected);
     }
 }

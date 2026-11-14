@@ -17,10 +17,11 @@ use warrior_core::sync::{
 use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::routes::{navigate, Route};
-use crate::storage::{self, DiscardOutcome, StorageError};
+use crate::storage::{self, DiscardOutcome, ReplacePurpose, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
 use crate::training_session as training_api;
+use crate::training_session::TrainingApiError;
 
 mod ownership;
 
@@ -276,12 +277,14 @@ fn RecordFinish(signals: RecordSignals) -> Element {
         }
         if let Some(message) = error() {
             p { class: "text-[13px] text-primary", "{message}" }
-            button {
-                class: "min-h-11 border border-line px-3 text-[13px]",
-                onclick: move |_| {
-                    spawn(finish_training(signals, finishing, error));
-                },
-                "{text(Key::RecordRetry)}"
+            if !(signals.view_only)() {
+                button {
+                    class: "min-h-11 border border-line px-3 text-[13px]",
+                    onclick: move |_| {
+                        spawn(finish_training(signals, finishing, error));
+                    },
+                    "{text(Key::RecordRetry)}"
+                }
             }
         }
     }
@@ -321,6 +324,10 @@ async fn finish_training(
     finishing.set(false);
     let summary = match result {
         Ok(summary) => summary,
+        Err(TrainingApiError::Forbidden) => {
+            finish_forbidden(&record.id, signals, error).await;
+            return;
+        }
         Err(_) => {
             error.set(Some(text(Key::RecordFinishFailed).to_owned()));
             return;
@@ -339,6 +346,22 @@ async fn finish_training(
         }
         Err(_) => error.set(Some(text(Key::RecordSaveFailed).to_owned())),
     }
+}
+
+/// 終了の 403 で、この端末を閲覧のみへ切り替える。
+///
+/// 同期の 403 と同じく編集権を失った記録を残し、以後の送信を止める。
+async fn finish_forbidden(
+    training_id: &str,
+    mut signals: RecordSignals,
+    mut error: Signal<Option<String>>,
+) {
+    if sync::mark_training_forbidden(training_id).await {
+        signals.view_only.set(true);
+        error.set(Some(text(Key::RecordViewOnly).to_owned()));
+        return;
+    }
+    error.set(Some(text(Key::RecordFinishFailed).to_owned()));
 }
 
 fn completed_session(
@@ -602,7 +625,11 @@ async fn load_from_server(
             return;
         }
     };
-    if storage.replace_session_tree(&record).await.is_err() {
+    if storage
+        .replace_session_tree(&record, ReplacePurpose::Reload)
+        .await
+        .is_err()
+    {
         error.set(Some(text(Key::RecordLoadFailed).to_owned()));
         return;
     }

@@ -16,7 +16,7 @@ use warrior_core::training_session::SessionSource;
 use worker::{console_error, Request, Response, Result, RouteContext};
 
 use crate::auth::session;
-use crate::db::Db;
+use crate::db::{changed_rows, Db};
 use crate::error::{response, ErrorCode};
 use crate::ownership;
 
@@ -138,8 +138,30 @@ pub async fn takeover(request: Request, context: RouteContext<()>) -> Result<Res
             SqlValue::Text(authenticated.id.clone()),
         ],
     );
-    db.run(&statement).await?;
+    let result = db.run(&statement).await?;
+    if changed_rows(&result)? == 0 {
+        return reject_takeover(&db, &training_id, &authenticated.id).await;
+    }
     record_response(&db, &training_id, &authenticated.id).await
+}
+
+/// 編集権の更新が 0 行だった引き継ぎを拒否する。
+///
+/// 判定の後、更新の前にほかの端末が終了した場合は 409 を返す。
+async fn reject_takeover(db: &Db, training_id: &str, user_id: &str) -> Result<Response> {
+    let Some(state) = load_state(db, training_id, user_id).await? else {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    };
+    if state.finished_at.is_some() {
+        return Ok(response(
+            ErrorCode::Conflict,
+            "the finished training cannot be taken over",
+        ));
+    }
+    Ok(response(
+        ErrorCode::Conflict,
+        "the training changed while taking over",
+    ))
 }
 
 async fn load_state(db: &Db, training_id: &str, user_id: &str) -> Result<Option<SessionStateRow>> {

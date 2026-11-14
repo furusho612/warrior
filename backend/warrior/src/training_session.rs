@@ -21,7 +21,7 @@ use warrior_core::training_session::{
 use worker::{console_error, Date, Request, Response, Result, RouteContext};
 
 use crate::auth::session;
-use crate::db::Db;
+use crate::db::{changed_rows, Db};
 use crate::error::{response, ErrorCode};
 use crate::ownership;
 
@@ -163,6 +163,20 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
+    let Some(finish_result) = results.first() else {
+        console_error!("the finish batch returned no result");
+        return Ok(response(ErrorCode::Internal, "internal error"));
+    };
+    let changed = match changed_rows(finish_result) {
+        Ok(changed) => changed,
+        Err(error) => {
+            console_error!("failed to read the changed rows: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    if changed == 0 {
+        return reject_or_return_saved_summary(&db, &training_id, &authenticated.id).await;
+    }
     let saved = match results.get(1) {
         Some(result) => result.results::<SessionSummaryRow>()?.into_iter().next(),
         None => None,
@@ -172,6 +186,50 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         return Ok(response(ErrorCode::Internal, "internal error"));
     };
     summary_response(&db, &saved, &training_id, &authenticated.id).await
+}
+
+/// 終了の更新が 0 行だったときの、再取得した行からの応答。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinishAfterBatch {
+    /// ほかの端末が終了済みである。保存済みのサマリーを返す。
+    Saved,
+    /// 未終了である。この端末は編集権を失った。
+    Forbidden,
+    /// トレーニングが無い。
+    Missing,
+}
+
+fn finish_after_batch(row: Option<&SessionSummaryRow>) -> FinishAfterBatch {
+    match row {
+        None => FinishAfterBatch::Missing,
+        Some(row) if row.finished_at.is_some() => FinishAfterBatch::Saved,
+        Some(_) => FinishAfterBatch::Forbidden,
+    }
+}
+
+/// 終了の更新が 0 行だったとき、終了済みなら保存済みのサマリーを返し、未終了なら拒否する。
+async fn reject_or_return_saved_summary(
+    db: &Db,
+    training_id: &str,
+    user_id: &str,
+) -> Result<Response> {
+    let current = load_session(db, training_id, user_id).await?;
+    match finish_after_batch(current.as_ref()) {
+        FinishAfterBatch::Saved => {
+            let Some(row) = current else {
+                return Ok(response(ErrorCode::Internal, "internal error"));
+            };
+            summary_response(db, &row, training_id, user_id).await
+        }
+        FinishAfterBatch::Forbidden => {
+            // 判定の後、更新の前にほかの端末が編集権を得た。
+            Ok(response(
+                ErrorCode::Forbidden,
+                "the training is being edited on another terminal",
+            ))
+        }
+        FinishAfterBatch::Missing => Ok(response(ErrorCode::NotFound, "resource not found")),
+    }
 }
 
 /// `GET /api/trainings/:id/summary`
@@ -514,9 +572,28 @@ mod tests {
     use warrior_core::training_session::{BestKind, TrainingSessionSummary};
 
     use super::{
-        build_sets, finish_statement, stored_summary, BuildSetsError, SessionSummaryRow,
-        SetSegmentRow,
+        build_sets, finish_after_batch, finish_statement, stored_summary, BuildSetsError,
+        FinishAfterBatch, SessionSummaryRow, SetSegmentRow,
     };
+
+    #[test]
+    fn a_zero_row_finish_returns_the_saved_summary_or_rejects_an_unfinished_training() {
+        let mut row = SessionSummaryRow {
+            date: "2026-11-12".to_owned(),
+            started_at: Some("2026-11-12T03:00:00Z".to_owned()),
+            finished_at: None,
+            owner_terminal_id: Some("another-terminal".to_owned()),
+            duration_seconds: None,
+            total_weight_kg: None,
+            exercise_count: None,
+            set_count: None,
+            personal_bests: None,
+        };
+        assert_eq!(finish_after_batch(Some(&row)), FinishAfterBatch::Forbidden);
+        row.finished_at = Some("2026-11-12T04:00:00Z".to_owned());
+        assert_eq!(finish_after_batch(Some(&row)), FinishAfterBatch::Saved);
+        assert_eq!(finish_after_batch(None), FinishAfterBatch::Missing);
+    }
 
     #[test]
     fn the_finish_batch_scopes_the_update_to_the_user_the_owner_and_an_unfinished_session() {

@@ -65,6 +65,18 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+/// サーバーに保存済みの記録で端末の木を置き換える目的。
+///
+/// 引き継ぎだけが編集権を失った記録を消す。読み直しは閲覧のみの端末で行うため、
+/// 編集権を失った記録を残したままサーバーの内容だけを反映する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplacePurpose {
+    /// 編集権をこの端末へ引き継ぐ。
+    Takeover,
+    /// サーバーに保存済みの内容を読み直す。
+    Reload,
+}
+
 /// 破棄した操作の結果。
 #[derive(Debug, Clone, PartialEq)]
 pub enum DiscardOutcome {
@@ -567,7 +579,12 @@ impl Storage {
     ///
     /// 引き継ぎと、閲覧のみの端末の読み直しで使う。トレーニングの木の古い行と、
     /// そのトレーニングの送信待ちの操作を削除してから、応答の行だけを書く (ADR-002)。
-    pub async fn replace_session_tree(&self, record: &TrainingRecord) -> Result<(), StorageError> {
+    /// 編集権を失った記録を消すのは引き継ぎだけである。
+    pub async fn replace_session_tree(
+        &self,
+        record: &TrainingRecord,
+        purpose: ReplacePurpose,
+    ) -> Result<(), StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
@@ -583,7 +600,7 @@ impl Storage {
             ],
             IdbTransactionMode::Readwrite,
         )?;
-        match replace_session_tree_steps(&transaction, record).await {
+        match replace_session_tree_steps(&transaction, record, purpose).await {
             Ok(()) => transaction.finish().await,
             Err(error) => abort(transaction, error).await,
         }
@@ -659,6 +676,7 @@ struct StoredSuperset<'a> {
 async fn replace_session_tree_steps(
     transaction: &indexeddb::Transaction,
     record: &TrainingRecord,
+    purpose: ReplacePurpose,
 ) -> Result<(), StorageError> {
     let training_id = record.session.id.as_str();
     let outbox_store = transaction.store(Store::Outbox.name())?;
@@ -703,8 +721,11 @@ async fn replace_session_tree_steps(
         .collect::<Vec<_>>();
     put_rows(transaction, Store::SupersetMembers, &members).await?;
 
-    let meta = transaction.store(Store::Meta.name())?;
-    outbox::clear_forbidden(&meta, training_id).await
+    if purpose == ReplacePurpose::Takeover {
+        let meta = transaction.store(Store::Meta.name())?;
+        outbox::clear_forbidden(&meta, training_id).await?;
+    }
+    Ok(())
 }
 
 async fn put_rows<T: serde::Serialize>(

@@ -15,7 +15,7 @@ use warrior_core::sync::{
 use worker::{console_error, Request, Response, Result, RouteContext};
 
 use crate::auth::session;
-use crate::db::Db;
+use crate::db::{changed_rows, Db};
 use crate::error::{response, ErrorCode};
 use crate::ownership;
 
@@ -105,19 +105,79 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         BatchOutcome::Reject(rejection) => return Ok(rejection),
     };
 
-    if let Err(error) = db.batch(&statements).await {
-        console_error!("failed to apply the operation: {error}");
-        // 同じ操作が同時に送られた場合、先に適用した要求が操作 ID を残している。
-        if let Some(existing) = applied(&db, &operation.operation_id).await? {
-            if existing.user_id == authenticated.id && existing.training_id == operation.training_id
-            {
-                return status_response("already_applied");
+    let results = match db.batch(&statements).await {
+        Ok(results) => results,
+        Err(error) => {
+            console_error!("failed to apply the operation: {error}");
+            // 同じ操作が同時に送られた場合、先に適用した要求が操作 ID を残している。
+            if let Some(existing) = applied(&db, &operation.operation_id).await? {
+                if existing.user_id == authenticated.id
+                    && existing.training_id == operation.training_id
+                {
+                    return status_response("already_applied");
+                }
             }
+            return Ok(response(ErrorCode::Internal, "internal error"));
         }
+    };
+    let Some(result) = results.get(1) else {
+        console_error!("the batch returned no result for the write");
         return Ok(response(ErrorCode::Internal, "internal error"));
+    };
+    let changed = match changed_rows(result) {
+        Ok(changed) => changed,
+        Err(error) => {
+            console_error!("failed to read the changed rows: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    if changed == 0 {
+        return reject_unapplied(&db, &authenticated.id, &operation).await;
     }
 
     status_response("applied")
+}
+
+/// 書き込みが 0 行だった batch の操作の記録を取り消し、拒否の応答を返す。
+///
+/// 判定の後、文を実行するまでにほかの端末が所有者を変えるか終了していると、
+/// 更新の条件が 0 行になる。このとき操作 ID を残すと、同じ操作の再送が適用済みに見える。
+async fn reject_unapplied(db: &Db, user_id: &str, operation: &Operation) -> Result<Response> {
+    let statement = SqlStatement::new(
+        "DELETE FROM applied_operations WHERE operation_id = ?",
+        vec![SqlValue::Text(operation.operation_id.clone())],
+    );
+    db.run(&statement).await?;
+    if operation.kind == OperationKind::TrainingSessionCreate {
+        let session = session_row(db, &operation.training_id).await?;
+        return Ok(match create_rejection(session.as_ref(), user_id) {
+            CreateRejection::Forbidden => response(
+                ErrorCode::Forbidden,
+                "the training is being edited on another terminal",
+            ),
+            CreateRejection::NotFound => response(ErrorCode::NotFound, "resource not found"),
+        });
+    }
+    Ok(response(
+        ErrorCode::Forbidden,
+        "the training is being edited on another terminal",
+    ))
+}
+
+/// 0 行だった作成の拒否。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CreateRejection {
+    /// 同じ利用者の行をほかの端末が所有している。
+    Forbidden,
+    /// 行が無い、または別の利用者の行である。
+    NotFound,
+}
+
+fn create_rejection(session: Option<&SessionOwnerRow>, user_id: &str) -> CreateRejection {
+    match session {
+        Some(session) if session.user_id == user_id => CreateRejection::Forbidden,
+        _ => CreateRejection::NotFound,
+    }
 }
 
 async fn create_batch(
@@ -279,7 +339,10 @@ fn create_statements(
              custom_program_day_id = excluded.custom_program_day_id, \
              owner_terminal_id = COALESCE(training_sessions.owner_terminal_id, excluded.owner_terminal_id), \
              updated_at = excluded.updated_at \
-             WHERE training_sessions.user_id = excluded.user_id",
+             WHERE training_sessions.user_id = excluded.user_id \
+             AND (training_sessions.finished_at IS NOT NULL \
+                  OR training_sessions.owner_terminal_id IS NULL \
+                  OR training_sessions.owner_terminal_id = excluded.owner_terminal_id)",
             vec![
                 SqlValue::Text(payload.id.clone()),
                 SqlValue::Text(user_id.to_owned()),
@@ -384,7 +447,8 @@ mod tests {
     use warrior_core::training_session::SessionSource;
 
     use super::{
-        create_statements, owner_condition, update_statements, write_decision, OwnerCondition,
+        create_rejection, create_statements, owner_condition, update_statements, write_decision,
+        CreateRejection, OwnerCondition, SessionOwnerRow,
     };
 
     const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -436,6 +500,29 @@ mod tests {
     }
 
     #[test]
+    fn an_unapplied_create_hides_a_foreign_training_and_rejects_an_owned_one() {
+        let same_user = SessionOwnerRow {
+            user_id: USER_ID.to_owned(),
+            owner_terminal_id: Some("another-terminal".to_owned()),
+            finished_at: None,
+        };
+        let foreign_user = SessionOwnerRow {
+            user_id: "another-user".to_owned(),
+            owner_terminal_id: Some(TERMINAL_ID.to_owned()),
+            finished_at: None,
+        };
+        assert_eq!(
+            create_rejection(Some(&same_user), USER_ID),
+            CreateRejection::Forbidden
+        );
+        assert_eq!(
+            create_rejection(Some(&foreign_user), USER_ID),
+            CreateRejection::NotFound
+        );
+        assert_eq!(create_rejection(None, USER_ID), CreateRejection::NotFound);
+    }
+
+    #[test]
     fn the_create_batch_saves_the_operation_the_session_and_its_owner() {
         let statements = create_statements(
             USER_ID,
@@ -448,6 +535,15 @@ mod tests {
         assert!(statements[0].sql().contains("applied_operations"));
         assert!(statements[1].sql().contains("ON CONFLICT(id)"));
         assert!(statements[1].sql().contains("owner_terminal_id"));
+        assert!(statements[1]
+            .sql()
+            .contains("training_sessions.owner_terminal_id = excluded.owner_terminal_id"));
+        assert!(statements[1]
+            .sql()
+            .contains("training_sessions.owner_terminal_id IS NULL"));
+        assert!(statements[1]
+            .sql()
+            .contains("training_sessions.finished_at IS NOT NULL"));
         assert_eq!(
             statements[1].bindings()[5],
             SqlValue::Text("empty".to_owned())

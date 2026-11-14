@@ -4,6 +4,8 @@
 //! 同じ利用者の 2 つの端末トークンを使い、記録中は所有者だけが書き込めること、
 //! 引き継ぎで所有者が移ること、終了の後はどの端末からでも書けて後勝ちになること、
 //! 保存済みの記録をほかの端末が読めること、別の利用者の記録が 404 になることを確かめる。
+//! 判定と書き込みの間に所有者が移っても、0 行の書き込みを成功として扱わないことを
+//! 引き継ぎとの競合で確かめる。
 
 mod support;
 
@@ -11,9 +13,12 @@ use serde_json::{json, Value};
 use support::DevServer;
 use warrior_core::auth::{hash_session_token, hash_terminal_token};
 use warrior_core::base64url;
+use warrior_core::training_session::TrainingSessionSummary;
 
 const ORIGIN: &str = "http://localhost:8787";
 const PORT: u16 = 8805;
+const RACE_UPDATE_PORT: u16 = 8807;
+const RACE_FINISH_PORT: u16 = 8808;
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4601";
 const OTHER_USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4602";
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4610";
@@ -60,7 +65,192 @@ fn only_the_owner_edits_a_recording_training_and_the_handover_moves_the_right() 
 }
 
 fn start_server() -> DevServer {
-    let server = DevServer::start(PORT);
+    start_server_at(PORT)
+}
+
+/// 記録中の更新と引き継ぎが重なっても、受理した応答と D1 の内容が食い違わない。
+///
+/// 判定と batch の間で所有者が移ると、更新の SQL は 0 行になる。このとき操作 ID を
+/// 残すと、同じ操作の再送が適用済みに見える。200 の更新はメモと操作 ID を残し、
+/// 403 の更新はどちらも残さないことを、どの実行順序でも確かめる。
+#[test]
+fn a_takeover_and_a_recording_update_never_leave_an_unapplied_operation() {
+    let server = start_server_at(RACE_UPDATE_PORT);
+    let (session_token, _, token_a, token_b) = seed(&server);
+    let cookie_a = terminal_cookie(&session_token, &token_a);
+    let cookie_b = terminal_cookie(&session_token, &token_b);
+
+    for round in 0..6u8 {
+        let training_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c47{round:02x}");
+        let create_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c48{round:02x}");
+        let update_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c49{round:02x}");
+        let created = post_sync(
+            &server,
+            &cookie_a,
+            &create_operation_for(&training_id, &create_id, ""),
+        );
+        assert_eq!(created.status, 200, "{}", created.body);
+
+        let (update, takeover) = std::thread::scope(|scope| {
+            let update = scope.spawn(|| {
+                post_sync(
+                    &server,
+                    &cookie_a,
+                    &update_operation_for(&training_id, &update_id, 2, "race-a"),
+                )
+            });
+            let takeover = scope.spawn(|| {
+                post(
+                    &server,
+                    &cookie_b,
+                    &format!("/api/trainings/{training_id}/takeover"),
+                )
+            });
+            (
+                update.join().expect("the update must finish"),
+                takeover.join().expect("the takeover must finish"),
+            )
+        });
+
+        assert_eq!(takeover.status, 200, "{}", takeover.body);
+        let stored = first_row(
+            &server,
+            &format!(
+                "SELECT memo, owner_terminal_id FROM training_sessions WHERE id = '{training_id}'"
+            ),
+        );
+        assert_eq!(
+            stored["owner_terminal_id"],
+            json!(TERMINAL_B_ID),
+            "the takeover must own the training"
+        );
+        match update.status {
+            200 => {
+                assert_eq!(status_of(&update), "applied");
+                assert_eq!(
+                    stored["memo"],
+                    json!("race-a"),
+                    "an applied update must leave its memo"
+                );
+                assert_eq!(applied_count(&server, &update_id), 1);
+            }
+            403 => {
+                assert_eq!(
+                    serde_json::from_str::<Value>(&update.body).expect("an error body")["error"]
+                        ["code"],
+                    json!("forbidden")
+                );
+                assert_eq!(
+                    stored["memo"],
+                    json!(""),
+                    "a rejected update must not leave its memo"
+                );
+                assert_eq!(
+                    applied_count(&server, &update_id),
+                    0,
+                    "a rejected update must not leave the operation id"
+                );
+            }
+            other => panic!(
+                "the update must be applied or rejected: {other} {}",
+                update.body
+            ),
+        }
+    }
+}
+
+/// 引き継ぎと終了が重なっても、両方が成功せず、状態と応答が一致する。
+///
+/// 終了が先に通れば保存済みのサマリーを返し、引き継ぎは 409 になる。引き継ぎが先に
+/// 通れば終了は 403 になり、記録中のまま残る。
+#[test]
+fn a_takeover_and_a_finish_never_both_succeed() {
+    let server = start_server_at(RACE_FINISH_PORT);
+    let (session_token, _, token_a, token_b) = seed(&server);
+    let cookie_a = terminal_cookie(&session_token, &token_a);
+    let cookie_b = terminal_cookie(&session_token, &token_b);
+
+    for round in 0..6u8 {
+        let training_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c4a{round:02x}");
+        let create_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c4b{round:02x}");
+        let created = post_sync(
+            &server,
+            &cookie_a,
+            &create_operation_for(&training_id, &create_id, ""),
+        );
+        assert_eq!(created.status, 200, "{}", created.body);
+
+        let (finish, takeover) = std::thread::scope(|scope| {
+            let finish = scope.spawn(|| {
+                post(
+                    &server,
+                    &cookie_a,
+                    &format!("/api/trainings/{training_id}/finish"),
+                )
+            });
+            let takeover = scope.spawn(|| {
+                post(
+                    &server,
+                    &cookie_b,
+                    &format!("/api/trainings/{training_id}/takeover"),
+                )
+            });
+            (
+                finish.join().expect("the finish must finish"),
+                takeover.join().expect("the takeover must finish"),
+            )
+        });
+
+        let stored = first_row(
+            &server,
+            &format!(
+                "SELECT finished_at, owner_terminal_id FROM training_sessions WHERE id = '{training_id}'"
+            ),
+        );
+        match finish.status {
+            200 => {
+                assert_eq!(takeover.status, 409, "{}", takeover.body);
+                assert!(
+                    stored["finished_at"].as_str().is_some(),
+                    "a successful finish must store the finish time"
+                );
+                assert_eq!(
+                    stored["owner_terminal_id"],
+                    Value::Null,
+                    "a successful finish must release the editing right"
+                );
+                let summary: TrainingSessionSummary =
+                    serde_json::from_str(&finish.body).expect("the finish response is a summary");
+                assert_eq!(summary.set_count, 0);
+            }
+            403 => {
+                assert_eq!(
+                    serde_json::from_str::<Value>(&finish.body).expect("an error body")["error"]
+                        ["code"],
+                    json!("forbidden")
+                );
+                assert_eq!(
+                    takeover.status, 200,
+                    "the takeover must win when the finish is rejected: {}",
+                    takeover.body
+                );
+                assert_eq!(
+                    stored["finished_at"],
+                    Value::Null,
+                    "a rejected finish must not finish the training"
+                );
+                assert_eq!(stored["owner_terminal_id"], json!(TERMINAL_B_ID));
+            }
+            other => panic!(
+                "the finish must be saved or rejected: {other} {}",
+                finish.body
+            ),
+        }
+    }
+}
+
+fn start_server_at(port: u16) -> DevServer {
+    let server = DevServer::start(port);
     server
         .apply_migrations()
         .expect("the local D1 migrations must apply");
@@ -547,14 +737,18 @@ fn get(server: &DevServer, cookie: &str, path: &str) -> support::HttpResponse {
 }
 
 fn create_operation(operation_id: &str, memo: &str) -> Value {
+    create_operation_for(TRAINING_ID, operation_id, memo)
+}
+
+fn create_operation_for(training_id: &str, operation_id: &str, memo: &str) -> Value {
     json!({
         "operation_id": operation_id,
-        "training_id": TRAINING_ID,
+        "training_id": training_id,
         "sequence": 1,
         "kind": "training_session_create",
         "parent_operation_id": null,
         "payload": {
-            "id": TRAINING_ID,
+            "id": training_id,
             "date": DATE,
             "started_at": STARTED_AT,
             "memo": memo,
@@ -567,9 +761,13 @@ fn create_operation(operation_id: &str, memo: &str) -> Value {
 }
 
 fn update_operation(operation_id: &str, sequence: u64, memo: &str) -> Value {
+    update_operation_for(TRAINING_ID, operation_id, sequence, memo)
+}
+
+fn update_operation_for(training_id: &str, operation_id: &str, sequence: u64, memo: &str) -> Value {
     json!({
         "operation_id": operation_id,
-        "training_id": TRAINING_ID,
+        "training_id": training_id,
         "sequence": sequence,
         "kind": "training_session_update",
         "parent_operation_id": null,

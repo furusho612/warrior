@@ -56,6 +56,16 @@ pub async fn clear_account() -> Result<(), StorageError> {
     Ok(())
 }
 
+/// 編集権を失ったトレーニングを記録し、以後の送信を止める。
+///
+/// 記録できたときだけ true を返す。画面は true のとき閲覧のみへ切り替える。
+pub async fn mark_training_forbidden(training_id: &str) -> bool {
+    let Ok(storage) = storage::current().await else {
+        return false;
+    };
+    storage.mark_training_forbidden(training_id).await.is_ok()
+}
+
 fn listen_online() {
     if LISTENING.with(|listening| listening.replace(true)) {
         return;
@@ -161,10 +171,7 @@ async fn flush_inner() {
                 return;
             }
             SendOutcome::Forbidden => {
-                let marked = storage
-                    .mark_training_forbidden(&entry.operation.training_id)
-                    .await;
-                if marked.is_err() {
+                if !mark_training_forbidden(&entry.operation.training_id).await {
                     return;
                 }
                 let _ = storage.return_to_pending(&operation_id).await;
