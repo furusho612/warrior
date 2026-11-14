@@ -1,6 +1,6 @@
 //! セットと段の端末内の保存、並べ替え、完了、削除のブラウザのテスト。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-NFR-003`、`REQ-NFR-005`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-003`、`REQ-NFR-003`、`REQ-NFR-005`。
 //! セットの追加、更新、削除、並べ替え、完了が送信待ちの列を通り、段がセットの更新で
 //! 全置換され、削除でセットと一緒に消えることを確かめる。
 
@@ -8,7 +8,7 @@ use warrior_core::set_calc::SetKind;
 use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload};
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use warrior_frontend::storage::{DiscardOutcome, RestoreOutcome, Store};
-use warrior_frontend::training_set::{self, SetValues};
+use warrior_frontend::training_set::{self, SetSegmentValues, SetValues};
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -21,6 +21,7 @@ use support::{
 };
 
 const EXERCISE_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5401";
+const SECOND_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5410";
 const CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5402";
 const MEMO_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5403";
 
@@ -83,11 +84,20 @@ fn server_set(
 }
 
 fn values(kind: SetKind, weight_kg: f64, reps: u32) -> SetValues {
+    values_for(kind, &[(weight_kg, reps)])
+}
+
+fn values_for(kind: SetKind, segments: &[(f64, u32)]) -> SetValues {
     SetValues {
         kind,
-        weight_kg,
-        reps,
-        duration_seconds: None,
+        segments: segments
+            .iter()
+            .map(|(weight_kg, reps)| SetSegmentValues {
+                weight_kg: *weight_kg,
+                reps: *reps,
+                duration_seconds: None,
+            })
+            .collect(),
         completed: false,
         body_weight_kg: Some(70.0),
         rpe: None,
@@ -109,7 +119,7 @@ async fn set_rows_and_segments_use_the_outbox_and_keep_the_order() {
     )
     .expect("the first set");
     storage
-        .save_set_create(&first.set, &first.segment, &operation)
+        .save_set_create(&first.set, &first.segments, &operation)
         .await
         .expect("the first set must be saved");
     let (second, operation) = training_set::create(
@@ -120,7 +130,7 @@ async fn set_rows_and_segments_use_the_outbox_and_keep_the_order() {
     )
     .expect("the second set");
     storage
-        .save_set_create(&second.set, &second.segment, &operation)
+        .save_set_create(&second.set, &second.segments, &operation)
         .await
         .expect("the second set must be saved");
 
@@ -136,15 +146,21 @@ async fn set_rows_and_segments_use_the_outbox_and_keep_the_order() {
     assert_eq!(stored[0].segments[0].reps, Some(5));
     assert_eq!(stored[0].set.body_weight_kg, Some(70.0));
 
+    let mut second_segment = first.segments[0].clone();
+    second_segment.id = SECOND_SEGMENT_ID.to_owned();
+    second_segment.position = 2;
+    second_segment.weight_kg = Some(80.0);
+    second_segment.reps = Some(8);
+    let drop_segments = vec![first.segments[0].clone(), second_segment];
     let (updated, operation) = training_set::update(
         TRAINING_ID,
         &first.set,
-        &first.segment,
-        &values(SetKind::Drop, 90.0, 8),
+        &drop_segments,
+        &values_for(SetKind::Drop, &[(90.0, 8), (80.0, 8)]),
     )
-    .expect("the update");
+    .expect("the update with two segments");
     storage
-        .save_set_update(&updated.set, &updated.segment, &operation)
+        .save_set_update(&updated.set, &updated.segments, &operation)
         .await
         .expect("the update must be saved");
     let stored = storage
@@ -152,6 +168,25 @@ async fn set_rows_and_segments_use_the_outbox_and_keep_the_order() {
         .await
         .expect("the sets must be readable");
     assert_eq!(stored[0].set.kind, "drop");
+    assert_eq!(stored[0].segments.len(), 2);
+    assert_eq!(stored[0].segments[0].weight_kg, Some(90.0));
+    assert_eq!(stored[0].segments[1].weight_kg, Some(80.0));
+
+    let (updated, operation) = training_set::update(
+        TRAINING_ID,
+        &updated.set,
+        &updated.segments[..1],
+        &values(SetKind::Drop, 90.0, 8),
+    )
+    .expect("the update after removing a segment");
+    storage
+        .save_set_update(&updated.set, &updated.segments, &operation)
+        .await
+        .expect("the update must be saved");
+    let stored = storage
+        .training_sets(EXERCISE_ROW_ID)
+        .await
+        .expect("the sets must be readable");
     assert_eq!(stored[0].segments.len(), 1);
     assert_eq!(stored[0].segments[0].weight_kg, Some(90.0));
     assert_eq!(stored[0].segments[0].reps, Some(8));
@@ -214,7 +249,7 @@ async fn set_rows_and_segments_use_the_outbox_and_keep_the_order() {
     assert_eq!(stored[0].segments.len(), 1);
     assert!(!record_ids(&storage, Store::SetSegments)
         .await
-        .contains(&first.segment.id));
+        .contains(&first.segments[0].id));
     assert!(storage
         .outbox_entries()
         .await
@@ -277,7 +312,7 @@ async fn discarding_a_set_update_restores_the_set_and_keeps_the_memo() {
     )
     .expect("the first set");
     storage
-        .save_set_create(&first.set, &first.segment, &first_op)
+        .save_set_create(&first.set, &first.segments, &first_op)
         .await
         .expect("the first set must be saved");
     storage
@@ -292,7 +327,7 @@ async fn discarding_a_set_update_restores_the_set_and_keeps_the_memo() {
     )
     .expect("the second set");
     storage
-        .save_set_create(&second.set, &second.segment, &second_op)
+        .save_set_create(&second.set, &second.segments, &second_op)
         .await
         .expect("the second set must be saved");
     storage
@@ -303,12 +338,12 @@ async fn discarding_a_set_update_restores_the_set_and_keeps_the_memo() {
     let (updated, update_op) = training_set::update(
         TRAINING_ID,
         &first.set,
-        &first.segment,
+        &first.segments,
         &values(SetKind::Normal, 120.0, 6),
     )
     .expect("the update");
     storage
-        .save_set_update(&updated.set, &updated.segment, &update_op)
+        .save_set_update(&updated.set, &updated.segments, &update_op)
         .await
         .expect("the update must be saved");
     assert_eq!(
@@ -320,7 +355,7 @@ async fn discarding_a_set_update_restores_the_set_and_keeps_the_memo() {
     );
     storage
         .restore_set(
-            &server_set(&first.set.id, &first.segment.id, 1, 100.0, 5),
+            &server_set(&first.set.id, &first.segments[0].id, 1, 100.0, 5),
             &first.set.id,
             0,
         )
@@ -370,7 +405,7 @@ async fn restoring_a_set_keeps_a_pending_update() {
     )
     .expect("the set");
     storage
-        .save_set_create(&set.set, &set.segment, &create_op)
+        .save_set_create(&set.set, &set.segments, &create_op)
         .await
         .expect("the set must be saved");
     storage
@@ -381,12 +416,12 @@ async fn restoring_a_set_keeps_a_pending_update() {
     let (failed_rows, failed_op) = training_set::update(
         TRAINING_ID,
         &set.set,
-        &set.segment,
+        &set.segments,
         &values(SetKind::Normal, 110.0, 6),
     )
     .expect("the failed update");
     storage
-        .save_set_update(&failed_rows.set, &failed_rows.segment, &failed_op)
+        .save_set_update(&failed_rows.set, &failed_rows.segments, &failed_op)
         .await
         .expect("the failed update must be saved");
     storage
@@ -408,18 +443,18 @@ async fn restoring_a_set_keeps_a_pending_update() {
     let (pending_rows, pending_op) = training_set::update(
         TRAINING_ID,
         &failed_rows.set,
-        &failed_rows.segment,
+        &failed_rows.segments,
         &values(SetKind::Normal, 120.0, 7),
     )
     .expect("the pending update");
     storage
-        .save_set_update(&pending_rows.set, &pending_rows.segment, &pending_op)
+        .save_set_update(&pending_rows.set, &pending_rows.segments, &pending_op)
         .await
         .expect("the pending update must be saved");
 
     storage
         .restore_set(
-            &server_set(&set.set.id, &set.segment.id, 1, 100.0, 5),
+            &server_set(&set.set.id, &set.segments[0].id, 1, 100.0, 5),
             &set.set.id,
             failed_op.sequence,
         )
@@ -460,7 +495,7 @@ async fn restoring_a_set_defers_for_a_newer_failed_update_and_a_reorder() {
     )
     .expect("the set");
     storage
-        .save_set_create(&set.set, &set.segment, &create_op)
+        .save_set_create(&set.set, &set.segments, &create_op)
         .await
         .expect("the set must be saved");
     storage
@@ -471,12 +506,12 @@ async fn restoring_a_set_defers_for_a_newer_failed_update_and_a_reorder() {
     let (failed_a, op_a) = training_set::update(
         TRAINING_ID,
         &set.set,
-        &set.segment,
+        &set.segments,
         &values(SetKind::Normal, 110.0, 6),
     )
     .expect("the first failed update");
     storage
-        .save_set_update(&failed_a.set, &failed_a.segment, &op_a)
+        .save_set_update(&failed_a.set, &failed_a.segments, &op_a)
         .await
         .expect("the first failed update must be saved");
     storage
@@ -498,12 +533,12 @@ async fn restoring_a_set_defers_for_a_newer_failed_update_and_a_reorder() {
     let (failed_b, op_b) = training_set::update(
         TRAINING_ID,
         &failed_a.set,
-        &failed_a.segment,
+        &failed_a.segments,
         &values(SetKind::Normal, 120.0, 7),
     )
     .expect("the second failed update");
     storage
-        .save_set_update(&failed_b.set, &failed_b.segment, &op_b)
+        .save_set_update(&failed_b.set, &failed_b.segments, &op_b)
         .await
         .expect("the second failed update must be saved");
     storage
@@ -515,7 +550,7 @@ async fn restoring_a_set_defers_for_a_newer_failed_update_and_a_reorder() {
         .await
         .expect("the second failed update must fail");
 
-    let server = server_set(&set.set.id, &set.segment.id, 1, 100.0, 5);
+    let server = server_set(&set.set.id, &set.segments[0].id, 1, 100.0, 5);
     assert_eq!(
         storage
             .restore_set_with_outcome(&server, &set.set.id, op_a.sequence)
@@ -587,7 +622,7 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
     )
     .expect("the first set");
     storage
-        .save_set_create(&first.set, &first.segment, &first_op)
+        .save_set_create(&first.set, &first.segments, &first_op)
         .await
         .expect("the first set must be saved");
     storage
@@ -602,7 +637,7 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
     )
     .expect("the second set");
     storage
-        .save_set_create(&second.set, &second.segment, &second_op)
+        .save_set_create(&second.set, &second.segments, &second_op)
         .await
         .expect("the second set must be saved");
     storage
@@ -624,8 +659,8 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
             .expect("the discard"),
         DiscardOutcome::OperationsRemoved
     );
-    let mut server = server_set(&first.set.id, &first.segment.id, 1, 100.0, 5);
-    let mut second_server = server_set(&second.set.id, &second.segment.id, 2, 80.0, 8);
+    let mut server = server_set(&first.set.id, &first.segments[0].id, 1, 100.0, 5);
+    let mut second_server = server_set(&second.set.id, &second.segments[0].id, 2, 80.0, 8);
     server.sets.append(&mut second_server.sets);
     server.segments.append(&mut second_server.segments);
     storage
@@ -649,18 +684,18 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
     )
     .expect("the third set");
     storage
-        .save_set_create(&third.set, &third.segment, &third_op)
+        .save_set_create(&third.set, &third.segments, &third_op)
         .await
         .expect("the third set must be saved");
     let (third_updated, third_update) = training_set::update(
         TRAINING_ID,
         &third.set,
-        &third.segment,
+        &third.segments,
         &values(SetKind::Drop, 70.0, 5),
     )
     .expect("the third update");
     storage
-        .save_set_update(&third_updated.set, &third_updated.segment, &third_update)
+        .save_set_update(&third_updated.set, &third_updated.segments, &third_update)
         .await
         .expect("the third update must be saved");
     let (third_completed, third_complete) =
@@ -714,7 +749,7 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
     assert!(!stored.iter().any(|set| set.set.id == third.set.id));
     assert!(!record_ids(&storage, Store::SetSegments)
         .await
-        .contains(&third.segment.id));
+        .contains(&third.segments[0].id));
     assert!(entries
         .iter()
         .any(|entry| entry.operation.kind == OperationKind::TrainingSessionUpdate));
@@ -738,13 +773,13 @@ async fn a_saved_update_does_not_recreate_a_deleted_set() {
     )
     .expect("the set");
     storage
-        .save_set_create(&set.set, &set.segment, &create_op)
+        .save_set_create(&set.set, &set.segments, &create_op)
         .await
         .expect("the set must be saved");
     let (updated, update_op) = training_set::update(
         TRAINING_ID,
         &set.set,
-        &set.segment,
+        &set.segments,
         &values(SetKind::Normal, 120.0, 6),
     )
     .expect("the update");
@@ -754,7 +789,7 @@ async fn a_saved_update_does_not_recreate_a_deleted_set() {
         .await
         .expect("the delete must be saved");
     storage
-        .save_set_update(&updated.set, &updated.segment, &update_op)
+        .save_set_update(&updated.set, &updated.segments, &update_op)
         .await
         .expect("the late update must be ignored");
 
@@ -768,7 +803,7 @@ async fn a_saved_update_does_not_recreate_a_deleted_set() {
     );
     assert!(!record_ids(&storage, Store::SetSegments)
         .await
-        .contains(&set.segment.id));
+        .contains(&set.segments[0].id));
     assert!(storage
         .outbox_entries()
         .await

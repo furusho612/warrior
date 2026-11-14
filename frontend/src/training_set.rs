@@ -1,8 +1,9 @@
-//! セットの行と、送信待ちの列に積む操作の組み立て。
+//! セットの行と段、送信待ちの列に積む操作の組み立て。
 //!
 //! セットの追加、更新、削除、並べ替え、完了の操作は端末で作り、サーバーが検証して
 //! 保存する (ADR-002)。記録した時点の体重はセットの行に持ち、段の重量は自重種目では
-//! セットごとの加重とする。操作の ID と順序は保存のときに `frontend/src/storage` が決める。
+//! セットごとの加重とする。ドロップセットは 1 つのセットに複数の段を持つ。
+//! 操作の ID と順序は保存のときに `frontend/src/storage` が決める。
 
 use warrior_core::exercise::GripSelection;
 use warrior_core::set_calc::SetKind;
@@ -15,31 +16,45 @@ use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 use crate::ids::{new_uuid, now_iso};
 use crate::storage::StorageError;
 
-/// セットの入力の値。
+/// セットの 1 つの段の入力の値。
 #[derive(Debug, Clone, PartialEq)]
-pub struct SetValues {
-    /// セット種別。
-    pub kind: SetKind,
-    /// 重量 (kg)。自重種目はセットごとの加重である。
+pub struct SetSegmentValues {
+    /// 重量 (kg)。自重種目は加重である。
     pub weight_kg: f64,
     /// 回数。
     pub reps: u32,
     /// 時間で記録する場合の秒数。
     pub duration_seconds: Option<u32>,
+}
+
+impl SetSegmentValues {
+    /// 段に記録する値があるか。
+    pub fn has_values(&self) -> bool {
+        self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
+    }
+}
+
+/// セットの入力の値。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetValues {
+    /// セット種別。
+    pub kind: SetKind,
+    /// 段の入力。並び順である。
+    pub segments: Vec<SetSegmentValues>,
     /// 完了しているか。値が無いときは完了にしない。
     pub completed: bool,
     /// 記録した時点の体重 (kg)。身体情報が無いときは None。
     pub body_weight_kg: Option<f64>,
-    /// RPE。
+    /// RPE。ドロップセットも親セットに 1 つ持つ。
     pub rpe: Option<f64>,
     /// グリップ。選ばない種目は None。
     pub grip: Option<GripSelection>,
 }
 
 impl SetValues {
-    /// セットに記録する値があるか。
+    /// すべての段に記録する値があるか。
     pub fn has_values(&self) -> bool {
-        self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
+        !self.segments.is_empty() && self.segments.iter().all(SetSegmentValues::has_values)
     }
 
     /// 値を保ったまま完了できるか。
@@ -53,8 +68,8 @@ impl SetValues {
 pub struct SetRows {
     /// セットの行。
     pub set: SetRecordRow,
-    /// セットの段。この版では 1 つだけである。
-    pub segment: SetSegmentRecord,
+    /// セットの段。並び順である。
+    pub segments: Vec<SetSegmentRecord>,
 }
 
 /// セットの追加の行と操作を作る。
@@ -64,10 +79,26 @@ pub fn create(
     position: i64,
     values: &SetValues,
 ) -> Result<(SetRows, Operation), StorageError> {
+    if values.segments.is_empty() {
+        return Err(StorageError::InvalidOperation(
+            "the set has no segments".to_owned(),
+        ));
+    }
     let now = now_iso();
     let set_id = new_uuid()?;
-    let segment_id = new_uuid()?;
-    let segment = segment_record(&segment_id, &set_id, values, &now);
+    let segment_ids = values
+        .segments
+        .iter()
+        .map(|_| new_uuid())
+        .collect::<Result<Vec<_>, _>>()?;
+    let segments = segment_ids
+        .iter()
+        .zip(&values.segments)
+        .enumerate()
+        .map(|(index, (segment_id, values))| {
+            segment_record(segment_id, &set_id, position_of(index), values, &now)
+        })
+        .collect::<Vec<_>>();
     let set = SetRecordRow {
         id: set_id.clone(),
         training_exercise_id: training_exercise_id.to_owned(),
@@ -90,7 +121,7 @@ pub fn create(
         rpe: values.rpe,
         grip: values.grip,
         body_weight_kg: values.body_weight_kg,
-        segments: vec![segment_payload(&segment_id, values)],
+        segments: payload_segments(&segment_ids, &values.segments),
     };
     let operation = operation(
         training_id,
@@ -98,16 +129,21 @@ pub fn create(
         serde_json::to_value(payload)
             .map_err(|error| StorageError::Serialize(error.to_string()))?,
     )?;
-    Ok((SetRows { set, segment }, operation))
+    Ok((SetRows { set, segments }, operation))
 }
 
 /// セットの更新の行と操作を作る。段は全置換である。
 pub fn update(
     training_id: &str,
     set: &SetRecordRow,
-    segment: &SetSegmentRecord,
+    segments: &[SetSegmentRecord],
     values: &SetValues,
 ) -> Result<(SetRows, Operation), StorageError> {
+    if segments.len() != values.segments.len() {
+        return Err(StorageError::InvalidOperation(
+            "the update must keep the number of segments".to_owned(),
+        ));
+    }
     let now = now_iso();
     let updated_set = SetRecordRow {
         kind: values.kind.as_str().to_owned(),
@@ -118,21 +154,18 @@ pub fn update(
         updated_at: now.clone(),
         ..set.clone()
     };
-    let updated_segment = SetSegmentRecord {
-        weight_kg: Some(values.weight_kg),
-        reps: Some(i64::from(values.reps)),
-        momentum_reps: 0,
-        assisted_reps: 0,
-        duration_seconds: values.duration_seconds.map(i64::from),
-        left_weight_kg: None,
-        left_reps: None,
-        left_duration_seconds: None,
-        right_weight_kg: None,
-        right_reps: None,
-        right_duration_seconds: None,
-        updated_at: now.clone(),
-        ..segment.clone()
-    };
+    let updated_segments = segments
+        .iter()
+        .zip(&values.segments)
+        .enumerate()
+        .map(|(index, (segment, values))| {
+            updated_segment_record(segment, position_of(index), values, &now)
+        })
+        .collect::<Vec<_>>();
+    let segment_ids = updated_segments
+        .iter()
+        .map(|segment| segment.id.clone())
+        .collect::<Vec<_>>();
     let payload = SetUpdatePayload {
         training_id: training_id.to_owned(),
         set_id: set.id.clone(),
@@ -142,7 +175,7 @@ pub fn update(
         rpe: values.rpe,
         grip: values.grip,
         body_weight_kg: values.body_weight_kg,
-        segments: vec![segment_payload(&segment.id, values)],
+        segments: payload_segments(&segment_ids, &values.segments),
     };
     let operation = operation(
         training_id,
@@ -153,7 +186,7 @@ pub fn update(
     Ok((
         SetRows {
             set: updated_set,
-            segment: updated_segment,
+            segments: updated_segments,
         },
         operation,
     ))
@@ -221,13 +254,14 @@ pub fn complete(
 fn segment_record(
     segment_id: &str,
     set_id: &str,
-    values: &SetValues,
+    position: i64,
+    values: &SetSegmentValues,
     now: &str,
 ) -> SetSegmentRecord {
     SetSegmentRecord {
         id: segment_id.to_owned(),
         set_id: set_id.to_owned(),
-        position: 1,
+        position,
         weight_kg: Some(values.weight_kg),
         reps: Some(i64::from(values.reps)),
         momentum_reps: 0,
@@ -244,18 +278,51 @@ fn segment_record(
     }
 }
 
-fn segment_payload(segment_id: &str, values: &SetValues) -> SetSegmentPayload {
-    SetSegmentPayload {
-        segment_id: segment_id.to_owned(),
-        position: 1,
-        weight_kg: values.weight_kg,
-        reps: values.reps,
+fn updated_segment_record(
+    segment: &SetSegmentRecord,
+    position: i64,
+    values: &SetSegmentValues,
+    now: &str,
+) -> SetSegmentRecord {
+    SetSegmentRecord {
+        position,
+        weight_kg: Some(values.weight_kg),
+        reps: Some(i64::from(values.reps)),
         momentum_reps: 0,
         assisted_reps: 0,
-        duration_seconds: values.duration_seconds,
-        left: None,
-        right: None,
+        duration_seconds: values.duration_seconds.map(i64::from),
+        left_weight_kg: None,
+        left_reps: None,
+        left_duration_seconds: None,
+        right_weight_kg: None,
+        right_reps: None,
+        right_duration_seconds: None,
+        updated_at: now.to_owned(),
+        ..segment.clone()
     }
+}
+
+fn payload_segments(segment_ids: &[String], values: &[SetSegmentValues]) -> Vec<SetSegmentPayload> {
+    segment_ids
+        .iter()
+        .zip(values)
+        .enumerate()
+        .map(|(index, (segment_id, values))| SetSegmentPayload {
+            segment_id: segment_id.clone(),
+            position: position_of(index),
+            weight_kg: values.weight_kg,
+            reps: values.reps,
+            momentum_reps: 0,
+            assisted_reps: 0,
+            duration_seconds: values.duration_seconds,
+            left: None,
+            right: None,
+        })
+        .collect()
+}
+
+fn position_of(index: usize) -> i64 {
+    i64::try_from(index).unwrap_or(i64::MAX).saturating_add(1)
 }
 
 fn grip_json(grip: Option<GripSelection>) -> Option<String> {

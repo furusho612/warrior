@@ -8,7 +8,8 @@
 
 use serde::Deserialize;
 use warrior_core::exercise::{ExerciseSnapshot, GripSelection};
-use warrior_core::set_calc::RecordMode;
+use warrior_core::set_calc::SetKind;
+use warrior_core::set_rules;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
     SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetSegmentPayload,
@@ -24,18 +25,30 @@ use crate::sync::{
 };
 use crate::training_session_exercise::{ownership_condition, ExerciseOwnership};
 
+mod validation;
+
+use validation::{completed_set_has_values, completed_set_is_valid};
+
 /// トレーニングに属するセットの状態。
 #[derive(Debug, Deserialize)]
 struct SetRow {
+    /// 完了したか。0 か 1 である。
+    completed: i64,
+    /// セットを持つ種目の行の ID。
+    training_exercise_id: String,
     /// 記録した時点の種目の内容。
     snapshot: String,
 }
 
-/// セットの ID の行。
+/// セットの ID とセット種別。
 #[derive(Debug, Deserialize)]
-struct SetIdRow {
+struct SetKindRow {
     /// セットの ID。
     id: String,
+    /// 並び順。
+    position: i64,
+    /// セット種別の文字列。
+    kind: String,
 }
 
 /// セットの ID と、そのセットが属するトレーニングの ID。
@@ -126,81 +139,159 @@ async fn precheck(
     let training_id = &validated.operation.training_id;
     match &validated.payload {
         ValidatedPayload::SetCreate(payload) => {
-            if !exercise_in_training(db, user_id, training_id, &payload.training_exercise_id)
-                .await?
-            {
-                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-            }
-            if let Some(existing) = set_owner_row(db, user_id, &payload.set_id).await? {
-                if existing.training_id != *training_id
-                    || existing.training_exercise_id != payload.training_exercise_id
-                {
-                    return Ok(Some(response(
-                        ErrorCode::Conflict,
-                        "the set belongs to another exercise",
-                    )));
-                }
-            }
+            precheck_create(db, user_id, training_id, payload).await
         }
         ValidatedPayload::SetUpdate(payload) => {
-            let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
-                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-            };
-            if payload.completed {
-                let Some(mode) = record_mode(&row.snapshot) else {
-                    return Ok(Some(response(ErrorCode::Internal, "internal error")));
-                };
-                if payload.to_record("", mode).is_err() {
-                    return Ok(Some(response(
-                        ErrorCode::BadRequest,
-                        "the set has no values for the record mode",
-                    )));
-                }
-            }
+            precheck_update(db, user_id, training_id, payload).await
         }
         ValidatedPayload::SetDelete(payload) => {
-            if set_row(db, user_id, training_id, &payload.set_id)
-                .await?
-                .is_none()
-            {
-                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-            }
+            precheck_delete(db, user_id, training_id, payload).await
         }
         ValidatedPayload::SetReorder(payload) => {
-            if !exercise_in_training(db, user_id, training_id, &payload.training_exercise_id)
-                .await?
-            {
-                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-            }
-            let current = set_ids(db, user_id, &payload.training_exercise_id).await?;
-            if !same_set_ids(&current, &payload.ordered_ids) {
-                return Ok(Some(response(
-                    ErrorCode::Conflict,
-                    "the set order is stale",
-                )));
-            }
+            precheck_reorder(db, user_id, training_id, payload).await
         }
         ValidatedPayload::SetComplete(payload) => {
-            let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
-                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-            };
-            if payload.completed {
-                let Some(mode) = record_mode(&row.snapshot) else {
-                    return Ok(Some(response(ErrorCode::Internal, "internal error")));
-                };
-                if !completed_set_matches_mode(db, user_id, &payload.set_id, mode).await? {
-                    return Ok(Some(response(
-                        ErrorCode::BadRequest,
-                        "the set has no values for the record mode",
-                    )));
-                }
-            }
+            precheck_complete(db, user_id, training_id, payload).await
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_) => {}
+        | ValidatedPayload::ExerciseReorder(_) => Ok(None),
+    }
+}
+
+async fn precheck_create(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    payload: &SetCreatePayload,
+) -> Result<Option<Response>> {
+    if !exercise_in_training(db, user_id, training_id, &payload.training_exercise_id).await? {
+        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    }
+    if let Some(existing) = set_owner_row(db, user_id, &payload.set_id).await? {
+        if existing.training_id != training_id
+            || existing.training_exercise_id != payload.training_exercise_id
+        {
+            return Ok(Some(response(
+                ErrorCode::Conflict,
+                "the set belongs to another exercise",
+            )));
+        }
+    }
+    if !drop_positions_allowed(
+        db,
+        user_id,
+        &payload.training_exercise_id,
+        SetChange {
+            set_id: &payload.set_id,
+            position: payload.position,
+            kind: payload.kind,
+        },
+    )
+    .await?
+    {
+        return Ok(Some(drop_position_rejection()));
+    }
+    Ok(None)
+}
+
+async fn precheck_update(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    payload: &SetUpdatePayload,
+) -> Result<Option<Response>> {
+    let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
+        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    };
+    if !drop_positions_allowed(
+        db,
+        user_id,
+        &row.training_exercise_id,
+        SetChange {
+            set_id: &payload.set_id,
+            position: payload.position,
+            kind: payload.kind,
+        },
+    )
+    .await?
+    {
+        return Ok(Some(drop_position_rejection()));
+    }
+    if payload.completed {
+        let snapshot = parse_snapshot(&row.snapshot)?;
+        if payload
+            .to_record(&snapshot.exercise_id, snapshot.record_mode)
+            .is_err()
+        {
+            return Ok(Some(invalid_completion()));
+        }
+    }
+    Ok(None)
+}
+
+async fn precheck_delete(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    payload: &SetDeletePayload,
+) -> Result<Option<Response>> {
+    let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
+        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    };
+    if !delete_positions_allowed(db, user_id, &row.training_exercise_id, &payload.set_id).await? {
+        return Ok(Some(delete_before_drop_rejection()));
+    }
+    Ok(None)
+}
+
+async fn precheck_reorder(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    payload: &SetReorderPayload,
+) -> Result<Option<Response>> {
+    if !exercise_in_training(db, user_id, training_id, &payload.training_exercise_id).await? {
+        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    }
+    let current = set_kind_rows(db, user_id, &payload.training_exercise_id).await?;
+    let current_ids = current.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+    if !same_set_ids(&current_ids, &payload.ordered_ids) {
+        return Ok(Some(response(
+            ErrorCode::Conflict,
+            "the set order is stale",
+        )));
+    }
+    if !ordered_drop_positions_allowed(&current, &payload.ordered_ids)? {
+        return Ok(Some(drop_position_rejection()));
+    }
+    Ok(None)
+}
+
+async fn precheck_complete(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    payload: &SetCompletePayload,
+) -> Result<Option<Response>> {
+    let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
+        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    };
+    if payload.completed && row.completed == 0 {
+        if !completed_set_has_values(db, user_id, &payload.set_id).await? {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "the set has an incomplete segment",
+            )));
+        }
+        if !completed_set_is_valid(db, user_id, training_id, &payload.set_id).await? {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "the set is not valid for completion",
+            )));
+        }
     }
     Ok(None)
 }
@@ -629,7 +720,7 @@ async fn set_row(
     set_id: &str,
 ) -> Result<Option<SetRow>> {
     db.first(&SqlStatement::new(
-        "SELECT te.snapshot AS snapshot FROM sets s \
+        "SELECT s.completed, s.training_exercise_id, te.snapshot FROM sets s \
          JOIN training_exercises te ON te.id = s.training_exercise_id \
          WHERE s.id = ? AND s.user_id = ? AND te.training_id = ? AND te.user_id = ?",
         vec![
@@ -655,10 +746,15 @@ async fn set_owner_row(db: &Db, user_id: &str, set_id: &str) -> Result<Option<Se
     .await
 }
 
-async fn set_ids(db: &Db, user_id: &str, training_exercise_id: &str) -> Result<Vec<String>> {
+async fn set_kind_rows(
+    db: &Db,
+    user_id: &str,
+    training_exercise_id: &str,
+) -> Result<Vec<SetKindRow>> {
     let result = db
         .all(&SqlStatement::new(
-            "SELECT id FROM sets WHERE user_id = ? AND training_exercise_id = ? \
+            "SELECT id, position, kind FROM sets \
+             WHERE user_id = ? AND training_exercise_id = ? \
              ORDER BY position, id",
             vec![
                 SqlValue::Text(user_id.to_owned()),
@@ -666,51 +762,116 @@ async fn set_ids(db: &Db, user_id: &str, training_exercise_id: &str) -> Result<V
             ],
         ))
         .await?;
-    Ok(result
-        .results::<SetIdRow>()?
-        .into_iter()
-        .map(|row| row.id)
-        .collect())
+    result.results::<SetKindRow>()
 }
 
-async fn completed_set_matches_mode(
+/// ドロップセットの位置を検査する対象の変更。
+struct SetChange<'a> {
+    /// 追加または更新するセットの ID。
+    set_id: &'a str,
+    /// 変更後の並び順。
+    position: i64,
+    /// 変更後のセット種別。
+    kind: SetKind,
+}
+
+async fn drop_positions_allowed(
     db: &Db,
     user_id: &str,
-    set_id: &str,
-    mode: RecordMode,
+    training_exercise_id: &str,
+    change: SetChange<'_>,
 ) -> Result<bool> {
-    let condition = match mode {
-        RecordMode::Time => {
-            "duration_seconds > 0 OR left_duration_seconds > 0 OR right_duration_seconds > 0"
+    let mut rows = set_kind_rows(db, user_id, training_exercise_id).await?;
+    let kind = change.kind.as_str().to_owned();
+    match rows.iter_mut().find(|row| row.id == change.set_id) {
+        Some(row) => {
+            row.position = change.position;
+            row.kind = kind;
         }
-        RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-            "reps > 0 OR left_reps > 0 OR right_reps > 0"
-        }
-    };
-    let count = db
-        .first::<CountRow>(&SqlStatement::new(
-            format!(
-                "SELECT COUNT(*) AS count FROM set_segments \
-                 WHERE set_id = ? AND user_id = ? AND ({condition})"
-            ),
-            vec![
-                SqlValue::Text(set_id.to_owned()),
-                SqlValue::Text(user_id.to_owned()),
-            ],
-        ))
-        .await?
-        .map_or(0, |row| row.count);
-    Ok(count > 0)
+        None => rows.push(SetKindRow {
+            id: change.set_id.to_owned(),
+            position: change.position,
+            kind,
+        }),
+    }
+    rows.sort_by(|left, right| {
+        left.position
+            .cmp(&right.position)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let kinds = parse_kinds(rows.iter().map(|row| row.kind.as_str()))?;
+    Ok(set_rules::drop_set_positions_valid(&kinds))
 }
 
-fn record_mode(snapshot: &str) -> Option<RecordMode> {
-    serde_json::from_str::<ExerciseSnapshot>(snapshot)
-        .ok()
-        .map(|snapshot| snapshot.record_mode)
+async fn delete_positions_allowed(
+    db: &Db,
+    user_id: &str,
+    training_exercise_id: &str,
+    set_id: &str,
+) -> Result<bool> {
+    let rows = set_kind_rows(db, user_id, training_exercise_id).await?;
+    let Some(index) = rows.iter().position(|row| row.id == set_id) else {
+        return Ok(false);
+    };
+    let next = rows.get(index + 1).map(|row| row.kind.as_str());
+    let next = match next {
+        None => None,
+        Some(kind) => Some(SetKind::parse(kind).ok_or_else(|| {
+            worker::Error::RustError("the stored set kind is invalid".to_owned())
+        })?),
+    };
+    Ok(set_rules::delete_set_allowed(next))
+}
+
+fn ordered_drop_positions_allowed(rows: &[SetKindRow], ordered_ids: &[String]) -> Result<bool> {
+    let mut kinds = Vec::with_capacity(ordered_ids.len());
+    for id in ordered_ids {
+        let Some(row) = rows.iter().find(|row| row.id == *id) else {
+            return Ok(false);
+        };
+        kinds.push(row.kind.as_str());
+    }
+    Ok(set_rules::drop_set_positions_valid(&parse_kinds(
+        kinds.into_iter(),
+    )?))
+}
+
+fn parse_kinds<'a>(kinds: impl Iterator<Item = &'a str>) -> Result<Vec<SetKind>> {
+    kinds
+        .map(|kind| {
+            SetKind::parse(kind).ok_or_else(|| {
+                worker::Error::RustError("the stored set kind is invalid".to_owned())
+            })
+        })
+        .collect()
+}
+
+fn parse_snapshot(snapshot: &str) -> Result<ExerciseSnapshot> {
+    serde_json::from_str(snapshot).map_err(|error| {
+        worker::Error::RustError(format!("the stored exercise snapshot is invalid: {error}"))
+    })
+}
+
+fn drop_position_rejection() -> Response {
+    response(
+        ErrorCode::BadRequest,
+        "a drop set cannot be first or follow a warmup set",
+    )
+}
+
+fn delete_before_drop_rejection() -> Response {
+    response(
+        ErrorCode::BadRequest,
+        "the next drop set must be deleted first",
+    )
+}
+
+fn invalid_completion() -> Response {
+    response(ErrorCode::BadRequest, "the set is not valid for completion")
 }
 
 fn segments_have_values(segments: &[SetSegmentPayload]) -> bool {
-    segments.iter().any(SetSegmentPayload::has_values)
+    !segments.is_empty() && segments.iter().all(SetSegmentPayload::has_values)
 }
 
 fn same_set_ids(current: &[String], ordered: &[String]) -> bool {

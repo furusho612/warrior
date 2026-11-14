@@ -4,9 +4,10 @@
 //! 操作を送信待ちの列へ積む (ADR-002)。段はセットの更新で全置換し、削除ではセットと
 //! 一緒に消す。記録した時点の体重はセットの行が持ち、段の重量は自重種目では加重である。
 
+use warrior_core::set_calc::SideValue;
 use warrior_core::sync::{
     Operation, OperationKind, OutboxEntry, SetCompletePayload, SetCreatePayload, SetDeletePayload,
-    SetReorderPayload, SetUpdatePayload,
+    SetReorderPayload, SetSegmentPayload, SetUpdatePayload,
 };
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use wasm_bindgen::JsValue;
@@ -74,14 +75,14 @@ impl Storage {
     pub async fn save_set_create(
         &self,
         set: &SetRecordRow,
-        segment: &SetSegmentRecord,
+        segments: &[SetSegmentRecord],
         operation: &Operation,
     ) -> Result<(), StorageError> {
         let payload = create_payload(operation)?;
         if payload.set_id != set.id
             || payload.training_exercise_id != set.training_exercise_id
             || payload.training_id != operation.training_id
-            || segment.set_id != set.id
+            || !same_segments(&payload.segments, segments)
         {
             return Err(StorageError::InvalidOperation(
                 "the operation is not this set creation".to_owned(),
@@ -99,15 +100,17 @@ impl Storage {
             IdbTransactionMode::Readwrite,
         )?;
         let sets = transaction.store(Store::Sets.name())?;
-        let segments = transaction.store(Store::SetSegments.name())?;
+        let segment_store = transaction.store(Store::SetSegments.name())?;
         let outbox_store = transaction.store(Store::Outbox.name())?;
         let meta = transaction.store(Store::Meta.name())?;
         let entries = outbox::read(&outbox_store).await?;
         if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
             return abort(transaction, error).await;
         }
-        if let Err(error) = indexeddb::put(&segments, &indexeddb::to_js(segment)?).await {
-            return abort(transaction, error).await;
+        for segment in segments {
+            if let Err(error) = indexeddb::put(&segment_store, &indexeddb::to_js(segment)?).await {
+                return abort(transaction, error).await;
+            }
         }
         if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
             return abort(transaction, error).await;
@@ -119,13 +122,13 @@ impl Storage {
     pub async fn save_set_update(
         &self,
         set: &SetRecordRow,
-        segment: &SetSegmentRecord,
+        segments: &[SetSegmentRecord],
         operation: &Operation,
     ) -> Result<(), StorageError> {
         let payload = update_payload(operation)?;
         if payload.set_id != set.id
             || payload.training_id != operation.training_id
-            || segment.set_id != set.id
+            || !same_segments(&payload.segments, segments)
         {
             return Err(StorageError::InvalidOperation(
                 "the operation is not this set update".to_owned(),
@@ -143,7 +146,7 @@ impl Storage {
             IdbTransactionMode::Readwrite,
         )?;
         let sets = transaction.store(Store::Sets.name())?;
-        let segments = transaction.store(Store::SetSegments.name())?;
+        let segment_store = transaction.store(Store::SetSegments.name())?;
         let outbox_store = transaction.store(Store::Outbox.name())?;
         let meta = transaction.store(Store::Meta.name())?;
         let entries = outbox::read(&outbox_store).await?;
@@ -157,11 +160,13 @@ impl Storage {
         if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
             return abort(transaction, error).await;
         }
-        if let Err(error) = delete_segments(&segments, &set.id).await {
+        if let Err(error) = delete_segments(&segment_store, &set.id).await {
             return abort(transaction, error).await;
         }
-        if let Err(error) = indexeddb::put(&segments, &indexeddb::to_js(segment)?).await {
-            return abort(transaction, error).await;
+        for segment in segments {
+            if let Err(error) = indexeddb::put(&segment_store, &indexeddb::to_js(segment)?).await {
+                return abort(transaction, error).await;
+            }
         }
         if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
             return abort(transaction, error).await;
@@ -546,4 +551,45 @@ fn complete_payload(operation: &Operation) -> Result<SetCompletePayload, Storage
     }
     serde_json::from_value(operation.payload.clone())
         .map_err(|error| StorageError::Serialize(error.to_string()))
+}
+
+fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -> bool {
+    payload.len() == segments.len()
+        && payload.iter().zip(segments).all(|(payload, segment)| {
+            payload.segment_id == segment.id
+                && payload.position == segment.position
+                && payload.weight_kg == segment.weight_kg.unwrap_or(0.0)
+                && i64::from(payload.reps) == segment.reps.unwrap_or(0)
+                && i64::from(payload.momentum_reps) == segment.momentum_reps
+                && i64::from(payload.assisted_reps) == segment.assisted_reps
+                && payload.duration_seconds.map(i64::from) == segment.duration_seconds
+                && same_side(
+                    payload.left.as_ref(),
+                    segment.left_weight_kg,
+                    segment.left_reps,
+                    segment.left_duration_seconds,
+                )
+                && same_side(
+                    payload.right.as_ref(),
+                    segment.right_weight_kg,
+                    segment.right_reps,
+                    segment.right_duration_seconds,
+                )
+        })
+}
+
+fn same_side(
+    side: Option<&SideValue>,
+    weight_kg: Option<f64>,
+    reps: Option<i64>,
+    duration_seconds: Option<i64>,
+) -> bool {
+    match side {
+        None => weight_kg.is_none() && reps.is_none() && duration_seconds.is_none(),
+        Some(side) => {
+            weight_kg == Some(side.weight_kg)
+                && reps == Some(i64::from(side.reps))
+                && duration_seconds == side.duration_seconds.map(i64::from)
+        }
+    }
 }

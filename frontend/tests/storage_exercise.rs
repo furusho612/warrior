@@ -10,7 +10,7 @@ use warrior_core::set_calc::SetKind;
 use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload};
 use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 use warrior_frontend::storage::{DiscardOutcome, RestoreOutcome, Store};
-use warrior_frontend::training_set::{self, SetValues};
+use warrior_frontend::training_set::{self, SetSegmentValues, SetValues};
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -316,14 +316,14 @@ async fn discarding_a_failed_exercise_create_removes_its_set_operations() {
         training_set::create(TRAINING_ID, EXERCISE_ROW_ID, 1, &set_values(100.0, 5))
             .expect("the set");
     storage
-        .save_set_create(&set.set, &set.segment, &set_create)
+        .save_set_create(&set.set, &set.segments, &set_create)
         .await
         .expect("the set must be saved");
     let (updated, set_update) =
-        training_set::update(TRAINING_ID, &set.set, &set.segment, &set_values(120.0, 6))
+        training_set::update(TRAINING_ID, &set.set, &set.segments, &set_values(120.0, 6))
             .expect("the set update");
     storage
-        .save_set_update(&updated.set, &updated.segment, &set_update)
+        .save_set_update(&updated.set, &updated.segments, &set_update)
         .await
         .expect("the set update must be saved");
     let (completed, set_complete) =
@@ -349,7 +349,7 @@ async fn discarding_a_failed_exercise_create_removes_its_set_operations() {
         training_set::create(TRAINING_ID, OTHER_EXERCISE_ROW_ID, 1, &set_values(80.0, 8))
             .expect("the other set");
     storage
-        .save_set_create(&other_set.set, &other_set.segment, &other_set_create)
+        .save_set_create(&other_set.set, &other_set.segments, &other_set_create)
         .await
         .expect("the other set must be saved");
     let ordered_exercises = vec![OTHER_EXERCISE_ROW_ID.to_owned(), EXERCISE_ROW_ID.to_owned()];
@@ -873,9 +873,11 @@ fn update_operation(operation_id: &str, memo: &str) -> Operation {
 fn set_values(weight_kg: f64, reps: u32) -> SetValues {
     SetValues {
         kind: SetKind::Normal,
-        weight_kg,
-        reps,
-        duration_seconds: None,
+        segments: vec![SetSegmentValues {
+            weight_kg,
+            reps,
+            duration_seconds: None,
+        }],
         completed: false,
         body_weight_kg: None,
         rpe: None,

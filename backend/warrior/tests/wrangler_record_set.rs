@@ -199,10 +199,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
             completed: false,
             body_weight_kg: Some(70.0),
         },
-        vec![
-            segment(BENCH_SEGMENT_ID, 1, 110.0, 6),
-            segment(EXTRA_SEGMENT_ID, 2, 90.0, 8),
-        ],
+        vec![segment(BENCH_SEGMENT_ID, 1, 110.0, 6)],
     );
     let response = post(server, cookie, &two_segments);
     assert_eq!(response.status, 200, "{}", response.body);
@@ -219,7 +216,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
             server,
             &format!("SELECT COUNT(*) AS count FROM set_segments WHERE set_id = '{BENCH_SET_ID}'")
         ),
-        2
+        1
     );
 
     let one_segment = update_operation(
@@ -228,7 +225,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
         BENCH_SET_ID,
         UpdateSpec {
             position: 1,
-            kind: "drop",
+            kind: "normal",
             completed: false,
             body_weight_kg: Some(70.0),
         },
