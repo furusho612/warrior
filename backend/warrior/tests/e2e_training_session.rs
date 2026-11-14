@@ -193,8 +193,13 @@ async fn finish_and_verify_summary(driver: &WebDriver, server: &DevServer, train
         "3"
     );
     assert_eq!(stored["total_weight_kg"], 1_640.0);
-    let personal_bests = stored_bests(&stored);
-    assert_items(&personal_bests, &session_bests());
+    let training_date = stored["date"].as_str().expect("the training date");
+    let expected_bests = session_bests();
+    let best_rows = loaded_personal_bests(server, training_id);
+    assert_eq!(best_rows.len(), expected_bests.len());
+    for item in &expected_bests {
+        assert_best_row(&best_rows, item, training_date);
+    }
     let rendered = eval_json(
         driver,
         "const done = arguments[arguments.length - 1]; \
@@ -215,7 +220,7 @@ async fn finish_and_verify_summary(driver: &WebDriver, server: &DevServer, train
     )
     .await;
     assert_eq!(rendered.as_array().map(Vec::len), Some(4));
-    for (index, item) in personal_bests.iter().enumerate() {
+    for (index, item) in expected_bests.iter().enumerate() {
         assert_eq!(rendered[index]["kind"], item.kind.as_str());
         assert_eq!(rendered[index]["value"].as_f64(), Some(item.value));
         assert_eq!(rendered[index]["align"], "right");
@@ -284,10 +289,6 @@ async fn check_record_layout(driver: &WebDriver, browser: Browser) {
     assert_eq!(
         browser::attribute(driver, "[data-set-table]", "data-set-row-height").await,
         "44"
-    );
-    assert_eq!(
-        browser::attribute(driver, "[data-set-drawer]", "data-set-drawer").await,
-        "true"
     );
     let rail_width = driver
         .execute(
@@ -393,8 +394,8 @@ fn session_row(server: &DevServer, training_id: &str) -> Value {
     first_row(
         server,
         &format!(
-            "SELECT started_at, finished_at, duration_seconds, total_weight_kg, exercise_count, \
-             set_count, personal_bests FROM training_sessions WHERE id = '{training_id}'"
+            "SELECT date, started_at, finished_at, duration_seconds, total_weight_kg, exercise_count, \
+             set_count FROM training_sessions WHERE id = '{training_id}'"
         ),
     )
 }
@@ -451,33 +452,34 @@ fn session_item(
     }
 }
 
-fn stored_bests(stored: &Value) -> Vec<PersonalBestItem> {
-    serde_json::from_str(
-        stored["personal_bests"]
-            .as_str()
-            .expect("the stored personal bests are JSON"),
-    )
-    .expect("the stored personal bests are JSON")
+fn loaded_personal_bests(server: &DevServer, training_id: &str) -> Vec<Value> {
+    server
+        .execute_d1_json(&format!(
+            "SELECT exercise_id, grip, attachment, kind, value, achieved_on, training_id \
+             FROM personal_bests WHERE training_id = '{training_id}' ORDER BY kind, exercise_id"
+        ))
+        .expect("the personal bests must be readable")
+        .get(0)
+        .and_then(|entry| entry.get("results"))
+        .and_then(Value::as_array)
+        .cloned()
+        .expect("the personal best rows")
 }
 
-fn assert_items(actual: &[PersonalBestItem], expected: &[PersonalBestItem]) {
-    assert_eq!(actual.len(), expected.len(), "{actual:?}");
-    for (item, expected) in actual.iter().zip(expected) {
-        assert_eq!(item.exercise_id, expected.exercise_id);
-        assert_eq!(item.exercise_name, expected.exercise_name);
-        assert_eq!(item.record_mode, expected.record_mode);
-        assert_eq!(item.laterality, expected.laterality);
-        assert_eq!(item.grip, expected.grip);
-        assert_eq!(item.attachment, expected.attachment);
-        assert_eq!(item.kind, expected.kind);
-        assert!(
-            (item.value - expected.value).abs() < 1e-9,
-            "{:?} must be {} but was {}",
-            item.kind,
-            expected.value,
-            item.value
-        );
-    }
+fn assert_best_row(rows: &[Value], expected: &PersonalBestItem, achieved_on: &str) {
+    let row = rows
+        .iter()
+        .find(|row| {
+            row["exercise_id"] == expected.exercise_id
+                && row["kind"] == expected.kind.as_str()
+                && row["grip"].as_str().unwrap_or_default()
+                    == expected.grip.as_deref().unwrap_or_default()
+                && row["attachment"].as_str().unwrap_or_default()
+                    == expected.attachment.as_deref().unwrap_or_default()
+        })
+        .unwrap_or_else(|| panic!("the personal best {expected:?} must exist: {rows:?}"));
+    assert!((row["value"].as_f64().expect("a value") - expected.value).abs() < 1e-9);
+    assert_eq!(row["achieved_on"], achieved_on);
 }
 
 fn seed_sets(server: &DevServer, user_id: &str, training_id: &str) {

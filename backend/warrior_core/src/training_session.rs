@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::exercise::Laterality;
 use crate::jst::JstDate;
-use crate::personal_best::candidates;
+use crate::personal_best::{candidates, updated};
 use crate::set_calc::{RecordMode, SetRecord};
 
 /// トレーニングの開始元。
@@ -152,7 +152,7 @@ pub fn summary_from_sets(
             .iter()
             .map(|set| set.record.counted_sets() as u32)
             .sum(),
-        personal_bests: candidates(achieved_on, sets)
+        personal_bests: updated(&[], &candidates(achieved_on, sets))
             .into_iter()
             .map(|candidate| candidate.item())
             .collect(),
@@ -289,6 +289,44 @@ mod tests {
         assert_eq!(summary.exercise_count, 1);
         assert_eq!(summary.set_count, 0);
         assert!(summary.personal_bests.is_empty());
+    }
+
+    #[test]
+    fn summary_folds_candidates_of_the_same_key_to_the_largest_value() {
+        let heavier = session_set(
+            "ベンチプレス",
+            SetRecord::new(
+                key("bench-press"),
+                SetKind::Normal,
+                vec![segment(100.0, 1)],
+                None,
+                None,
+                RecordMode::BodyweightAndReps,
+            )
+            .expect("a valid bodyweight set"),
+        );
+        let lighter = session_set(
+            "ベンチプレス",
+            SetRecord::new(
+                key("bench-press"),
+                SetKind::Normal,
+                vec![segment(50.0, 1)],
+                None,
+                None,
+                RecordMode::WeightAndReps,
+            )
+            .expect("a valid weighted set"),
+        );
+        let summary = summary_from_sets(date(), 60, &[heavier, lighter]);
+
+        assert_eq!(summary.personal_bests.len(), 3);
+        for item in &summary.personal_bests {
+            assert_eq!(item.exercise_id, "bench-press");
+            assert!((item.value - 100.0).abs() < 1e-9, "{item:?}");
+        }
+        assert_eq!(summary.personal_bests[0].kind, BestKind::MaxWeight);
+        assert_eq!(summary.personal_bests[1].kind, BestKind::EstimatedOneRepMax);
+        assert_eq!(summary.personal_bests[2].kind, BestKind::TotalWeight);
     }
 
     #[test]

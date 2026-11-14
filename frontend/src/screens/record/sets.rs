@@ -372,9 +372,9 @@ impl SetView {
         }
     }
 
-    /// このセットの推定 1RM。時間で記録する種目と、重量か回数が空のときは None。
+    /// このセットの推定 1RM。時間で記録する種目、ウォームアップ、重量か回数が空のときは None。
     pub(super) fn one_rep_max(&self, mode: RecordMode, lateral: bool) -> Option<OneRepMax> {
-        if mode == RecordMode::Time {
+        if mode == RecordMode::Time || self.kind() == SetKind::Warmup {
             return None;
         }
         self.segments
@@ -531,6 +531,7 @@ pub(super) fn SetTable(
     let kinds = rows.iter().map(SetView::kind).collect::<Vec<_>>();
     let numbers = set_numbers(&rows);
     let display_rows = rows.iter().map(|row| row.segments.len()).sum::<usize>();
+    let has_completed = rows.iter().any(SetView::completed);
     rsx! {
         div { class: "flex flex-col gap-1",
             div { class: "flex items-center justify-between gap-2",
@@ -576,6 +577,13 @@ pub(super) fn SetTable(
             if disabled {
                 p { class: "text-[11px] text-text-sub", "{text(Key::RecordViewOnly)}" }
             }
+            if has_completed {
+                p {
+                    class: "text-[11px] text-text-sub",
+                    "data-set-completed-locked": "true",
+                    "{text(Key::RecordSetCompletedLocked)}"
+                }
+            }
         }
     }
 }
@@ -613,6 +621,7 @@ fn SetRow(
     let is_drop = kind == SetKind::Drop;
     let number_text = number.map_or_else(|| "D".to_owned(), |number| number.to_string());
     let first_segment = set.segments.first().cloned();
+    let locked = disabled || completed;
     let buttons = RowButtonState {
         set_id: set.record.id.clone(),
         first_segment_id: set
@@ -647,7 +656,7 @@ fn SetRow(
                 KindSelect {
                     set_id: set.record.id.clone(),
                     kind,
-                    disabled,
+                    disabled: locked,
                     drop_allowed,
                     warmup_allowed,
                     on_action,
@@ -663,7 +672,7 @@ fn SetRow(
                             mode,
                             is_bodyweight,
                             is_lateral,
-                            disabled,
+                            disabled: locked,
                             on_action,
                         }
                     }
@@ -679,7 +688,7 @@ fn SetRow(
                     is_time,
                     is_bodyweight,
                     is_lateral,
-                    disabled,
+                    disabled: locked,
                     on_action,
                 }
             }
@@ -687,7 +696,7 @@ fn SetRow(
                 button {
                     class: "min-h-9 border-t border-line px-2 text-left text-[10px] font-bold text-primary",
                     "data-add-segment": "true",
-                    disabled,
+                    disabled: locked,
                     onclick: move |_| on_action.call(SetAction::AddSegment { set_id: add_segment_id.clone() }),
                     "{text(Key::RecordSetSegmentAdd)}"
                 }
@@ -780,7 +789,7 @@ fn RowButtons(
             class: "min-h-8 shrink-0 border border-primary px-1 text-[10px] font-bold text-primary",
             "data-set-complete": "true",
             "data-set-complete-ready": if ready { "true" } else { "false" },
-            disabled: disabled || (!completed && !ready),
+            disabled: disabled || completed || !ready,
             onclick: move |_| on_action.call(SetAction::Complete { set_id: complete_id.clone() }),
             if completed {
                 "{text(Key::RecordSetCompleted)}"
@@ -793,7 +802,7 @@ fn RowButtons(
                 button {
                     class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
                     "data-delete-segment": "true",
-                    disabled,
+                    disabled: disabled || completed,
                     onclick: move |_| on_action.call(SetAction::DeleteSegment {
                         set_id: delete_segment_set_id.clone(),
                         segment_id: segment_id.clone(),
@@ -805,7 +814,7 @@ fn RowButtons(
         button {
             class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
             "data-delete-set": "true",
-            disabled,
+            disabled: disabled || completed,
             onclick: move |_| on_action.call(SetAction::Delete { set_id: delete_id.clone() }),
             "{text(Key::RecordSetDelete)}"
         }

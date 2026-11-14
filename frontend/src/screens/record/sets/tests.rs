@@ -223,6 +223,13 @@ fn req_set_008_zero_reps_have_no_one_rep_max_and_more_than_ten_reps_are_a_refere
 }
 
 #[wasm_bindgen_test]
+fn req_set_008_warmup_sets_have_no_one_rep_max() {
+    let mut view = set_view_with_inputs("100", "5");
+    view.record.kind = "warmup".to_owned();
+    assert_eq!(view.one_rep_max(RecordMode::WeightAndReps, false), None);
+}
+
+#[wasm_bindgen_test]
 fn req_set_008_time_records_have_no_one_rep_max() {
     let view = set_view_with_inputs("100", "5");
     assert_eq!(view.one_rep_max(RecordMode::Time, false), None);

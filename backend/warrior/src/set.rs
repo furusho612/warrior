@@ -16,11 +16,11 @@ use warrior_core::sync::{
     SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetSegmentPayload,
     SetUpdatePayload, ValidatedOperation, ValidatedPayload,
 };
-use warrior_core::training_session::PersonalBestItem;
 use worker::{console_error, Response, Result};
 
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
+use crate::personal_best::CompletionBests;
 use crate::sync::{
     applied_statement, owner_condition, ownership_guard_statement, session_row, write_decision,
     BatchOutcome, OwnerCondition,
@@ -134,21 +134,21 @@ pub(crate) async fn personal_bests_after_completion(
     db: &Db,
     user_id: &str,
     validated: &ValidatedOperation,
-) -> Vec<PersonalBestItem> {
+) -> CompletionBests {
     let ValidatedPayload::SetComplete(payload) = &validated.payload else {
-        return Vec::new();
+        return CompletionBests::default();
     };
     if !payload.completed {
-        return Vec::new();
+        return CompletionBests::default();
     }
     match crate::personal_best::apply_completion(db, user_id, &validated.operation.training_id)
         .await
     {
-        Ok(items) => items,
+        Ok(bests) => bests,
         Err(error) => {
             // セットの完了は保存済みである。サマリーの終了時に同じ判定をやり直す。
             console_error!("failed to update the personal bests: {error}");
-            Vec::new()
+            CompletionBests::default()
         }
     }
 }
@@ -240,6 +240,9 @@ async fn precheck_update(
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
+    if row.completed != 0 {
+        return Ok(Some(completed_set_rejection()));
+    }
     if !drop_positions_allowed(
         db,
         user_id,
@@ -263,11 +266,11 @@ async fn precheck_delete(
     training_id: &str,
     payload: &SetDeletePayload,
 ) -> Result<Option<Response>> {
-    if set_row(db, user_id, training_id, &payload.set_id)
-        .await?
-        .is_none()
-    {
+    let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    };
+    if row.completed != 0 {
+        return Ok(Some(completed_set_rejection()));
     }
     Ok(None)
 }
@@ -304,6 +307,9 @@ async fn precheck_complete(
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
+    if !payload.completed && row.completed != 0 {
+        return Ok(Some(completed_set_rejection()));
+    }
     if payload.completed
         && row.completed == 0
         && !completed_set_has_values(db, user_id, &payload.set_id).await?
@@ -885,6 +891,13 @@ fn drop_position_rejection() -> Response {
     response(
         ErrorCode::BadRequest,
         "a drop set cannot be first or follow a warmup set",
+    )
+}
+
+fn completed_set_rejection() -> Response {
+    response(
+        ErrorCode::Conflict,
+        "a completed set cannot be edited or deleted",
     )
 }
 

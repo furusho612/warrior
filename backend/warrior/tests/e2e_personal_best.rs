@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
+use thirtyfour::components::SelectElement;
 use thirtyfour::prelude::*;
 use warrior_core::set_calc::estimated_one_rep_max;
 
@@ -71,6 +72,13 @@ async fn shows_the_estimated_one_rep_max_and_the_updated_personal_bests() {
 
     let bench = detail_selector(BENCH_EXERCISE_ID);
     browser::select_exercise(&driver, BENCH_EXERCISE_ID).await;
+    let warmup_set = add_set(&driver, &bench).await;
+    let warmup_row = set_row(&bench, &warmup_set);
+    change_kind(&driver, &warmup_row, "warmup").await;
+    browser::set_input(&driver, &format!("{warmup_row} [data-set-weight]"), "100").await;
+    browser::set_input(&driver, &format!("{warmup_row} [data-set-reps]"), "5").await;
+    browser::wait_for_absent(&driver, &format!("{warmup_row} [data-one-rm]")).await;
+
     let first_set = add_set(&driver, &bench).await;
     let first_row = set_row(&bench, &first_set);
     check_the_estimated_one_rep_max(&driver, &first_row).await;
@@ -147,6 +155,21 @@ async fn shows_the_estimated_one_rep_max_and_the_updated_personal_bests() {
 
     browser::assert_no_panic(&driver).await;
     driver.quit().await.expect("the browser must close");
+}
+
+async fn change_kind(driver: &WebDriver, set: &str, kind: &str) {
+    let selector = format!("{set} select[data-set-kind]");
+    let select = driver
+        .find(By::Css(&selector))
+        .await
+        .unwrap_or_else(|error| panic!("the select {selector} must exist: {error}"));
+    let select = SelectElement::new(&select)
+        .await
+        .unwrap_or_else(|error| panic!("the select {selector} must be a select: {error}"));
+    select
+        .select_by_value(kind)
+        .await
+        .unwrap_or_else(|error| panic!("the kind {kind} must be selectable: {error}"));
 }
 
 async fn check_the_estimated_one_rep_max(driver: &WebDriver, set: &str) {

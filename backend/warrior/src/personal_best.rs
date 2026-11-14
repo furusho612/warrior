@@ -5,8 +5,11 @@
 //! 項目を組み立てる。表の比較の単位は利用者、種目、グリップ、アタッチメント、種類である。
 //! グリップとアタッチメントを選ばない記録は空文字で保存する。
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use warrior_core::datetime;
+use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
 use warrior_core::jst::JstDate;
 use warrior_core::personal_best::{
     candidates, updated, PersonalBestCandidate, PersonalBestEntry, PersonalBestKey,
@@ -17,6 +20,15 @@ use worker::{console_error, Result};
 
 use crate::db::Db;
 use crate::stored_sets;
+
+/// セットの完了の後の自己ベストの結果。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CompletionBests {
+    /// この完了で新しく更新した項目。
+    pub updated: Vec<PersonalBestItem>,
+    /// このトレーニングが保持する項目。再送の応答に使う。
+    pub held: Vec<PersonalBestItem>,
+}
 
 #[derive(Debug, Deserialize)]
 struct TrainingDateRow {
@@ -34,7 +46,19 @@ struct PersonalBestRow {
     training_id: String,
 }
 
-/// セットの完了の後に、自己ベストを判定して保存し、更新した項目を返す。
+#[derive(Debug, Deserialize)]
+struct ExerciseSnapshotRow {
+    exercise_id: String,
+    snapshot: String,
+}
+
+struct ExerciseMetadata {
+    name: String,
+    record_mode: RecordMode,
+    laterality: Laterality,
+}
+
+/// セットの完了の後に、自己ベストを判定して保存し、更新した項目と保持する項目を返す。
 ///
 /// 判定はそのトレーニングの完了した全セットから作り直す。同じトレーニングで同じ種類を
 /// 複数回更新した場合も、保存済みの値より大きい候補だけを書くため、最後の値が残る。
@@ -42,9 +66,9 @@ pub async fn apply_completion(
     db: &Db,
     user_id: &str,
     training_id: &str,
-) -> Result<Vec<PersonalBestItem>> {
+) -> Result<CompletionBests> {
     let Some(achieved_on) = training_date(db, user_id, training_id).await? else {
-        return Ok(Vec::new());
+        return Ok(CompletionBests::default());
     };
     let sets = match stored_sets::load_training(db, user_id, training_id).await {
         Ok(exercises) => stored_sets::session_sets(&exercises),
@@ -56,7 +80,9 @@ pub async fn apply_completion(
         }
     };
     let candidates = candidates(achieved_on, &sets);
-    apply_candidates(db, user_id, training_id, achieved_on, &candidates).await
+    let updated = apply_candidates(db, user_id, training_id, achieved_on, &candidates).await?;
+    let held = held_for_training(db, user_id, training_id, &candidates).await?;
+    Ok(CompletionBests { updated, held })
 }
 
 /// 候補を保存し、保存済みの値より大きいものだけを返す。
@@ -88,21 +114,21 @@ pub async fn apply_candidates(
     Ok(updates.iter().map(PersonalBestCandidate::item).collect())
 }
 
-/// トレーニングで更新した自己ベストを、サマリーの項目の順で返す。
+/// トレーニングが保持する自己ベストを、サマリーの項目の順で返す。
 ///
-/// 表の行のうち達成したトレーニングがこのトレーニングであるものを選ぶ。
-/// サマリーは同じトレーニングの全セットから作った候補を持つため、表示に必要な種目名と
-/// 記録方式をそこから取る。
-pub async fn updated_for_training(
+/// 表の行のうち達成したトレーニングがこのトレーニングであるものを選ぶ。種目名と記録方式は
+/// トレーニングの種目のスナップショットから補う。候補に無い行は、表の値をそのまま返す。
+pub async fn held_for_training(
     db: &Db,
     user_id: &str,
     training_id: &str,
-    session_bests: &[PersonalBestItem],
+    candidates: &[PersonalBestCandidate],
 ) -> Result<Vec<PersonalBestItem>> {
     let result = db
         .all(&SqlStatement::new(
             "SELECT exercise_id, grip, attachment, kind, value, achieved_on, training_id \
-             FROM personal_bests WHERE user_id = ? AND training_id = ?",
+             FROM personal_bests WHERE user_id = ? AND training_id = ? \
+             ORDER BY kind, exercise_id, grip, attachment",
             vec![
                 SqlValue::Text(user_id.to_owned()),
                 SqlValue::Text(training_id.to_owned()),
@@ -110,20 +136,30 @@ pub async fn updated_for_training(
         ))
         .await?;
     let rows = result.results::<PersonalBestRow>()?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
     let keys = rows.iter().map(row_key).collect::<Result<Vec<_>>>()?;
-    Ok(session_bests
-        .iter()
-        .filter(|item| {
-            let key = PersonalBestKey {
-                exercise_id: item.exercise_id.clone(),
-                grip: item.grip.clone(),
-                attachment: item.attachment.clone(),
-                kind: item.kind,
-            };
-            keys.contains(&key)
-        })
-        .cloned()
-        .collect())
+    let metadata = exercise_metadata(db, user_id, training_id).await?;
+    let mut used = vec![false; rows.len()];
+    let mut items = Vec::with_capacity(rows.len());
+    for candidate in updated(&[], candidates) {
+        let Some(index) = keys.iter().position(|key| *key == candidate.key()) else {
+            continue;
+        };
+        if used[index] {
+            continue;
+        }
+        used[index] = true;
+        items.push(held_item(&rows[index], &metadata, Some(&candidate))?);
+    }
+    for (index, row) in rows.iter().enumerate() {
+        if used[index] {
+            continue;
+        }
+        items.push(held_item(row, &metadata, None)?);
+    }
+    Ok(items)
 }
 
 async fn training_date(db: &Db, user_id: &str, training_id: &str) -> Result<Option<JstDate>> {
@@ -144,6 +180,80 @@ async fn training_date(db: &Db, user_id: &str, training_id: &str) -> Result<Opti
         worker::Error::RustError("the stored training date is invalid".to_owned())
     })?;
     Ok(Some(date))
+}
+
+async fn exercise_metadata(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+) -> Result<HashMap<String, ExerciseMetadata>> {
+    let result = db
+        .all(&SqlStatement::new(
+            "SELECT exercise_id, snapshot FROM training_exercises \
+             WHERE user_id = ? AND training_id = ?",
+            vec![
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+            ],
+        ))
+        .await?;
+    let mut metadata = HashMap::new();
+    for row in result.results::<ExerciseSnapshotRow>()? {
+        let snapshot = serde_json::from_str::<ExerciseSnapshot>(&row.snapshot).map_err(|_| {
+            console_error!("the stored exercise snapshot is invalid");
+            worker::Error::RustError("the stored exercise snapshot is invalid".to_owned())
+        })?;
+        metadata.insert(
+            row.exercise_id,
+            ExerciseMetadata {
+                name: snapshot.name,
+                record_mode: snapshot.record_mode,
+                laterality: snapshot.laterality,
+            },
+        );
+    }
+    Ok(metadata)
+}
+
+fn held_item(
+    row: &PersonalBestRow,
+    metadata: &HashMap<String, ExerciseMetadata>,
+    candidate: Option<&PersonalBestCandidate>,
+) -> Result<PersonalBestItem> {
+    let key = row_key(row)?;
+    let exercise = metadata.get(&row.exercise_id);
+    Ok(PersonalBestItem {
+        exercise_id: row.exercise_id.clone(),
+        exercise_name: candidate
+            .and_then(|candidate| candidate.exercise_name.clone())
+            .or_else(|| exercise.map(|exercise| exercise.name.clone())),
+        record_mode: candidate.map_or_else(
+            || {
+                exercise.map_or_else(
+                    || fallback_record_mode(key.kind),
+                    |exercise| exercise.record_mode,
+                )
+            },
+            |candidate| candidate.record_mode,
+        ),
+        laterality: candidate.map_or_else(
+            || exercise.map_or(Laterality::Bilateral, |exercise| exercise.laterality),
+            |candidate| candidate.laterality,
+        ),
+        grip: key.grip,
+        attachment: key.attachment,
+        kind: key.kind,
+        value: row.value,
+    })
+}
+
+fn fallback_record_mode(kind: BestKind) -> RecordMode {
+    match kind {
+        BestKind::LongestDuration => RecordMode::Time,
+        BestKind::MaxWeight | BestKind::EstimatedOneRepMax | BestKind::TotalWeight => {
+            RecordMode::WeightAndReps
+        }
+    }
 }
 
 async fn load_entries(db: &Db, user_id: &str) -> Result<Vec<PersonalBestEntry>> {

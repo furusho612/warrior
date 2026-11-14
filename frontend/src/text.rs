@@ -83,6 +83,7 @@ text_keys! {
     RecordSetDelete => "セットを削除",
     RecordSetComplete => "完了",
     RecordSetCompleted => "完了済み",
+    RecordSetCompletedLocked => "完了済みのセットは、過去の記録の編集ができるようになるまで変更できません。",
     RecordSetKindLabel => "セット種別",
     RecordSetKindNormal => "通常",
     RecordSetKindWarmup => "ウォームアップ",

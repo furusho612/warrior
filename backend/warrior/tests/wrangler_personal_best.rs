@@ -11,16 +11,20 @@
 mod helpers;
 mod support;
 
+use std::path::Path;
+
 use helpers::*;
 use serde_json::{json, Value};
 use support::record_common;
 use support::DevServer;
+use warrior_core::auth::hash_session_token;
 use warrior_core::base64url;
 use warrior_core::set_calc::estimated_one_rep_max;
 
 const MAIN_PORT: u16 = 8843;
 const GRIP_PORT: u16 = 8844;
 const TIME_PORT: u16 = 8845;
+const MIGRATION_PORT: u16 = 8846;
 
 const WARMUP_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5800";
 const WARMUP_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5801";
@@ -120,6 +124,17 @@ fn the_set_completion_response_reports_the_updated_personal_bests() {
         estimated_one_rep_max(100.0, 5).expect("the formula"),
     );
     assert_best(&first_bests[2], "total_weight", 500.0);
+    assert_eq!(personal_best_count(&server, TRAINING_ID), 3);
+
+    let replay = post(
+        &server,
+        &cookie,
+        &complete_operation(FIRST_COMPLETE_ID, TRAINING_ID, FIRST_SET_ID, true),
+    );
+    assert_eq!(replay.status, 200, "{}", replay.body);
+    assert_eq!(status(&replay), "already_applied");
+    let replay_body: Value = serde_json::from_str(&replay.body).expect("the replay response");
+    assert_eq!(bests(&replay_body), first_bests);
     assert_eq!(personal_best_count(&server, TRAINING_ID), 3);
 
     let second = complete(&server, &cookie, SECOND_COMPLETE_ID, SECOND_SET_ID);
@@ -305,6 +320,142 @@ fn a_unilateral_time_set_uses_the_longest_side() {
         personal_bests(&server, TRAINING_ID)[0]["kind"],
         "longest_duration"
     );
+}
+
+#[test]
+fn the_old_session_personal_bests_are_migrated_to_the_table() {
+    let server = DevServer::start(MIGRATION_PORT);
+    let migrations = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let mut paths = std::fs::read_dir(&migrations)
+        .expect("the migrations directory must be readable")
+        .map(|entry| entry.expect("a migration entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".sql") && name < "0013_personal_bests.sql")
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    for path in &paths {
+        server
+            .execute_d1_file(path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    }
+
+    let first_date = "2026-10-01";
+    let second_date = "2026-10-05";
+    let first_bests = json!([
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "max_weight", "value": 100.0},
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "estimated_one_rep_max", "value": 120.0},
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "total_weight", "value": 500.0},
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": "pronated_medium", "attachment": null, "kind": "max_weight", "value": 90.0},
+        {"exercise_id": "plank", "exercise_name": "プランク", "record_mode": "time", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "longest_duration", "value": 60.0}
+    ]);
+    let second_bests = json!([
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "max_weight", "value": 110.0},
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "estimated_one_rep_max", "value": 130.0},
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "total_weight", "value": 450.0},
+        {"exercise_id": "bench", "exercise_name": "ベンチプレス", "record_mode": "weight_and_reps", "laterality": "bilateral", "grip": "pronated_medium", "attachment": null, "kind": "max_weight", "value": 95.0},
+        {"exercise_id": "plank", "exercise_name": "プランク", "record_mode": "time", "laterality": "bilateral", "grip": null, "attachment": null, "kind": "longest_duration", "value": 90.0}
+    ]);
+    server
+        .execute_d1_json(&format!(
+            "INSERT INTO users (id, google_sub, email, display_name, created_at, updated_at) \
+             VALUES ('{USER_ID}', 'sub-migration', 'migration@example.test', '移行', \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .expect("the user must be seeded");
+    for (training_id, date, bests) in [
+        ("training-first", first_date, &first_bests),
+        ("training-second", second_date, &second_bests),
+    ] {
+        server
+            .execute_d1_json(&format!(
+                "INSERT INTO training_sessions (id, user_id, date, memo, personal_bests, \
+                 finished_at, duration_seconds, total_weight_kg, exercise_count, set_count, \
+                 created_at, updated_at) \
+                 VALUES ('{training_id}', '{USER_ID}', '{date}', '', '{}', \
+                 '2026-01-01T04:00:00Z', 3600, 1000.0, 1, 2, \
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                bests.to_string().replace('\'', "''")
+            ))
+            .expect("the training must be seeded");
+    }
+
+    server
+        .execute_d1_file(&migrations.join("0013_personal_bests.sql"))
+        .expect("the personal best migration must apply");
+
+    let rows = d1_rows(
+        &server,
+        &format!(
+            "SELECT exercise_id, grip, attachment, kind, value, achieved_on, training_id \
+             FROM personal_bests WHERE user_id = '{USER_ID}' \
+             ORDER BY exercise_id, grip, attachment, kind"
+        ),
+    );
+    assert_eq!(rows.len(), 5, "{rows:?}");
+    assert_eq!(rows[0]["exercise_id"], "bench");
+    assert_eq!(rows[0]["grip"], "");
+    assert_eq!(rows[0]["kind"], "estimated_one_rep_max");
+    assert_eq!(rows[0]["value"].as_f64(), Some(130.0));
+    assert_eq!(rows[0]["achieved_on"], second_date);
+    assert_eq!(rows[0]["training_id"], "training-second");
+    assert_eq!(rows[1]["kind"], "max_weight");
+    assert_eq!(rows[1]["value"].as_f64(), Some(110.0));
+    assert_eq!(rows[1]["training_id"], "training-second");
+    assert_eq!(rows[2]["kind"], "total_weight");
+    assert_eq!(rows[2]["value"].as_f64(), Some(500.0));
+    assert_eq!(rows[2]["achieved_on"], first_date);
+    assert_eq!(rows[2]["training_id"], "training-first");
+    assert_eq!(rows[3]["grip"], "pronated_medium");
+    assert_eq!(rows[3]["value"].as_f64(), Some(95.0));
+    assert_eq!(rows[4]["exercise_id"], "plank");
+    assert_eq!(rows[4]["value"].as_f64(), Some(90.0));
+
+    let column = d1_rows(
+        &server,
+        "SELECT name FROM pragma_table_info('training_sessions') WHERE name = 'personal_bests'",
+    );
+    assert!(
+        column.is_empty(),
+        "the old column must be dropped: {column:?}"
+    );
+
+    let token = base64url::encode(&[124u8; 32]);
+    server
+        .execute_d1_json(&format!(
+            "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, expires_at) \
+             VALUES ('migration-session', '{USER_ID}', '{}', \
+             '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')",
+            hash_session_token(&token)
+        ))
+        .expect("the session must be seeded");
+    let response = server.request(
+        "GET",
+        "/api/trainings/training-first/summary",
+        &[("Cookie", &format!("warrior_session={token}"))],
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let summary: Value = serde_json::from_str(&response.body).expect("the summary is JSON");
+    let bests = summary["personal_bests"]
+        .as_array()
+        .expect("the summary bests");
+    assert_eq!(bests.len(), 1, "the old summary must keep only its updates");
+    assert_eq!(bests[0]["kind"], "total_weight");
+    assert_eq!(bests[0]["value"].as_f64(), Some(500.0));
+    assert_eq!(bests[0]["exercise_id"], "bench");
+}
+
+fn d1_rows(server: &DevServer, sql: &str) -> Vec<Value> {
+    server
+        .execute_d1_json(sql)
+        .expect("the query must run")
+        .get(0)
+        .and_then(|entry| entry.get("results"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn start_server(port: u16) -> DevServer {

@@ -92,9 +92,9 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
 
     let first_set = add_set(&driver).await;
     check_table_height(&driver).await;
-    check_fast_input_and_completion(&driver, &first_set).await;
-    wait_for_diff(&driver, "data-exercise-weight-diff", "0").await;
-    wait_for_diff(&driver, "data-training-total-diff", "0").await;
+    browser::set_input(&driver, &weight_selector(&first_set), "100").await;
+    browser::set_input(&driver, &reps_selector(&first_set), "5").await;
+    wait_for_complete_ready(&driver, &first_set).await;
     change_kind(&driver, &first_set, "warmup").await;
     wait_for_diff(&driver, "data-exercise-weight-diff", "-500").await;
     wait_for_diff(&driver, "data-training-total-diff", "-500").await;
@@ -104,7 +104,7 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
         &first_set,
         SetCheck {
             kind: "warmup",
-            completed: 1,
+            completed: 0,
             body_weight_kg: Some(70.0),
             weight_kg: 100.0,
             reps: 5,
@@ -120,6 +120,22 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
         &first_set,
         SetCheck {
             kind: "normal",
+            completed: 0,
+            body_weight_kg: Some(70.0),
+            weight_kg: 100.0,
+            reps: 5,
+        },
+    )
+    .await;
+    check_fast_input_and_completion(&driver, &first_set).await;
+    wait_for_diff(&driver, "data-exercise-weight-diff", "0").await;
+    wait_for_diff(&driver, "data-training-total-diff", "0").await;
+    wait_for_set(
+        &driver,
+        &server,
+        &first_set,
+        SetCheck {
+            kind: "normal",
             completed: 1,
             body_weight_kg: Some(70.0),
             weight_kg: 100.0,
@@ -127,6 +143,7 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
         },
     )
     .await;
+    check_the_completed_set_is_locked(&driver, &first_set).await;
 
     browser::add_exercise(&driver, PUSHUP_EXERCISE_ID).await;
     browser::select_exercise(&driver, PUSHUP_EXERCISE_ID).await;
@@ -163,7 +180,7 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
     .await;
     assert_eq!(bodyweight_row["body_weight_kg"].as_f64(), Some(70.0));
     assert_eq!(bodyweight_row["weight_kg"].as_f64(), Some(10.0));
-    delete_set(&driver, &server, &bodyweight_set).await;
+    check_the_completed_set_is_locked(&driver, &bodyweight_set).await;
 
     browser::add_exercise(&driver, PLANK_EXERCISE_ID).await;
     browser::select_exercise(&driver, PLANK_EXERCISE_ID).await;
@@ -194,7 +211,6 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
     wait_for_complete_ready(&driver, &second_set).await;
     check_reorder(&driver, &server, &first_set, &second_set).await;
     delete_set(&driver, &server, &second_set).await;
-    delete_set(&driver, &server, &first_set).await;
 
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
     browser::assert_no_panic(&driver).await;
@@ -286,6 +302,34 @@ async fn change_kind(driver: &WebDriver, set_id: &str, kind: &str) {
         kind,
     )
     .await;
+}
+
+async fn check_the_completed_set_is_locked(driver: &WebDriver, set_id: &str) {
+    browser::wait_for_present(driver, "[data-set-completed-locked]").await;
+    let row = format!("[data-set-id=\"{set_id}\"]");
+    let state = browser::eval_json(
+        driver,
+        &format!(
+            "const done = arguments[arguments.length - 1]; \
+             const row = document.querySelector('{row}'); \
+             done(JSON.stringify({{\
+               kind: row.querySelector('select[data-set-kind]').disabled, \
+               weight: row.querySelector('[data-set-weight]').disabled, \
+               reps: row.querySelector('[data-set-reps]').disabled, \
+               delete: row.querySelector('[data-delete-set]').disabled, \
+               complete: row.querySelector('[data-set-complete]').disabled, \
+               notice: document.querySelector('[data-set-completed-locked]') !== null \
+             }}));"
+        ),
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(state["kind"], true, "{state:?}");
+    assert_eq!(state["weight"], true, "{state:?}");
+    assert_eq!(state["reps"], true, "{state:?}");
+    assert_eq!(state["delete"], true, "{state:?}");
+    assert_eq!(state["complete"], true, "{state:?}");
+    assert_eq!(state["notice"], true, "{state:?}");
 }
 
 async fn check_reorder(driver: &WebDriver, server: &DevServer, first_set: &str, second_set: &str) {

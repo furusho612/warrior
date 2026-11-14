@@ -444,6 +444,7 @@ fn ExerciseDetail(
     let superset_view_id = view.record.id.clone();
     let superset = view.superset.clone();
     let rows = view.sets.clone();
+    let has_completed = rows.iter().any(SetView::completed);
 
     rsx! {
         div {
@@ -470,7 +471,7 @@ fn ExerciseDetail(
                     button {
                         class: "min-h-11 border border-line px-2 text-[11px] text-primary",
                         "data-delete-exercise": "true",
-                        disabled,
+                        disabled: disabled || has_completed,
                         onclick: move |_| on_delete.call(()),
                         "{text(Key::RecordExerciseDelete)}"
                     }
@@ -478,7 +479,7 @@ fn ExerciseDetail(
                         button {
                             class: "min-h-11 border border-primary px-2 text-[11px] font-bold text-primary",
                             "data-copy-previous": "true",
-                            disabled,
+                            disabled: disabled || has_completed,
                             onclick: move |_| on_action.call(SetAction::Copy { view_id: copy_id.clone() }),
                             "{text(Key::RecordExerciseCopy)}"
                         }

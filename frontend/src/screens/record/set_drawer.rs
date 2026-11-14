@@ -31,6 +31,7 @@ pub(super) fn SetDrawer(
     let mut selected_set = selected;
     let set_id = set.record.id.clone();
     let rpe_set_id = set.record.id.clone();
+    let locked = disabled || set.completed();
     let summary = summary_text(set, mode);
     rsx! {
         aside {
@@ -53,6 +54,13 @@ pub(super) fn SetDrawer(
                     "{text(Key::RecordSetDetailClose)}"
                 }
             }
+            if set.completed() {
+                p {
+                    class: "text-[11px] leading-4 text-text-sub",
+                    "data-set-drawer-locked": "true",
+                    "{text(Key::RecordSetCompletedLocked)}"
+                }
+            }
             if mode != RecordMode::Time {
                 p { class: "text-[11px] font-bold", "{text(Key::RecordSetBreakdownLabel)}" }
                 for (index, segment) in set.segments.iter().enumerate() {
@@ -60,7 +68,7 @@ pub(super) fn SetDrawer(
                         index,
                         set_id: set_id.clone(),
                         segment: segment.clone(),
-                        disabled,
+                        disabled: locked,
                         on_action,
                     }
                 }
@@ -72,7 +80,7 @@ pub(super) fn SetDrawer(
             RpeInput {
                 set_id: rpe_set_id,
                 value: set.rpe.clone(),
-                disabled,
+                disabled: locked,
                 on_action,
             }
         }

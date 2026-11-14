@@ -269,6 +269,19 @@ fn seed_sets(server: &DevServer) {
 }
 
 fn delete_the_exercise_with_its_sets(server: &DevServer, cookie: &str) {
+    let delete = delete_operation(DELETE_OPERATION_ID, BENCH_ROW_ID);
+    let rejected = post(server, cookie, &delete);
+    assert_eq!(rejected.status, 409, "{}", rejected.body);
+    assert_eq!(applied_count(server, DELETE_OPERATION_ID), 0);
+    assert_eq!(count(server, "training_exercises", BENCH_ROW_ID), 1);
+    assert_eq!(count(server, "sets", BENCH_SET_ID), 1);
+
+    server
+        .execute_d1_json(&format!(
+            "UPDATE sets SET completed = 0 WHERE training_exercise_id = '{BENCH_ROW_ID}'"
+        ))
+        .expect("the completed sets must be reopened for the delete");
+
     let delete = post(
         server,
         cookie,

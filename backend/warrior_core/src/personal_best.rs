@@ -315,6 +315,29 @@ mod tests {
     }
 
     #[test]
+    fn a_heavier_second_drop_segment_does_not_replace_the_first_segment() {
+        let sets = vec![session_set(
+            "bench",
+            weight_record(SetKind::Drop, vec![segment(80.0, 6), segment(100.0, 8)]),
+        )];
+        let candidates = candidates(date(12), &sets);
+
+        assert_candidate(&candidates[0], "bench", BestKind::MaxWeight, 80.0);
+        assert_candidate(
+            &candidates[1],
+            "bench",
+            BestKind::EstimatedOneRepMax,
+            estimated_one_rep_max(80.0, 6).unwrap(),
+        );
+        assert_candidate(
+            &candidates[2],
+            "bench",
+            BestKind::TotalWeight,
+            480.0 + 800.0,
+        );
+    }
+
+    #[test]
     fn warmup_is_excluded_from_the_candidates() {
         let sets = vec![session_set(
             "bench",

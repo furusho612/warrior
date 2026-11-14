@@ -530,9 +530,9 @@ fn seed_past_session(server: &DevServer, user_id: &str) {
         format!(
             "INSERT INTO training_sessions \
              (id, user_id, date, started_at, memo, source_kind, finished_at, duration_seconds, \
-              total_weight_kg, exercise_count, set_count, personal_bests, created_at, updated_at) \
+              total_weight_kg, exercise_count, set_count, created_at, updated_at) \
              VALUES ('{PAST_TRAINING_ID}', '{user_id}', '2026-01-01', '2026-01-01T03:00:00Z', '', \
-              'empty', '2026-01-01T04:00:00Z', 3600, 900.0, 2, 3, '[]', \
+              'empty', '2026-01-01T04:00:00Z', 3600, 900.0, 2, 3, \
               '2026-01-01T03:00:00Z', '2026-01-01T04:00:00Z')"
         ),
         format!(

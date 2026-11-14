@@ -40,6 +40,11 @@ const EMPTY_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5630";
 const EMPTY_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5631";
 const EMPTY_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5632";
 const EMPTY_SECOND_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5633";
+const COMPLETED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5634";
+const COMPLETED_DELETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5635";
+const COMPLETED_UNCOMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5636";
+const EMPTY_REJECTED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5637";
+const SECOND_SET_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5622";
 const TAKEOVER_PORT: u16 = 8824;
 const TAKEOVER_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5640";
 const TAKEOVER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5641";
@@ -259,6 +264,59 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
     assert_eq!(replay.status, 200);
     assert_eq!(status(&replay), "already_applied");
     assert_eq!(applied_count(server, COMPLETE_OPERATION_ID), 1);
+
+    reject_edits_of_the_completed_set(server, cookie);
+}
+
+fn reject_edits_of_the_completed_set(server: &DevServer, cookie: &str) {
+    let update = update_operation(
+        COMPLETED_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        BENCH_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: Some(70.0),
+        },
+        vec![segment(BENCH_SEGMENT_ID, 1, 130.0, 5)],
+    );
+    let response = post(server, cookie, &update);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(applied_count(server, COMPLETED_UPDATE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT weight_kg FROM set_segments WHERE id = '{BENCH_SEGMENT_ID}'")
+        )["weight_kg"]
+            .as_f64(),
+        Some(120.0),
+        "an update of a completed set must keep the stored value"
+    );
+
+    let delete = delete_operation(COMPLETED_DELETE_OPERATION_ID, TRAINING_ID, BENCH_SET_ID);
+    let response = post(server, cookie, &delete);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(applied_count(server, COMPLETED_DELETE_OPERATION_ID), 0);
+    assert_eq!(count(server, "sets", BENCH_SET_ID), 1);
+    assert_eq!(count(server, "set_segments", BENCH_SEGMENT_ID), 1);
+
+    let uncomplete = complete_operation(
+        COMPLETED_UNCOMPLETE_OPERATION_ID,
+        TRAINING_ID,
+        BENCH_SET_ID,
+        false,
+    );
+    let response = post(server, cookie, &uncomplete);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(applied_count(server, COMPLETED_UNCOMPLETE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{BENCH_SET_ID}'")
+        )["completed"],
+        1
+    );
 }
 
 fn reorder_the_sets(server: &DevServer, cookie: &str) {
@@ -272,7 +330,7 @@ fn reorder_the_sets(server: &DevServer, cookie: &str) {
             kind: "normal",
             body_weight_kg: Some(70.0),
         },
-        vec![segment("3f2504e0-4f89-41d3-9a0c-0305e82c5622", 1, 80.0, 5)],
+        vec![segment(SECOND_SET_SEGMENT_ID, 1, 80.0, 5)],
     );
     let response = post(server, cookie, &second);
     assert_eq!(response.status, 200, "{}", response.body);
@@ -437,12 +495,12 @@ fn edit_a_finished_training_without_a_terminal(server: &DevServer, session_only_
 }
 
 fn delete_the_set_with_its_segments(server: &DevServer, cookie: &str) {
-    let delete = delete_operation(DELETE_OPERATION_ID, TRAINING_ID, BENCH_SET_ID);
+    let delete = delete_operation(DELETE_OPERATION_ID, TRAINING_ID, SECOND_SET_ID);
     let response = post(server, cookie, &delete);
     assert_eq!(response.status, 200, "{}", response.body);
     assert_eq!(status(&response), "applied");
-    assert_eq!(count(server, "sets", BENCH_SET_ID), 0);
-    assert_eq!(count(server, "set_segments", BENCH_SEGMENT_ID), 0);
+    assert_eq!(count(server, "sets", SECOND_SET_ID), 0);
+    assert_eq!(count(server, "set_segments", SECOND_SET_SEGMENT_ID), 0);
     assert_eq!(applied_count(server, DELETE_OPERATION_ID), 1);
 
     let replay = post(server, cookie, &delete);
@@ -491,8 +549,38 @@ fn a_completed_set_requires_values() {
     );
     assert_eq!(applied_count(&server, EMPTY_COMPLETE_OPERATION_ID), 0);
 
-    let update = update_operation(
+    let empty_update = update_operation(
         EMPTY_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        set_id,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![segment(segment_id, 1, 0.0, 0)],
+    );
+    let response = post(&server, &user_cookie, &empty_update);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT completed FROM sets WHERE id = '{set_id}'")
+        )["completed"],
+        0,
+        "an update without values must not complete the set"
+    );
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT weight_kg, reps FROM set_segments WHERE id = '{segment_id}'")
+        ),
+        json!({"weight_kg": 0, "reps": 0})
+    );
+
+    let update = update_operation(
+        EMPTY_SECOND_UPDATE_OPERATION_ID,
         TRAINING_ID,
         set_id,
         UpdateSpec {
@@ -513,8 +601,8 @@ fn a_completed_set_requires_values() {
         1
     );
 
-    let empty_update = update_operation(
-        EMPTY_SECOND_UPDATE_OPERATION_ID,
+    let rejected_update = update_operation(
+        EMPTY_REJECTED_UPDATE_OPERATION_ID,
         TRAINING_ID,
         set_id,
         UpdateSpec {
@@ -525,22 +613,18 @@ fn a_completed_set_requires_values() {
         },
         vec![segment(segment_id, 1, 0.0, 0)],
     );
-    let response = post(&server, &user_cookie, &empty_update);
-    assert_eq!(response.status, 200, "{}", response.body);
+    let response = post(&server, &user_cookie, &rejected_update);
+    assert_eq!(response.status, 409, "{}", response.body);
     assert_eq!(
-        first_row(
-            &server,
-            &format!("SELECT completed FROM sets WHERE id = '{set_id}'")
-        )["completed"],
-        0,
-        "an update without values must clear the completion"
+        applied_count(&server, EMPTY_REJECTED_UPDATE_OPERATION_ID),
+        0
     );
     assert_eq!(
         first_row(
             &server,
             &format!("SELECT weight_kg, reps FROM set_segments WHERE id = '{segment_id}'")
         ),
-        json!({"weight_kg": 0, "reps": 0})
+        json!({"weight_kg": 100, "reps": 5})
     );
 
     let finish = server.request(
@@ -550,8 +634,8 @@ fn a_completed_set_requires_values() {
     );
     assert_eq!(finish.status, 200, "{}", finish.body);
     let summary: Value = serde_json::from_str(&finish.body).expect("a summary");
-    assert_eq!(summary["set_count"], 0, "an incomplete set is not counted");
-    assert_eq!(summary["total_weight_kg"], 0.0);
+    assert_eq!(summary["set_count"], 1);
+    assert_eq!(summary["total_weight_kg"], 500.0);
 }
 
 #[test]

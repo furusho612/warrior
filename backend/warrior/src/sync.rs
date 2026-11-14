@@ -78,10 +78,10 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
 
     if let Some(existing) = applied(&db, &operation.operation_id).await? {
         if existing.user_id == authenticated.id && existing.training_id == operation.training_id {
-            let personal_bests =
+            let bests =
                 crate::set::personal_bests_after_completion(&db, &authenticated.id, &validated)
                     .await;
-            return applied_response("already_applied", personal_bests);
+            return applied_response("already_applied", bests.held);
         }
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     }
@@ -160,7 +160,13 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
                 if existing.user_id == authenticated.id
                     && existing.training_id == operation.training_id
                 {
-                    return status_response("already_applied");
+                    let bests = crate::set::personal_bests_after_completion(
+                        &db,
+                        &authenticated.id,
+                        &validated,
+                    )
+                    .await;
+                    return applied_response("already_applied", bests.held);
                 }
             }
             return Ok(response(ErrorCode::Internal, "internal error"));
@@ -177,9 +183,9 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         return reject_or_reapply(&db, &authenticated.id, &operation, &validated, &now).await;
     }
 
-    let personal_bests =
+    let bests =
         crate::set::personal_bests_after_completion(&db, &authenticated.id, &validated).await;
-    applied_response("applied", personal_bests)
+    applied_response("applied", bests.updated)
 }
 
 /// batch の最初の文が変更した行数を返す。

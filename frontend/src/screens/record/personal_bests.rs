@@ -7,7 +7,7 @@
 use dioxus::prelude::*;
 use warrior_core::training_session::PersonalBestItem;
 
-use crate::screens::summary::{best_label, best_value};
+use crate::screens::summary::{best_equipment, best_label, best_value};
 use crate::text::{text, Key};
 
 /// 記録中に更新した自己ベストの一覧。
@@ -35,6 +35,13 @@ pub(super) fn RecordPersonalBests(items: Vec<PersonalBestItem>) -> Element {
                             }
                         } else {
                             span { class: "min-w-0 flex-1" }
+                        }
+                        if let Some(equipment) = best_equipment(&item) {
+                            span {
+                                class: "shrink-0 text-[10px] text-text-sub",
+                                "data-record-personal-best-equipment": "true",
+                                "{equipment}"
+                            }
                         }
                         span {
                             class: "shrink-0 text-[11px] text-text-sub",
