@@ -3,6 +3,7 @@
 - Requirements: REQ-SET-004, REQ-SET-005
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-unilateral-superset
 
@@ -88,8 +89,9 @@
 - `backend/pbt/tests/set_calc.rs`、`backend/warrior/tests/e2e_calendar.rs`、`e2e_ownership.rs`、`e2e_record_drop_set.rs`、`e2e_record_exercise.rs`、`e2e_record_set.rs`、`backend/warrior/tests/support/browser.rs`、`backend/warrior/tests/support/mod.rs`: 要求 ID と共通のテスト支援を合わせる。
 - `CHANGES.md`: 利用者向けの変更履歴を追加する。
 - `mise.toml`: 結合テストと E2E の一覧へこの issue のテストを追加する。
+- `backend/warrior_core/src/set_calc.rs`、`backend/warrior/src/sync.rs`、`backend/warrior/src/sync/exercise.rs`、`backend/warrior/tests/support/record_common.rs`、`frontend/src/screens/record/failed_operations.rs`、`frontend/src/screens/record/set_events.rs`、`frontend/src/text.rs`、`docs/issues/0030-feature-time-exercises.md`、`docs/issues/draft/0077-other-split-set-calc.md`: 左右の値の計算、同期のエラー変換、共通のテスト準備、破棄の復元、タイマーのイベント、文言、0030 の時間種目と 0077 の分割の追跡を合わせる。
 
-計画のファイルを分けた理由は、`backend/warrior/src/set.rs` と `frontend/src/screens/record/sets.rs` が code-style の 1000 行の閾値に達したためである。`backend/warrior/src/set/bindings.rs` に SQL のバインド値と操作 ID の条件を、`frontend/src/screens/record/set_table.rs` にセットの表の描画を移した。
+計画のファイルを分けた理由は、`backend/warrior/src/set.rs` と `frontend/src/screens/record/sets.rs` が code-style の 1000 行に近づいたためである。`backend/warrior/src/set/bindings.rs` に SQL のバインド値と操作 ID の条件を、`frontend/src/screens/record/set_table.rs` にセットの表の描画を移した。
 
 再レビューで、スーパーセットの並べ替えが組の種目を変えないことをサーバーで検証し、`superset_members` の `(user_id, training_exercise_id)` に一意索引を追加した (`migrations/0012_superset_member_unique.sql`)。main の 0025/0026 最終版を取り込み、0077 は main の 1 つに統合した。`set_calc` は 1168 行で、0077 の範囲に含める。
 
