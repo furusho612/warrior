@@ -65,7 +65,7 @@ fn finished_server_record(training_id: &str, memo: &str) -> TrainingRecord {
 async fn a_confirmed_update_is_not_retried() {
     let name = database_name("retry-guard");
     let storage = open(&name).await;
-    create_and_confirm(&storage, "c").await;
+    create_and_confirm(&storage, CREATE_ID, "c").await;
 
     storage
         .save_session_update(&session("x"), &update_operation(UPDATE_ID, "x"))
@@ -117,7 +117,7 @@ async fn a_confirmed_update_is_not_retried() {
 async fn discarding_an_older_failed_update_keeps_the_newer_pending_memo() {
     let name = database_name("discard-older");
     let storage = open(&name).await;
-    create_and_confirm(&storage, "c").await;
+    create_and_confirm(&storage, CREATE_ID, "c").await;
 
     storage
         .save_session_update(&session("x"), &update_operation(UPDATE_ID, "x"))
@@ -246,7 +246,7 @@ async fn updates_merge_while_the_create_is_pending_and_unblock_after_success() {
 async fn the_latest_memo_survives_two_pending_updates_and_a_transient_failure() {
     let name = database_name("latest-memo");
     let storage = open(&name).await;
-    create_and_confirm(&storage, "c").await;
+    create_and_confirm(&storage, CREATE_ID, "c").await;
 
     storage
         .save_session_update(&session("a"), &update_operation(UPDATE_ID, "a"))
@@ -595,7 +595,7 @@ async fn records_are_limited_to_record_stores() {
 async fn refreshing_confirmed_does_not_change_the_draft() {
     let name = database_name("refresh-confirmed");
     let storage = open(&name).await;
-    create_and_confirm(&storage, "base").await;
+    create_and_confirm(&storage, CREATE_ID, "base").await;
     storage
         .save_session_update(&session("draft"), &update_operation(UPDATE_ID, "draft"))
         .await

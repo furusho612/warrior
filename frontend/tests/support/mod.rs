@@ -99,8 +99,7 @@ pub fn create_operation_for(training_id: &str, operation_id: &str, memo: &str) -
 }
 
 /// 作成をサーバーが受理した状態のトレーニングを作る。
-pub async fn create_and_confirm(storage: &Storage, memo: &str) {
-    let operation_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4302";
+pub async fn create_and_confirm(storage: &Storage, operation_id: &str, memo: &str) {
     storage
         .save_session_create(
             &session(memo),

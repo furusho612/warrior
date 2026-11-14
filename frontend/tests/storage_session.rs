@@ -2,8 +2,6 @@
 //!
 //! 対応する要求: `REQ-NFR-003`、`REQ-NFR-005`。
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
-//! セットと段は `put_record` で保存し、outbox の操作は作らない。セットの同期操作は
-//! まだ無い。
 
 use serde_json::json;
 use warrior_core::exercise::Laterality;
@@ -773,7 +771,7 @@ async fn a_failed_save_keeps_the_session_and_confirmed_memo() {
 async fn retrying_a_superseded_failed_update_keeps_the_confirmed_memo() {
     let name = database_name("retry-confirmed");
     let storage = open(&name).await;
-    create_and_confirm(&storage, "c").await;
+    create_and_confirm(&storage, CREATE_ID, "c").await;
 
     storage
         .save_session_update(&session("x"), &update_operation(UPDATE_ID, "x"))

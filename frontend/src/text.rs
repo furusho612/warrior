@@ -102,6 +102,7 @@ text_keys! {
     RecordExerciseTotalDurationDiff => "合計時間の差",
     RecordExerciseLongestDurationDiff => "最長時間の差",
     RecordTrainingWeightDiff => "トレーニング全体の総重量の差",
+    RecordExerciseRestoreFailed => "種目の復元に失敗しました。",
     RecordExerciseSelectTitle => "種目を選ぶ",
     RecordExerciseSelectDescription => "追加する種目を選ぶと、記録に加えます。",
     RecordExerciseSelectFailed => "種目の一覧を読み込めませんでした。",

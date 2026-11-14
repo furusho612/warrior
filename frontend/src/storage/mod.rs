@@ -19,7 +19,7 @@ use warrior_core::sync::{
     Operation, OperationKind, OutboxEntry, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
-use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
+use warrior_core::training_record::TrainingRecord;
 
 pub mod indexeddb;
 pub mod outbox;
@@ -608,52 +608,6 @@ impl Storage {
         }
     }
 
-    /// サーバーの記録から、削除した種目の行と、その種目に属するセット、段、
-    /// スーパーセットの参照だけを戻す。
-    ///
-    /// 送信待ちの列、メモ、ほかの種目の行と入力には触れない。削除の破棄で使う。
-    pub async fn restore_training_exercise(
-        &self,
-        record: &TrainingRecord,
-        training_exercise_id: &str,
-    ) -> Result<(), StorageError> {
-        let database = self.database().await?;
-        let transaction = indexeddb::Transaction::new(
-            &database,
-            &[
-                Store::TrainingExercises.name(),
-                Store::Sets.name(),
-                Store::SetSegments.name(),
-                Store::Supersets.name(),
-                Store::SupersetMembers.name(),
-            ],
-            IdbTransactionMode::Readwrite,
-        )?;
-        match restore_training_exercise_steps(&transaction, record, training_exercise_id).await {
-            Ok(()) => transaction.finish().await,
-            Err(error) => abort(transaction, error).await,
-        }
-    }
-
-    /// サーバーの記録にある種目の位置を端末へ戻す。
-    ///
-    /// 送信待ちの列と、種目以外の行には触れない。並べ替えの破棄で使う。
-    pub async fn restore_training_exercise_positions(
-        &self,
-        record: &TrainingRecord,
-    ) -> Result<(), StorageError> {
-        let database = self.database().await?;
-        let transaction = indexeddb::Transaction::new(
-            &database,
-            &[Store::TrainingExercises.name()],
-            IdbTransactionMode::Readwrite,
-        )?;
-        match restore_training_exercise_positions_steps(&transaction, record).await {
-            Ok(()) => transaction.finish().await,
-            Err(error) => abort(transaction, error).await,
-        }
-    }
-
     /// 認証が無いときに、Sending を試行回数を変えずに Pending へ戻す。
     pub async fn return_to_pending(&self, operation_id: &str) -> Result<(), StorageError> {
         self.transition_outbox(|entries| {
@@ -713,7 +667,7 @@ async fn abort<T>(
 
 /// 端末に保存するスーパーセットの行。組に含める種目は `superset_members` に置く。
 #[derive(serde::Serialize)]
-struct StoredSuperset<'a> {
+pub(super) struct StoredSuperset<'a> {
     id: &'a str,
     training_id: &'a str,
     position: i64,
@@ -776,93 +730,7 @@ async fn replace_session_tree_steps(
     Ok(())
 }
 
-async fn restore_training_exercise_steps(
-    transaction: &indexeddb::Transaction,
-    record: &TrainingRecord,
-    training_exercise_id: &str,
-) -> Result<(), StorageError> {
-    let training_id = record.session.id.as_str();
-    let server_exercise = record.exercises.iter().find(|exercise| {
-        exercise.training_id == training_id && exercise.id == training_exercise_id
-    });
-    exercise::delete_training_exercise_rows(transaction, training_exercise_id).await?;
-    let Some(server_exercise) = server_exercise else {
-        return Ok(());
-    };
-    put_rows(
-        transaction,
-        Store::TrainingExercises,
-        std::slice::from_ref(server_exercise),
-    )
-    .await?;
-
-    let sets = record
-        .sets
-        .iter()
-        .filter(|set| set.training_exercise_id == training_exercise_id)
-        .collect::<Vec<_>>();
-    let set_ids = sets.iter().map(|set| set.id.as_str()).collect::<Vec<_>>();
-    let segments = record
-        .segments
-        .iter()
-        .filter(|segment| set_ids.contains(&segment.set_id.as_str()))
-        .collect::<Vec<_>>();
-    put_rows(transaction, Store::Sets, &sets).await?;
-    put_rows(transaction, Store::SetSegments, &segments).await?;
-
-    let supersets = record
-        .supersets
-        .iter()
-        .filter(|superset| {
-            superset
-                .members
-                .iter()
-                .any(|member| member.training_exercise_id == training_exercise_id)
-        })
-        .collect::<Vec<_>>();
-    let stored_supersets = supersets
-        .iter()
-        .map(|superset| StoredSuperset {
-            id: &superset.id,
-            training_id: &superset.training_id,
-            position: superset.position,
-            created_at: &superset.created_at,
-            updated_at: &superset.updated_at,
-        })
-        .collect::<Vec<_>>();
-    let members = supersets
-        .iter()
-        .flat_map(|superset| superset.members.iter())
-        .filter(|member| member.training_exercise_id == training_exercise_id)
-        .collect::<Vec<_>>();
-    put_rows(transaction, Store::Supersets, &stored_supersets).await?;
-    put_rows(transaction, Store::SupersetMembers, &members).await?;
-    Ok(())
-}
-
-async fn restore_training_exercise_positions_steps(
-    transaction: &indexeddb::Transaction,
-    record: &TrainingRecord,
-) -> Result<(), StorageError> {
-    let training_id = record.session.id.as_str();
-    let store = transaction.store(Store::TrainingExercises.name())?;
-    let rows = exercise::read_rows::<TrainingExerciseRecord>(&store).await?;
-    for row in rows.iter().filter(|row| row.training_id == training_id) {
-        let Some(server) = record
-            .exercises
-            .iter()
-            .find(|server| server.training_id == training_id && server.id == row.id)
-        else {
-            continue;
-        };
-        let mut updated = row.clone();
-        updated.position = server.position;
-        indexeddb::put(&store, &indexeddb::to_js(&updated)?).await?;
-    }
-    Ok(())
-}
-
-async fn put_rows<T: serde::Serialize>(
+pub(super) async fn put_rows<T: serde::Serialize>(
     transaction: &indexeddb::Transaction,
     store: Store,
     rows: &[T],

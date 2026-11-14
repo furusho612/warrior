@@ -17,16 +17,18 @@ use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::ids::{new_uuid, now_iso};
 use crate::routes::{navigate, Route};
-use crate::storage::{self, DiscardOutcome, ReplacePurpose, StorageError};
+use crate::storage::{self, ReplacePurpose, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
 use crate::training_session as training_api;
 use crate::training_session::TrainingApiError;
 
 mod exercises;
+mod failed_operations;
 mod ownership;
 
 use exercises::ExerciseSection;
+use failed_operations::FailedOperations;
 use ownership::RecordOwnership;
 
 #[component]
@@ -492,116 +494,6 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
                         spawn(save_loop(signals, retry_state.clone()));
                     },
                     "{text(Key::RecordRetry)}"
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn FailedOperations(
-    failed: Vec<OutboxEntry>,
-    signals: RecordSignals,
-    state_signals: StateSignals,
-) -> Element {
-    let mut signals = signals;
-
-    if failed.is_empty() {
-        return rsx! {};
-    }
-
-    rsx! {
-        div { class: "flex flex-col gap-2 border border-line bg-surface p-3",
-            h2 { class: "text-sm font-bold", "{text(Key::RecordFailedOperations)}" }
-            for entry in failed {
-                div {
-                    class: "flex min-h-11 flex-wrap items-center justify-between gap-2 border border-line px-3",
-                    span { class: "text-[13px]", "{operation_label(entry.operation.kind)}" }
-                    div { class: "flex gap-2",
-                        button {
-                            class: "min-h-11 border border-primary px-3 text-[13px] text-primary",
-                            onclick: {
-                                let operation_id = entry.operation.operation_id.clone();
-                                let training_id = entry.operation.training_id.clone();
-                                move |_| {
-                                    let operation_id = operation_id.clone();
-                                    let training_id = training_id.clone();
-                                    spawn(async move {
-                                        sync::retry_operation(&operation_id).await;
-                                        refresh_state(&training_id, state_signals).await;
-                                    });
-                                }
-                            },
-                            "{text(Key::RecordRetry)}"
-                        }
-                        button {
-                            class: "min-h-11 border border-line px-3 text-[13px]",
-                            onclick: {
-                                let operation_id = entry.operation.operation_id.clone();
-                                let training_id = entry.operation.training_id.clone();
-                                let operation_kind = entry.operation.kind;
-                                let training_exercise_id = entry
-                                    .operation
-                                    .payload
-                                    .get("training_exercise_id")
-                                    .and_then(|value| value.as_str())
-                                    .map(str::to_owned);
-                                move |_| {
-                                    let operation_id = operation_id.clone();
-                                    let training_id = training_id.clone();
-                                    let training_exercise_id = training_exercise_id.clone();
-                                    spawn(async move {
-                                        match sync::discard_operation(&operation_id).await {
-                                            Some(DiscardOutcome::SessionDeleted) => {
-                                                navigate("/record");
-                                            }
-                                            Some(DiscardOutcome::MemoReverted(updated)) => {
-                                                signals.memo.set(updated.memo.clone());
-                                                signals.persisted_memo.set(updated.memo.clone());
-                                                signals
-                                                    .memo_revision
-                                                    .set((signals.memo_revision)() + 1);
-                                                signals.session.set(Some(*updated));
-                                                refresh_state(&training_id, state_signals).await;
-                                            }
-                                            Some(DiscardOutcome::ExerciseDeleted) => {
-                                                signals
-                                                    .exercise_revision
-                                                    .set((signals.exercise_revision)() + 1);
-                                                refresh_state(&training_id, state_signals).await;
-                                            }
-                                            Some(DiscardOutcome::OperationsRemoved)
-                                                if matches!(
-                                                    operation_kind,
-                                                    OperationKind::TrainingExerciseDelete
-                                                        | OperationKind::TrainingExerciseReorder
-                                                ) =>
-                                            {
-                                                if !restore_discarded_exercise(
-                                                    &training_id,
-                                                    training_exercise_id.as_deref(),
-                                                    operation_kind,
-                                                )
-                                                .await
-                                                {
-                                                    signals.save_error.set(Some(
-                                                        text(Key::RecordReloadFailed).to_owned(),
-                                                    ));
-                                                } else {
-                                                    signals.exercise_revision.set(
-                                                        (signals.exercise_revision)() + 1,
-                                                    );
-                                                }
-                                                refresh_state(&training_id, state_signals).await;
-                                            }
-                                            _ => {}
-                                        }
-                                    });
-                                }
-                            },
-                            "{text(Key::RecordDiscard)}"
-                        }
-                    }
                 }
             }
         }
