@@ -300,7 +300,7 @@ async fn restore_training_exercise_positions_steps(
     Ok(())
 }
 
-async fn enqueue_operation(
+pub(super) async fn enqueue_operation(
     outbox_store: &IdbObjectStore,
     meta: &IdbObjectStore,
     entries: &[OutboxEntry],

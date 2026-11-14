@@ -1,0 +1,351 @@
+//! セットと段の端末内の保存、並べ替え、完了と、送信待ちの列への追加。
+//!
+//! セットの追加、更新、削除、並べ替え、完了は、行の書き込みと同じトランザクションで
+//! 操作を送信待ちの列へ積む (ADR-002)。段はセットの更新で全置換し、削除ではセットと
+//! 一緒に消す。記録した時点の体重はセットの行が持ち、段の重量は自重種目では加重である。
+
+use warrior_core::sync::{
+    Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
+    SetReorderPayload, SetUpdatePayload,
+};
+use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
+use wasm_bindgen::JsValue;
+use web_sys::{IdbObjectStore, IdbTransactionMode};
+
+use super::exercise::{enqueue_operation, read_rows};
+use super::{abort, indexeddb, outbox, Storage, StorageError, Store};
+
+/// 端末に保存した 1 つのセットと、その段。
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredSet {
+    /// セットの行。
+    pub set: SetRecordRow,
+    /// セットの段。並び順である。
+    pub segments: Vec<SetSegmentRecord>,
+}
+
+impl Storage {
+    /// 種目に属するセットを、位置の昇順で段とともに返す。
+    pub async fn training_sets(
+        &self,
+        training_exercise_id: &str,
+    ) -> Result<Vec<StoredSet>, StorageError> {
+        let values = self.all_records(Store::Sets).await?;
+        let mut sets = values
+            .iter()
+            .map(|value| {
+                serde_json::from_value::<SetRecordRow>(value.clone())
+                    .map_err(|error| StorageError::Serialize(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        sets.retain(|set| set.training_exercise_id == training_exercise_id);
+        sets.sort_by(|left, right| {
+            left.position
+                .cmp(&right.position)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let segments = self.all_records(Store::SetSegments).await?;
+        let mut segments = segments
+            .iter()
+            .map(|value| {
+                serde_json::from_value::<SetSegmentRecord>(value.clone())
+                    .map_err(|error| StorageError::Serialize(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        segments.sort_by(|left, right| {
+            left.position
+                .cmp(&right.position)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(sets
+            .into_iter()
+            .map(|set| StoredSet {
+                segments: segments
+                    .iter()
+                    .filter(|segment| segment.set_id == set.id)
+                    .cloned()
+                    .collect(),
+                set,
+            })
+            .collect())
+    }
+
+    /// セットの追加とその操作を 1 つのトランザクションで保存する。
+    pub async fn save_set_create(
+        &self,
+        set: &SetRecordRow,
+        segment: &SetSegmentRecord,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        let payload = create_payload(operation)?;
+        if payload.set_id != set.id
+            || payload.training_exercise_id != set.training_exercise_id
+            || payload.training_id != operation.training_id
+            || segment.set_id != set.id
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not this set creation".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sets = transaction.store(Store::Sets.name())?;
+        let segments = transaction.store(Store::SetSegments.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = indexeddb::put(&segments, &indexeddb::to_js(segment)?).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// セットの更新とその操作を 1 つのトランザクションで保存する。段は全置換する。
+    pub async fn save_set_update(
+        &self,
+        set: &SetRecordRow,
+        segment: &SetSegmentRecord,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        let payload = update_payload(operation)?;
+        if payload.set_id != set.id
+            || payload.training_id != operation.training_id
+            || segment.set_id != set.id
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not this set update".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sets = transaction.store(Store::Sets.name())?;
+        let segments = transaction.store(Store::SetSegments.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = delete_segments(&segments, &set.id).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = indexeddb::put(&segments, &indexeddb::to_js(segment)?).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// セットの削除とその操作を 1 つのトランザクションで保存する。
+    ///
+    /// セットの段も同じトランザクションで削除する。
+    pub async fn save_set_delete(
+        &self,
+        training_id: &str,
+        set_id: &str,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        let payload = delete_payload(operation)?;
+        if payload.set_id != set_id || payload.training_id != training_id {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not this set deletion".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sets = transaction.store(Store::Sets.name())?;
+        let segments = transaction.store(Store::SetSegments.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if let Err(error) = delete_segments(&segments, set_id).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = indexeddb::delete_entry(&sets, &JsValue::from_str(set_id)).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// セットの並べ替えとその操作を 1 つのトランザクションで保存する。
+    pub async fn save_set_reorder(
+        &self,
+        training_id: &str,
+        training_exercise_id: &str,
+        ordered_ids: &[String],
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        let payload = reorder_payload(operation)?;
+        if payload.training_id != training_id
+            || payload.training_exercise_id != training_exercise_id
+            || payload.ordered_ids != ordered_ids
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not this set reorder".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Sets.name(), Store::Outbox.name(), Store::Meta.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sets = transaction.store(Store::Sets.name())?;
+        let stored = read_rows::<SetRecordRow>(&sets).await?;
+        let now = crate::ids::now_iso();
+        for (index, id) in ordered_ids.iter().enumerate() {
+            let Some(set) = stored
+                .iter()
+                .find(|set| set.training_exercise_id == training_exercise_id && set.id == *id)
+            else {
+                return abort(
+                    transaction,
+                    StorageError::InvalidOperation(
+                        "the set does not exist in the training exercise".to_owned(),
+                    ),
+                )
+                .await;
+            };
+            let mut updated = set.clone();
+            updated.position = i64::try_from(index).unwrap_or(i64::MAX).saturating_add(1);
+            updated.updated_at = now.clone();
+            if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(&updated)?).await {
+                return abort(transaction, error).await;
+            }
+        }
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// セットの完了の状態の変更とその操作を 1 つのトランザクションで保存する。
+    pub async fn save_set_complete(
+        &self,
+        set: &SetRecordRow,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        let payload = complete_payload(operation)?;
+        if payload.set_id != set.id || payload.training_id != operation.training_id {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not this set completion".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Sets.name(), Store::Outbox.name(), Store::Meta.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sets = transaction.store(Store::Sets.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if let Err(error) = indexeddb::put(&sets, &indexeddb::to_js(set)?).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+}
+
+async fn delete_segments(store: &IdbObjectStore, set_id: &str) -> Result<(), StorageError> {
+    let segments = read_rows::<SetSegmentRecord>(store).await?;
+    for segment in segments.iter().filter(|segment| segment.set_id == set_id) {
+        indexeddb::delete_entry(store, &JsValue::from_str(&segment.id)).await?;
+    }
+    Ok(())
+}
+
+fn create_payload(operation: &Operation) -> Result<SetCreatePayload, StorageError> {
+    if operation.kind != OperationKind::SetCreate {
+        return Err(StorageError::InvalidOperation(
+            "the operation is not a set creation".to_owned(),
+        ));
+    }
+    serde_json::from_value(operation.payload.clone())
+        .map_err(|error| StorageError::Serialize(error.to_string()))
+}
+
+fn update_payload(operation: &Operation) -> Result<SetUpdatePayload, StorageError> {
+    if operation.kind != OperationKind::SetUpdate {
+        return Err(StorageError::InvalidOperation(
+            "the operation is not a set update".to_owned(),
+        ));
+    }
+    serde_json::from_value(operation.payload.clone())
+        .map_err(|error| StorageError::Serialize(error.to_string()))
+}
+
+fn delete_payload(operation: &Operation) -> Result<SetDeletePayload, StorageError> {
+    if operation.kind != OperationKind::SetDelete {
+        return Err(StorageError::InvalidOperation(
+            "the operation is not a set deletion".to_owned(),
+        ));
+    }
+    serde_json::from_value(operation.payload.clone())
+        .map_err(|error| StorageError::Serialize(error.to_string()))
+}
+
+fn reorder_payload(operation: &Operation) -> Result<SetReorderPayload, StorageError> {
+    if operation.kind != OperationKind::SetReorder {
+        return Err(StorageError::InvalidOperation(
+            "the operation is not a set reorder".to_owned(),
+        ));
+    }
+    serde_json::from_value(operation.payload.clone())
+        .map_err(|error| StorageError::Serialize(error.to_string()))
+}
+
+fn complete_payload(operation: &Operation) -> Result<SetCompletePayload, StorageError> {
+    if operation.kind != OperationKind::SetComplete {
+        return Err(StorageError::InvalidOperation(
+            "the operation is not a set completion".to_owned(),
+        ));
+    }
+    serde_json::from_value(operation.payload.clone())
+        .map_err(|error| StorageError::Serialize(error.to_string()))
+}

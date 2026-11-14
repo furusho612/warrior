@@ -39,7 +39,7 @@ pub enum ExerciseOwnership<'a> {
     Finished,
 }
 
-fn ownership_condition(
+pub(crate) fn ownership_condition(
     user_id: &str,
     training_id: &str,
     ownership: ExerciseOwnership<'_>,

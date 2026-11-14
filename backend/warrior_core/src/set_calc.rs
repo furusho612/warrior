@@ -598,7 +598,7 @@ impl PersonalBest {
     }
 }
 
-fn validate_rpe(rpe: Option<f64>) -> Result<(), SetValidationError> {
+pub(crate) fn validate_rpe(rpe: Option<f64>) -> Result<(), SetValidationError> {
     if let Some(rpe) = rpe {
         if !(6.0..=10.0).contains(&rpe) || (rpe * 2.0).fract() != 0.0 {
             return Err(SetValidationError::InvalidRpe);

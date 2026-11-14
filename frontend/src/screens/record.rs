@@ -23,13 +23,17 @@ use crate::text::{text, Key};
 use crate::training_session as training_api;
 use crate::training_session::TrainingApiError;
 
+mod exercise_view;
 mod exercises;
 mod failed_operations;
 mod ownership;
+mod set_events;
+mod sets;
 
 use exercises::ExerciseSection;
 use failed_operations::FailedOperations;
 use ownership::RecordOwnership;
+use set_events::{SetCompleted, SetCompletedEvents};
 
 #[component]
 pub fn RecordScreen() -> Element {
@@ -157,6 +161,9 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let confirming = use_signal(|| false);
     let ownership_busy = use_signal(|| false);
     let ownership_error = use_signal(|| Option::<String>::None);
+    let completed_events = use_signal(Vec::<SetCompleted>::new);
+    let completed_event_signal = SetCompletedEvents(completed_events);
+    use_context_provider(|| completed_event_signal);
     let signals = RecordSignals {
         session,
         memo,
@@ -211,6 +218,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
 
     let persisted = (signals.persisted_memo)();
     let failed_entries = (state_signals.failed)();
+    let completed_event_count = completed_event_signal.count();
 
     rsx! {
         section {
@@ -218,6 +226,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-route": "/record/:training_id",
             "data-session-id": training_id,
             "data-persisted-memo": "{persisted}",
+            "data-set-events": "{completed_event_count}",
             "data-profile-checked": if profile_checked() { "true" } else { "false" },
             RecordHeader { signals, state_signals }
             RecordOwnership {
@@ -868,6 +877,11 @@ fn operation_label(kind: OperationKind) -> &'static str {
         OperationKind::TrainingExerciseCreate => text(Key::RecordOperationExerciseCreate),
         OperationKind::TrainingExerciseDelete => text(Key::RecordOperationExerciseDelete),
         OperationKind::TrainingExerciseReorder => text(Key::RecordOperationExerciseReorder),
+        OperationKind::SetCreate => text(Key::RecordOperationSetCreate),
+        OperationKind::SetUpdate => text(Key::RecordOperationSetUpdate),
+        OperationKind::SetDelete => text(Key::RecordOperationSetDelete),
+        OperationKind::SetReorder => text(Key::RecordOperationSetReorder),
+        OperationKind::SetComplete => text(Key::RecordOperationSetComplete),
     }
 }
 

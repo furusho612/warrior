@@ -25,8 +25,10 @@ pub mod indexeddb;
 pub mod outbox;
 
 mod exercise;
+mod set;
 
 pub use indexeddb::request_persistence;
+pub use set::StoredSet;
 
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
@@ -765,7 +767,12 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
         }
         OperationKind::TrainingExerciseCreate
         | OperationKind::TrainingExerciseDelete
-        | OperationKind::TrainingExerciseReorder => Err(StorageError::InvalidOperation(
+        | OperationKind::TrainingExerciseReorder
+        | OperationKind::SetCreate
+        | OperationKind::SetUpdate
+        | OperationKind::SetDelete
+        | OperationKind::SetReorder
+        | OperationKind::SetComplete => Err(StorageError::InvalidOperation(
             "the operation has no memo".to_owned(),
         )),
     }

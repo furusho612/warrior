@@ -23,3 +23,4 @@ pub mod text;
 pub mod theme;
 pub mod training_exercise;
 pub mod training_session;
+pub mod training_set;

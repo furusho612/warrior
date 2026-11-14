@@ -70,7 +70,12 @@ pub(super) async fn exercise_batch(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
-        | ValidatedPayload::ExerciseCreate(_) => {}
+        | ValidatedPayload::ExerciseCreate(_)
+        | ValidatedPayload::SetCreate(_)
+        | ValidatedPayload::SetUpdate(_)
+        | ValidatedPayload::SetDelete(_)
+        | ValidatedPayload::SetReorder(_)
+        | ValidatedPayload::SetComplete(_) => {}
     }
     let ownership = match owner {
         OwnerCondition::Claim(terminal_id) | OwnerCondition::Owned(terminal_id) => {
@@ -128,7 +133,13 @@ fn exercise_statements(
                 now,
             ))
         }
-        ValidatedPayload::Create(_) | ValidatedPayload::Update(_) => None,
+        ValidatedPayload::Create(_)
+        | ValidatedPayload::Update(_)
+        | ValidatedPayload::SetCreate(_)
+        | ValidatedPayload::SetUpdate(_)
+        | ValidatedPayload::SetDelete(_)
+        | ValidatedPayload::SetReorder(_)
+        | ValidatedPayload::SetComplete(_) => None,
     }
 }
 
@@ -179,7 +190,7 @@ fn same_exercise_ids(current: &[String], ordered: &[String]) -> bool {
 }
 
 /// 編集権を確認し、トレーニングの更新時刻を進める文。
-pub(super) fn ownership_guard_statement(
+pub(crate) fn ownership_guard_statement(
     user_id: &str,
     owner: OwnerCondition<'_>,
     training_id: &str,

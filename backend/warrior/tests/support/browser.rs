@@ -323,16 +323,67 @@ pub async fn assert_no_panic(driver: &WebDriver) {
     assert!(panics.is_empty(), "the page panicked: {panics:?}");
 }
 
+/// 通信の復帰をブラウザへ知らせる。
+pub async fn online(driver: &WebDriver) {
+    driver
+        .execute(
+            "window.dispatchEvent(new Event('online'));",
+            Vec::<serde_json::Value>::new(),
+        )
+        .await
+        .expect("the online event must be dispatched");
+}
+
+/// 要素が現れるまで待つ。
+pub async fn wait_for_present(driver: &WebDriver, selector: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if driver.find(By::Css(selector)).await.is_ok() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the selector {selector} did not appear"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 要素が消えるまで待つ。
+pub async fn wait_for_absent(driver: &WebDriver, selector: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if driver.find(By::Css(selector)).await.is_err() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the selector {selector} did not disappear"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 /// 入力要素の値が期待値になるまで待つ。
 pub async fn wait_for_value(driver: &WebDriver, selector: &str, expected: &str) {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    wait_for_value_within(driver, selector, expected, Duration::from_secs(60)).await;
+}
+
+/// 入力要素の値が、指定した時間の中で期待値になるまで待つ。
+pub async fn wait_for_value_within(
+    driver: &WebDriver,
+    selector: &str,
+    expected: &str,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
     loop {
         if value(driver, selector).await == expected {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "the value of {selector} did not become {expected}"
+            "the value of {selector} did not become {expected} within {timeout:?}"
         );
         std::thread::sleep(POLL_INTERVAL);
     }

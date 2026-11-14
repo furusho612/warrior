@@ -20,6 +20,7 @@ pub mod rate_limit;
 pub mod router;
 pub mod scheduled;
 pub mod security;
+pub mod set;
 pub mod stored_sets;
 pub mod sync;
 pub mod training_record;

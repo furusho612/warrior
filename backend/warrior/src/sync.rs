@@ -22,6 +22,8 @@ use crate::ownership;
 
 mod exercise;
 
+pub(crate) use exercise::ownership_guard_statement;
+
 #[derive(Debug, Deserialize)]
 struct AppliedRow {
     user_id: String,
@@ -29,14 +31,14 @@ struct AppliedRow {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct SessionOwnerRow {
-    user_id: String,
-    owner_terminal_id: Option<String>,
-    finished_at: Option<String>,
+pub(crate) struct SessionOwnerRow {
+    pub(crate) user_id: String,
+    pub(crate) owner_terminal_id: Option<String>,
+    pub(crate) finished_at: Option<String>,
 }
 /// 更新の SQL が所有者に課す条件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OwnerCondition<'a> {
+pub(crate) enum OwnerCondition<'a> {
     /// 所有者が未設定の記録中の行を、この端末のものにする。
     Claim(&'a str),
     /// この端末が所有者である行と、終了した行を更新する。
@@ -46,7 +48,7 @@ enum OwnerCondition<'a> {
 }
 
 /// 操作の適用の結果。書き込みを拒否する場合は応答を返す。
-enum BatchOutcome {
+pub(crate) enum BatchOutcome {
     /// 適用する文の組。
     Apply(Vec<SqlStatement>),
     /// 適用しない理由の応答。
@@ -105,6 +107,20 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         | OperationKind::TrainingExerciseDelete
         | OperationKind::TrainingExerciseReorder => {
             exercise::exercise_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
+        OperationKind::SetCreate
+        | OperationKind::SetUpdate
+        | OperationKind::SetDelete
+        | OperationKind::SetReorder
+        | OperationKind::SetComplete => {
+            crate::set::set_batch(
                 &db,
                 &authenticated.id,
                 terminal.as_deref(),
@@ -186,7 +202,12 @@ fn zero_change_outcome(
         },
         OperationKind::TrainingExerciseCreate
         | OperationKind::TrainingExerciseDelete
-        | OperationKind::TrainingExerciseReorder => match session {
+        | OperationKind::TrainingExerciseReorder
+        | OperationKind::SetCreate
+        | OperationKind::SetUpdate
+        | OperationKind::SetDelete
+        | OperationKind::SetReorder
+        | OperationKind::SetComplete => match session {
             Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
             _ => ZeroChangeOutcome::NotFound,
         },
@@ -363,7 +384,7 @@ async fn update_batch(
 /// 端末トークンも含めて、書き込みの許可を判定する。
 ///
 /// 終了したトレーニングは端末トークンの無い要求でも書き込める。
-fn write_decision(
+pub(crate) fn write_decision(
     finished: bool,
     owner_terminal_id: Option<&str>,
     terminal_id: Option<&str>,
@@ -378,7 +399,7 @@ fn write_decision(
 /// 判定と端末トークンから、更新の SQL に渡す所有者の条件を決める。
 ///
 /// `None` は書き込みを拒否する判定である。
-fn owner_condition<'a>(
+pub(crate) fn owner_condition<'a>(
     decision: WriteDecision,
     terminal_id: Option<&'a str>,
 ) -> Option<OwnerCondition<'a>> {
@@ -399,7 +420,7 @@ async fn applied(db: &Db, operation_id: &str) -> Result<Option<AppliedRow>> {
     .await
 }
 
-async fn session_row(db: &Db, training_id: &str) -> Result<Option<SessionOwnerRow>> {
+pub(crate) async fn session_row(db: &Db, training_id: &str) -> Result<Option<SessionOwnerRow>> {
     db.first(&SqlStatement::new(
         "SELECT user_id, owner_terminal_id, finished_at FROM training_sessions WHERE id = ?",
         vec![SqlValue::Text(training_id.to_owned())],
@@ -454,7 +475,7 @@ fn create_statements(
 ///
 /// `changes()` は同じ batch の直前の文が変更した行数を返す。適用と操作 ID の保存を
 /// 1 つの batch に入れ、0 行の適用では操作 ID を残さない (ADR-002、ADR-015)。
-fn applied_statement(user_id: &str, operation: &Operation, now: &str) -> SqlStatement {
+pub(crate) fn applied_statement(user_id: &str, operation: &Operation, now: &str) -> SqlStatement {
     SqlStatement::new(
         "INSERT INTO applied_operations (operation_id, user_id, training_id, kind, applied_at) \
          SELECT ?, ?, ?, ?, ? WHERE changes() > 0",
@@ -842,6 +863,11 @@ mod tests {
             OperationKind::TrainingExerciseCreate,
             OperationKind::TrainingExerciseDelete,
             OperationKind::TrainingExerciseReorder,
+            OperationKind::SetCreate,
+            OperationKind::SetUpdate,
+            OperationKind::SetDelete,
+            OperationKind::SetReorder,
+            OperationKind::SetComplete,
         ] {
             assert_eq!(
                 zero_change_outcome(kind, Some(&recording), USER_ID),
