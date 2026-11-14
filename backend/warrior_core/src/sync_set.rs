@@ -218,18 +218,25 @@ impl SetSegmentPayload {
 
     /// 段が完了に必要な値を持つか。
     ///
-    /// 左右別の段は左右の両方に回数または時間があることを求める。
-    pub fn is_complete(&self) -> bool {
-        match (self.left.as_ref(), self.right.as_ref()) {
-            (Some(left), Some(right)) => {
-                (left.reps > 0 && right.reps > 0)
-                    || (left.duration_seconds.is_some_and(|duration| duration > 0)
-                        && right.duration_seconds.is_some_and(|duration| duration > 0))
+    /// 時間で記録する段は時間、それ以外の段は回数が要る。左右別の段は左右の
+    /// 両方に値があることを求める。
+    pub fn is_complete(&self, mode: RecordMode) -> bool {
+        match mode {
+            RecordMode::Time => match (self.left.as_ref(), self.right.as_ref()) {
+                (Some(left), Some(right)) => {
+                    left.duration_seconds.is_some_and(|duration| duration > 0)
+                        && right.duration_seconds.is_some_and(|duration| duration > 0)
+                }
+                (None, None) => self.duration_seconds.is_some_and(|duration| duration > 0),
+                (Some(_), None) | (None, Some(_)) => false,
+            },
+            RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+                match (self.left.as_ref(), self.right.as_ref()) {
+                    (Some(left), Some(right)) => left.reps > 0 && right.reps > 0,
+                    (None, None) => self.reps > 0,
+                    (Some(_), None) | (None, Some(_)) => false,
+                }
             }
-            (None, None) => {
-                self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
-            }
-            (Some(_), None) | (None, Some(_)) => false,
         }
     }
 }
@@ -748,8 +755,8 @@ mod tests {
         let mut empty = segment();
         empty.reps = 0;
         empty.weight_kg = 0.0;
-        assert!(!empty.is_complete());
-        assert!(segment().is_complete());
+        assert!(!empty.is_complete(RecordMode::WeightAndReps));
+        assert!(segment().is_complete(RecordMode::WeightAndReps));
 
         let mut one_side = segment();
         one_side.reps = 0;
@@ -758,14 +765,14 @@ mod tests {
             reps: 5,
             duration_seconds: None,
         });
-        assert!(!one_side.is_complete());
+        assert!(!one_side.is_complete(RecordMode::WeightAndReps));
 
         one_side.right = Some(crate::set_calc::SideValue {
             weight_kg: 10.0,
             reps: 4,
             duration_seconds: None,
         });
-        assert!(one_side.is_complete());
+        assert!(one_side.is_complete(RecordMode::WeightAndReps));
 
         let mut empty_side = one_side.clone();
         empty_side.right = Some(crate::set_calc::SideValue {
@@ -773,6 +780,36 @@ mod tests {
             reps: 0,
             duration_seconds: None,
         });
-        assert!(!empty_side.is_complete());
+        assert!(!empty_side.is_complete(RecordMode::WeightAndReps));
+
+        let mut time = segment();
+        time.weight_kg = 0.0;
+        time.reps = 0;
+        time.duration_seconds = Some(30);
+        assert!(time.is_complete(RecordMode::Time));
+        assert!(!time.is_complete(RecordMode::WeightAndReps));
+
+        let mut time_empty = time.clone();
+        time_empty.duration_seconds = None;
+        assert!(!time_empty.is_complete(RecordMode::Time));
+
+        let mut time_side = time.clone();
+        time_side.duration_seconds = None;
+        time_side.left = Some(crate::set_calc::SideValue {
+            weight_kg: 0.0,
+            reps: 0,
+            duration_seconds: Some(20),
+        });
+        assert!(!time_side.is_complete(RecordMode::Time));
+        time_side.right = Some(crate::set_calc::SideValue {
+            weight_kg: 0.0,
+            reps: 0,
+            duration_seconds: Some(30),
+        });
+        assert!(time_side.is_complete(RecordMode::Time));
+
+        let mut no_duration = segment();
+        no_duration.duration_seconds = None;
+        assert!(!no_duration.is_complete(RecordMode::Time));
     }
 }

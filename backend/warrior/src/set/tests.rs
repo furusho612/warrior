@@ -3,6 +3,7 @@
 //! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-010`。
 
 use serde_json::json;
+use warrior_core::exercise::Laterality;
 use warrior_core::set_calc::{RecordMode, SetKind, SideValue};
 use warrior_core::sql::SqlValue;
 use warrior_core::sync::{
@@ -10,10 +11,19 @@ use warrior_core::sync::{
     SetReorderPayload, SetSegmentPayload, SetUpdatePayload, ValidatedOperation, ValidatedPayload,
 };
 
+use super::segments::segment_bindings;
+use super::validation::{has_non_time_values, ExerciseShape};
 use super::{
-    applied_exists, delete_set_statement, has_non_time_values, ownership_condition_placeholder,
-    same_set_ids, segment_bindings, set_statements, update_set_statement, ExerciseOwnership,
+    applied_exists, delete_set_statement, ownership_condition_placeholder, same_set_ids,
+    set_statements, update_set_statement, ExerciseOwnership,
 };
+
+fn weight_shape() -> ExerciseShape {
+    ExerciseShape {
+        mode: RecordMode::WeightAndReps,
+        laterality: Laterality::Bilateral,
+    }
+}
 
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5301";
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5302";
@@ -80,7 +90,7 @@ fn the_create_statements_scope_the_set_and_the_segments() {
     let data = set_statements(
         USER_ID,
         &validated,
-        Some(RecordMode::WeightAndReps),
+        Some(weight_shape()),
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
     )
@@ -144,7 +154,6 @@ fn the_update_and_delete_statements_keep_the_training_scope() {
         USER_ID,
         TRAINING_ID,
         &update,
-        RecordMode::WeightAndReps,
         ExerciseOwnership::Finished,
         NOW,
     );
@@ -185,7 +194,7 @@ fn every_set_statement_uses_the_applied_operation_condition() {
     let data = set_statements(
         USER_ID,
         &create,
-        Some(RecordMode::WeightAndReps),
+        Some(weight_shape()),
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
     )

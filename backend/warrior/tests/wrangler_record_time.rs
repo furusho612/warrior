@@ -60,6 +60,7 @@ const WEIGHT_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565a";
 const SEEDED_REPS_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565b";
 const SEEDED_REPS_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565c";
 const SEEDED_REPS_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565d";
+const SIDE_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565e";
 
 #[test]
 fn saves_time_sets_and_checks_the_duration_bests() {
@@ -77,6 +78,7 @@ fn saves_time_sets_and_checks_the_duration_bests() {
     create_the_plank_set(&server, &cookie);
     create_the_maximum_plank_set(&server, &cookie);
     create_the_side_plank_set(&server, &cookie);
+    reject_a_duration_only_update_for_a_unilateral_time_set(&server, &cookie);
     create_the_empty_plank_set(&server, &cookie);
     seed_a_reps_only_time_set(&server, &cookie);
     reject_non_time_values(&server, &cookie);
@@ -218,6 +220,41 @@ fn create_the_side_plank_set(server: &DevServer, cookie: &str) {
             "momentum_reps": 0,
             "assisted_reps": 0
         })
+    );
+}
+
+fn reject_a_duration_only_update_for_a_unilateral_time_set(server: &DevServer, cookie: &str) {
+    let update = update_operation(
+        SIDE_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        SIDE_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![duration_segment(SIDE_SEGMENT_ID, 1, 30)],
+    );
+    let response = post(server, cookie, &update);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(server, SIDE_UPDATE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{SIDE_SET_ID}'")
+        )["completed"],
+        0
+    );
+    assert_eq!(
+        first_row(
+            server,
+            &format!(
+                "SELECT left_duration_seconds, right_duration_seconds \
+                 FROM set_segments WHERE id = '{SIDE_SEGMENT_ID}'"
+            )
+        ),
+        json!({"left_duration_seconds": 30, "right_duration_seconds": 40})
     );
 }
 

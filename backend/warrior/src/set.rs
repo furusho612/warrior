@@ -7,7 +7,7 @@
 //! 段の重量は、自重種目ではセットごとの加重を表す。記録した時点の体重は `sets` が持つ。
 
 use serde::Deserialize;
-use warrior_core::exercise::{ExerciseSnapshot, GripSelection, RecordMode};
+use warrior_core::exercise::{GripSelection, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::sql::{SqlStatement, SqlValue};
@@ -54,22 +54,6 @@ struct SetOwnerRow {
     training_id: String,
 }
 
-/// 段のある値の件数。
-#[derive(Debug, Deserialize)]
-struct SetValueRow {
-    /// 段の件数。
-    segments: i64,
-    /// 完了に必要な値を持つ段の件数。
-    ready: i64,
-}
-
-/// 種目の記録方式を読むための snapshot。
-#[derive(Debug, Deserialize)]
-struct ExerciseModeRow {
-    /// 記録時点の種目の内容の JSON。
-    snapshot: String,
-}
-
 /// 行の件数。
 #[derive(Debug, Deserialize)]
 struct CountRow {
@@ -111,14 +95,14 @@ pub(crate) async fn set_batch(
     if let Some(rejection) = precheck(db, user_id, validated).await? {
         return Ok(BatchOutcome::Reject(rejection));
     }
-    let mode = payload_record_mode(db, user_id, validated).await?;
+    let shape = validation::payload_exercise_shape(db, user_id, validated).await?;
     let ownership = match owner {
         OwnerCondition::Claim(terminal_id) | OwnerCondition::Owned(terminal_id) => {
             ExerciseOwnership::Terminal(terminal_id)
         }
         OwnerCondition::Finished => ExerciseOwnership::Finished,
     };
-    let Some(data) = set_statements(user_id, validated, mode, ownership, now) else {
+    let Some(data) = set_statements(user_id, validated, shape, ownership, now) else {
         return Ok(BatchOutcome::Reject(response(
             ErrorCode::BadRequest,
             "operation is invalid",
@@ -181,12 +165,13 @@ async fn precheck_create(
     training_id: &str,
     payload: &SetCreatePayload,
 ) -> Result<Option<Response>> {
-    let Some(mode) = exercise_mode(db, user_id, training_id, &payload.training_exercise_id).await?
+    let Some(shape) =
+        validation::exercise_shape(db, user_id, training_id, &payload.training_exercise_id).await?
     else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    if mode == RecordMode::Time && has_non_time_values(&payload.segments) {
-        return Ok(Some(time_value_rejection()));
+    if shape.mode == RecordMode::Time && validation::has_non_time_values(&payload.segments) {
+        return Ok(Some(validation::time_value_rejection()));
     }
     if let Some(existing) = set_owner_row(db, user_id, &payload.set_id).await? {
         if existing.training_id != training_id
@@ -224,12 +209,22 @@ async fn precheck_update(
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    let Some(mode) = exercise_mode(db, user_id, training_id, &row.training_exercise_id).await?
+    let Some(shape) =
+        validation::exercise_shape(db, user_id, training_id, &row.training_exercise_id).await?
     else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    if mode == RecordMode::Time && has_non_time_values(&payload.segments) {
-        return Ok(Some(time_value_rejection()));
+    if shape.mode == RecordMode::Time && validation::has_non_time_values(&payload.segments) {
+        return Ok(Some(validation::time_value_rejection()));
+    }
+    if shape.mode == RecordMode::Time
+        && payload.completed
+        && !validation::segments_are_complete(&payload.segments, shape)
+    {
+        return Ok(Some(response(
+            ErrorCode::BadRequest,
+            "the set has no values to complete",
+        )));
     }
     if !drop_positions_allowed(
         db,
@@ -295,13 +290,14 @@ async fn precheck_complete(
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    let Some(mode) = exercise_mode(db, user_id, training_id, &row.training_exercise_id).await?
+    let Some(shape) =
+        validation::exercise_shape(db, user_id, training_id, &row.training_exercise_id).await?
     else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
     if payload.completed
         && row.completed == 0
-        && !completed_set_has_values(db, user_id, &payload.set_id, mode).await?
+        && !validation::completed_set_has_values(db, user_id, &payload.set_id, shape).await?
     {
         return Ok(Some(response(
             ErrorCode::BadRequest,
@@ -314,7 +310,7 @@ async fn precheck_complete(
 fn set_statements(
     user_id: &str,
     validated: &ValidatedOperation,
-    mode: Option<RecordMode>,
+    shape: Option<validation::ExerciseShape>,
     ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Option<SetData> {
@@ -323,12 +319,12 @@ fn set_statements(
     let applied = applied_exists(user_id, &operation.operation_id);
     match &validated.payload {
         ValidatedPayload::SetCreate(payload) => {
-            let mode = mode?;
+            let shape = shape?;
             let context = SegmentStatements {
                 user_id,
                 training_id,
                 set_id: &payload.set_id,
-                mode,
+                mode: shape.mode,
                 ownership,
                 applied: &applied,
                 now,
@@ -339,19 +335,30 @@ fn set_statements(
             })
         }
         ValidatedPayload::SetUpdate(payload) => {
-            let mode = mode?;
+            let shape = shape?;
             let context = SegmentStatements {
                 user_id,
                 training_id,
                 set_id: &payload.set_id,
-                mode,
+                mode: shape.mode,
                 ownership,
                 applied: &applied,
                 now,
             };
             Some(SetData {
-                main: update_set_statement(user_id, training_id, payload, mode, ownership, now),
-                children: segment_replace_statements(&context, &payload.segments),
+                main: update_set_statement(user_id, training_id, payload, ownership, now),
+                children: {
+                    let mut children = segment_replace_statements(&context, &payload.segments);
+                    children.push(update_completed_statement(
+                        user_id,
+                        training_id,
+                        payload,
+                        shape,
+                        ownership,
+                        &applied,
+                    ));
+                    children
+                },
             })
         }
         ValidatedPayload::SetDelete(payload) => Some(SetData {
@@ -430,16 +437,14 @@ fn update_set_statement(
     user_id: &str,
     training_id: &str,
     payload: &SetUpdatePayload,
-    mode: RecordMode,
     ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> SqlStatement {
     let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
-    let completed = payload.completed && segments_are_complete(&payload.segments, mode);
     let mut bindings = vec![
         SqlValue::Integer(payload.position),
         SqlValue::Text(payload.kind.as_str().to_owned()),
-        SqlValue::Integer(if completed { 1 } else { 0 }),
+        SqlValue::Integer(0),
         optional_real(payload.rpe),
         grip_json(payload.grip).unwrap_or(SqlValue::Null),
         optional_real(payload.body_weight_kg),
@@ -458,6 +463,44 @@ fn update_set_statement(
              AND training_exercise_id IN \
               (SELECT id FROM training_exercises WHERE training_id = ? AND user_id = ?) \
              AND {condition}"
+        ),
+        bindings,
+    )
+}
+
+/// 更新で置き換えた段を読み直し、セットの完了状態を決める。
+fn update_completed_statement(
+    user_id: &str,
+    training_id: &str,
+    payload: &SetUpdatePayload,
+    shape: validation::ExerciseShape,
+    ownership: ExerciseOwnership<'_>,
+    applied: &AppliedCondition,
+) -> SqlStatement {
+    let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
+    let mut bindings = vec![
+        SqlValue::Integer(if payload.completed { 1 } else { 0 }),
+        SqlValue::Text(payload.set_id.clone()),
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(payload.set_id.clone()),
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(training_id.to_owned()),
+        SqlValue::Text(user_id.to_owned()),
+    ];
+    bindings.append(&mut condition_bindings);
+    bindings.extend(applied.bindings.iter().cloned());
+    SqlStatement::new(
+        format!(
+            "UPDATE sets SET completed = CASE WHEN ? AND \
+              (SELECT COUNT(*) > 0 AND SUM({}) = COUNT(*) \
+               FROM set_segments WHERE set_id = ? AND user_id = ?) \
+              THEN 1 ELSE 0 END \
+             WHERE id = ? AND user_id = ? \
+             AND training_exercise_id IN \
+              (SELECT id FROM training_exercises WHERE training_id = ? AND user_id = ?) \
+             AND {condition} AND {}",
+            validation::readiness_case(shape),
+            applied.sql
         ),
         bindings,
     )
@@ -612,7 +655,7 @@ fn segment_insert_statement(
 ) -> SqlStatement {
     let (condition, mut condition_bindings) =
         ownership_condition(context.user_id, context.training_id, context.ownership);
-    let mut bindings = segment_bindings(
+    let mut bindings = segments::segment_bindings(
         context.user_id,
         context.set_id,
         segment,
@@ -644,61 +687,6 @@ fn segment_insert_statement(
         ),
         bindings,
     )
-}
-
-fn segment_bindings(
-    user_id: &str,
-    set_id: &str,
-    segment: &SetSegmentPayload,
-    mode: RecordMode,
-    now: &str,
-) -> Vec<SqlValue> {
-    let is_time = mode == RecordMode::Time;
-    let mut bindings = vec![
-        SqlValue::Text(segment.segment_id.clone()),
-        SqlValue::Text(user_id.to_owned()),
-        SqlValue::Text(set_id.to_owned()),
-        SqlValue::Integer(segment.position),
-        optional_real((!is_time).then_some(segment.weight_kg)),
-        optional_integer((!is_time).then(|| i64::from(segment.reps))),
-        SqlValue::Integer(if is_time {
-            0
-        } else {
-            i64::from(segment.momentum_reps)
-        }),
-        SqlValue::Integer(if is_time {
-            0
-        } else {
-            i64::from(segment.assisted_reps)
-        }),
-        optional_integer(if is_time {
-            segment.duration_seconds.map(i64::from)
-        } else {
-            None
-        }),
-    ];
-    for side in [segment.left.as_ref(), segment.right.as_ref()] {
-        let weight = if is_time {
-            None
-        } else {
-            side.map(|side| side.weight_kg)
-        };
-        let reps = if is_time {
-            None
-        } else {
-            side.map(|side| i64::from(side.reps))
-        };
-        bindings.push(optional_real(weight));
-        bindings.push(optional_integer(reps));
-        bindings.push(optional_integer(if is_time {
-            side.and_then(|side| side.duration_seconds).map(i64::from)
-        } else {
-            None
-        }));
-    }
-    bindings.push(SqlValue::Text(now.to_owned()));
-    bindings.push(SqlValue::Text(now.to_owned()));
-    bindings
 }
 
 /// 操作 ID を保存したことを表す条件。
@@ -786,69 +774,6 @@ async fn set_row(
         ],
     ))
     .await
-}
-
-/// 種目の記録方式を返す。種目がトレーニングに無いときは None。
-async fn exercise_mode(
-    db: &Db,
-    user_id: &str,
-    training_id: &str,
-    training_exercise_id: &str,
-) -> Result<Option<RecordMode>> {
-    let row = db
-        .first::<ExerciseModeRow>(&SqlStatement::new(
-            "SELECT snapshot FROM training_exercises \
-             WHERE id = ? AND user_id = ? AND training_id = ?",
-            vec![
-                SqlValue::Text(training_exercise_id.to_owned()),
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(training_id.to_owned()),
-            ],
-        ))
-        .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let snapshot = serde_json::from_str::<ExerciseSnapshot>(&row.snapshot).map_err(|error| {
-        worker::Error::RustError(format!("the exercise snapshot is invalid: {error}"))
-    })?;
-    Ok(Some(snapshot.record_mode))
-}
-
-/// 操作の対象の種目の記録方式を返す。段の値を作らない操作は None。
-async fn payload_record_mode(
-    db: &Db,
-    user_id: &str,
-    validated: &ValidatedOperation,
-) -> Result<Option<RecordMode>> {
-    let training_id = &validated.operation.training_id;
-    match &validated.payload {
-        ValidatedPayload::SetCreate(payload) => {
-            exercise_mode(db, user_id, training_id, &payload.training_exercise_id).await
-        }
-        ValidatedPayload::SetUpdate(payload) => {
-            let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
-                return Ok(None);
-            };
-            exercise_mode(db, user_id, training_id, &row.training_exercise_id).await
-        }
-        ValidatedPayload::SetComplete(payload) => {
-            let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
-                return Ok(None);
-            };
-            exercise_mode(db, user_id, training_id, &row.training_exercise_id).await
-        }
-        ValidatedPayload::Create(_)
-        | ValidatedPayload::Update(_)
-        | ValidatedPayload::SetDelete(_)
-        | ValidatedPayload::SetReorder(_)
-        | ValidatedPayload::ExerciseCreate(_)
-        | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_)
-        | ValidatedPayload::SupersetCreate(_)
-        | ValidatedPayload::SupersetDelete(_)
-        | ValidatedPayload::SupersetReorder(_) => Ok(None),
-    }
 }
 
 async fn set_owner_row(db: &Db, user_id: &str, set_id: &str) -> Result<Option<SetOwnerRow>> {
@@ -953,99 +878,6 @@ fn drop_position_rejection() -> Response {
     )
 }
 
-fn has_non_time_values(segments: &[SetSegmentPayload]) -> bool {
-    segments.iter().any(|segment| {
-        segment.weight_kg != 0.0
-            || segment.reps != 0
-            || segment.momentum_reps != 0
-            || segment.assisted_reps != 0
-            || [segment.left.as_ref(), segment.right.as_ref()]
-                .into_iter()
-                .flatten()
-                .any(|side| side.weight_kg != 0.0 || side.reps != 0)
-    })
-}
-
-fn time_value_rejection() -> Response {
-    response(
-        ErrorCode::BadRequest,
-        "a time set cannot store weight, reps, momentum, or assisted reps",
-    )
-}
-
-async fn completed_set_has_values(
-    db: &Db,
-    user_id: &str,
-    set_id: &str,
-    mode: RecordMode,
-) -> Result<bool> {
-    let sql = match mode {
-        RecordMode::Time => {
-            "SELECT COUNT(*) AS segments, \
-             COALESCE(SUM(CASE WHEN \
-              (left_weight_kg IS NULL AND left_reps IS NULL \
-               AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
-               AND right_reps IS NULL AND right_duration_seconds IS NULL) \
-              AND weight_kg IS NULL AND reps IS NULL AND momentum_reps = 0 \
-              AND assisted_reps = 0 AND duration_seconds > 0 THEN 1 \
-              WHEN left_duration_seconds > 0 AND right_duration_seconds > 0 \
-              AND left_weight_kg IS NULL AND left_reps IS NULL \
-              AND right_weight_kg IS NULL AND right_reps IS NULL \
-              AND weight_kg IS NULL AND reps IS NULL AND duration_seconds IS NULL \
-              AND momentum_reps = 0 AND assisted_reps = 0 THEN 1 \
-              ELSE 0 END), 0) AS ready \
-             FROM set_segments WHERE set_id = ? AND user_id = ?"
-        }
-        RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-            "SELECT COUNT(*) AS segments, \
-             COALESCE(SUM(CASE WHEN \
-              (left_weight_kg IS NULL AND left_reps IS NULL \
-               AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
-               AND right_reps IS NULL AND right_duration_seconds IS NULL) \
-              AND reps > 0 THEN 1 \
-              WHEN left_reps > 0 AND right_reps > 0 THEN 1 \
-              ELSE 0 END), 0) AS ready \
-             FROM set_segments WHERE set_id = ? AND user_id = ?"
-        }
-    };
-    let row = db
-        .first::<SetValueRow>(&SqlStatement::new(
-            sql,
-            vec![
-                SqlValue::Text(set_id.to_owned()),
-                SqlValue::Text(user_id.to_owned()),
-            ],
-        ))
-        .await?;
-    Ok(row.is_some_and(|row| row.segments > 0 && row.ready == row.segments))
-}
-
-fn segments_are_complete(segments: &[SetSegmentPayload], mode: RecordMode) -> bool {
-    !segments.is_empty()
-        && segments.iter().all(|segment| match mode {
-            RecordMode::Time => {
-                segment
-                    .duration_seconds
-                    .is_some_and(|duration| duration > 0)
-                    || (segment
-                        .left
-                        .as_ref()
-                        .and_then(|side| side.duration_seconds)
-                        .is_some_and(|duration| duration > 0)
-                        && segment
-                            .right
-                            .as_ref()
-                            .and_then(|side| side.duration_seconds)
-                            .is_some_and(|duration| duration > 0))
-            }
-            RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-                segment.reps > 0
-                    || (segment.left.as_ref().is_some_and(|side| side.reps > 0)
-                        && segment.right.as_ref().is_some_and(|side| side.reps > 0))
-            }
-        })
-}
-
 fn same_set_ids(current: &[String], ordered: &[String]) -> bool {
     let mut current = current.to_vec();
     let mut ordered = ordered.to_vec();
@@ -1068,6 +900,9 @@ fn optional_real(value: Option<f64>) -> SqlValue {
 fn optional_integer(value: Option<i64>) -> SqlValue {
     value.map_or(SqlValue::Null, SqlValue::Integer)
 }
+
+mod segments;
+mod validation;
 
 #[cfg(test)]
 mod tests;
