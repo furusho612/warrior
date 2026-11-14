@@ -7,6 +7,7 @@
 mod support;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use serde_json::Value;
 use support::DevServer;
@@ -156,8 +157,9 @@ fn req_lib_001_the_seed_covers_the_library_and_program_exercises() {
     assert_muscle_integrity(&exercises, &muscles);
     assert_kana_order(&exercises);
     assert_grip_options(&exercises);
+    assert_bodyweight_record_modes(&exercises);
     assert_exercise_type_validation(&exercises, &muscles);
-    assert_the_seed_is_idempotent(&server, &exercises, &muscles);
+    assert_the_seed_is_idempotent(&server, &exercises, &muscles, &units);
 }
 
 fn assert_seed_counts(exercises: &[SeedExercise], muscles: &[SeedMuscle]) {
@@ -174,7 +176,7 @@ fn assert_seed_counts(exercises: &[SeedExercise], muscles: &[SeedMuscle]) {
     assert_eq!(
         muscles.len(),
         281,
-        "the appendix has 122 primary and 159 secondary assignments"
+        "the seed has 122 primary and 159 secondary assignments; the appendix has 118 and 154"
     );
     assert_eq!(
         muscles
@@ -411,6 +413,13 @@ fn assert_representative_muscles(
     assert_muscles(
         exercises,
         by_exercise,
+        "アップライトロウ",
+        &["lateral_deltoid", "trapezius_upper"],
+        &["anterior_deltoid"],
+    );
+    assert_muscles(
+        exercises,
+        by_exercise,
         "ハンマーカール",
         &["biceps_brachii", "forearm"],
         &[],
@@ -567,7 +576,7 @@ fn assert_kana_order(exercises: &[SeedExercise]) {
     }
 }
 
-/// 長音を直前の母音に置き換え、SQLite の既定の文字列順でも五十音順になる読みにする。
+/// 長音を直前の母音に置き換えた並べ替え用のキーを作る。母音を取れないときは長音を残す。
 fn kana_sort_key(text: &str) -> String {
     let mut key = String::new();
     let mut previous = None;
@@ -640,6 +649,19 @@ fn assert_grip_options(exercises: &[SeedExercise]) {
     }
 }
 
+fn assert_bodyweight_record_modes(exercises: &[SeedExercise]) {
+    for exercise in exercises {
+        if exercise.equipment != "bodyweight" || exercise.record_mode == "time" {
+            continue;
+        }
+        assert_eq!(
+            exercise.record_mode, "bodyweight_and_reps",
+            "{} must record bodyweight and reps",
+            exercise.name
+        );
+    }
+}
+
 fn assert_exercise_type_validation(exercises: &[SeedExercise], muscles: &[SeedMuscle]) {
     let mut by_exercise = BTreeMap::<&str, Vec<&SeedMuscle>>::new();
     for muscle in muscles {
@@ -649,12 +671,10 @@ fn assert_exercise_type_validation(exercises: &[SeedExercise], muscles: &[SeedMu
             .push(muscle);
     }
     let mut ids = BTreeSet::new();
+    // やり方、注意点、コツは付録が定めない項目である。内容は 0075 が書く。
     for row in exercises {
         assert!(is_valid_uuid_v4(&row.id), "{} is not a UUID v4", row.id);
         assert!(ids.insert(row.id.as_str()), "{} is duplicated", row.id);
-        assert_eq!(row.instructions, "", "{} has an instruction", row.name);
-        assert_eq!(row.cautions, "", "{} has a caution", row.name);
-        assert_eq!(row.tips, "", "{} has a tip", row.name);
         let assignments = by_exercise
             .get(row.id.as_str())
             .map(|items| {
@@ -695,12 +715,34 @@ fn assert_the_seed_is_idempotent(
     server: &DevServer,
     exercises: &[SeedExercise],
     muscles: &[SeedMuscle],
+    units: &[SeedMuscleUnit],
 ) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../migrations/0009_exercise_master_seed.sql");
     server
-        .apply_migrations()
-        .expect("the migrations must apply a second time");
+        .execute_d1_file(&path)
+        .expect("the seed migration must be executable again");
+
     let after_exercises = seed_exercises(server);
     let after_muscles = seed_muscles(server);
+    let after_units = seed_muscle_units(server);
+    assert_eq!(after_exercises.len(), 106);
+    assert_eq!(after_units.len(), 24);
+    assert_eq!(after_muscles.len(), 281);
+    assert_eq!(
+        after_muscles
+            .iter()
+            .filter(|muscle| muscle.role == "primary")
+            .count(),
+        122
+    );
+    assert_eq!(
+        after_muscles
+            .iter()
+            .filter(|muscle| muscle.role == "secondary")
+            .count(),
+        159
+    );
     assert_eq!(
         after_exercises
             .iter()
@@ -712,13 +754,31 @@ fn assert_the_seed_is_idempotent(
             .collect::<BTreeSet<_>>()
     );
     assert_eq!(
+        after_units
+            .iter()
+            .map(|unit| unit.id.as_str())
+            .collect::<BTreeSet<_>>(),
+        units
+            .iter()
+            .map(|unit| unit.id.as_str())
+            .collect::<BTreeSet<_>>()
+    );
+    assert_eq!(
         after_muscles
             .iter()
-            .map(|muscle| (muscle.exercise_id.as_str(), muscle.muscle_id.as_str()))
+            .map(|muscle| (
+                muscle.exercise_id.as_str(),
+                muscle.muscle_id.as_str(),
+                muscle.role.as_str(),
+            ))
             .collect::<BTreeSet<_>>(),
         muscles
             .iter()
-            .map(|muscle| (muscle.exercise_id.as_str(), muscle.muscle_id.as_str()))
+            .map(|muscle| (
+                muscle.exercise_id.as_str(),
+                muscle.muscle_id.as_str(),
+                muscle.role.as_str(),
+            ))
             .collect::<BTreeSet<_>>()
     );
 }

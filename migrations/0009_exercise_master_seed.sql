@@ -1,5 +1,5 @@
 -- 種目マスターと筋肉の単位の初期データ。
--- 主働筋は種目の部位区分と同じ部位の筋肉を使い、補助筋は他の部位区分の筋肉を含む。
+-- 主働筋は部位区分の筋肉を 1 つ以上含み、主働筋と補助筋は他部位を含む。
 -- 説明は付録に無いため空にする。グリップの選択肢は付録のグリップの有無から作る。
 -- 15 本のプログラムは 103 種の範囲で組む。部位区分ごとの器具の網羅のため 3 種を追加する。
 
@@ -81,9 +81,9 @@ VALUES
 ('a7c4e2f0-0000-4000-8000-00000000002c', 'リアデルトフライ', 'りあでるとふらい', 'shoulders', 'machine', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 44, '[]'),
 ('a7c4e2f0-0000-4000-8000-00000000002d', 'ケーブルサイドレイズ', 'けーぶるさいどれいず', 'shoulders', 'cable', 'weight_and_reps', 'unilateral', 'none', NULL, '', '', '', 45, '[]'),
 ('a7c4e2f0-0000-4000-8000-00000000002e', 'フェイスプル', 'ふぇいすぷる', 'shoulders', 'cable', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 46, '[]'),
-('a7c4e2f0-0000-4000-8000-000000000068', 'パイクプッシュアップ', 'ぱいくぷっしゅあっぷ', 'shoulders', 'bodyweight', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 47, '[]'),
+('a7c4e2f0-0000-4000-8000-000000000068', 'パイクプッシュアップ', 'ぱいくぷっしゅあっぷ', 'shoulders', 'bodyweight', 'bodyweight_and_reps', 'bilateral', 'none', NULL, '', '', '', 47, '[]'),
 -- 二頭・前腕
-('a7c4e2f0-0000-4000-8000-00000000002f', 'EZ バーカール', 'いーぜっとばーかーる', 'biceps_forearm', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 48, '[]'),
+('a7c4e2f0-0000-4000-8000-00000000002f', 'EZ バーカール', 'いーじーばーかーる', 'biceps_forearm', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 48, '[]'),
 ('a7c4e2f0-0000-4000-8000-000000000030', 'バーベルカール', 'ばーべるかーる', 'biceps_forearm', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 49, '[]'),
 ('a7c4e2f0-0000-4000-8000-000000000031', 'リバースカール', 'りばーすかーる', 'biceps_forearm', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 50, '[]'),
 ('a7c4e2f0-0000-4000-8000-000000000032', 'インクラインダンベルカール', 'いんくらいんだんべるかーる', 'biceps_forearm', 'dumbbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 51, '[]'),
@@ -93,7 +93,7 @@ VALUES
 ('a7c4e2f0-0000-4000-8000-000000000036', 'リストカール', 'りすとかーる', 'biceps_forearm', 'dumbbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 55, '[]'),
 ('a7c4e2f0-0000-4000-8000-000000000037', 'プリーチャーカール', 'ぷりーちゃーかーる', 'biceps_forearm', 'machine', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 56, '[]'),
 ('a7c4e2f0-0000-4000-8000-000000000038', 'ケーブルカール', 'けーぶるかーる', 'biceps_forearm', 'cable', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 57, '[]'),
-('a7c4e2f0-0000-4000-8000-000000000069', 'インバーテッドカール', 'いんばーてっどかーる', 'biceps_forearm', 'bodyweight', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 58, '[]'),
+('a7c4e2f0-0000-4000-8000-000000000069', 'インバーテッドカール', 'いんばーてっどかーる', 'biceps_forearm', 'bodyweight', 'bodyweight_and_reps', 'bilateral', 'none', NULL, '', '', '', 58, '[]'),
 -- 三頭
 ('a7c4e2f0-0000-4000-8000-000000000039', 'スカルクラッシャー', 'すかるくらっしゃー', 'triceps', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 59, '[]'),
 ('a7c4e2f0-0000-4000-8000-00000000003a', 'ナローベンチプレス', 'なろーべんちぷれす', 'triceps', 'barbell', 'weight_and_reps', 'bilateral', 'none', NULL, '', '', '', 60, '[]'),

@@ -481,8 +481,6 @@ impl Exercise {
             {
                 return Err(ExerciseError::PrimaryMissing);
             }
-            // 部位区分は、その部位の筋肉を主働筋に 1 つ以上持つことで表す。
-            // 主働筋と補助筋は他の部位の筋肉を含む (PRD の「付録: 種目マスターの初期登録案」)。
             if !self.muscles.iter().any(|assignment| {
                 assignment.role == MuscleRole::Primary
                     && assignment.muscle.body_part() == self.body_part
