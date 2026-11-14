@@ -12,7 +12,7 @@ use super::{
     RecordSignals, StateSignals,
 };
 use crate::routes::navigate;
-use crate::storage::DiscardOutcome;
+use crate::storage::{DiscardOutcome, RestoreOutcome};
 use crate::sync;
 use crate::text::{text, Key};
 use crate::training_session as training_api;
@@ -207,19 +207,28 @@ async fn discard_set_operation(
         refresh_state(training_id, state_signals).await;
         return;
     };
-    if restore_discarded_set(
+    match restore_discarded_set(
         record,
         request.set_id.as_deref(),
+        request.training_exercise_id.as_deref(),
         request.operation_kind,
         request.sequence,
     )
     .await
     {
-        signals.tree_revision.set((signals.tree_revision)() + 1);
-    } else {
-        signals
-            .save_error
-            .set(Some(text(Key::RecordSetRestoreFailed).to_owned()));
+        Ok(RestoreOutcome::Restored) => {
+            signals.tree_revision.set((signals.tree_revision)() + 1);
+        }
+        Ok(RestoreOutcome::Deferred) => {
+            signals
+                .save_error
+                .set(Some(text(Key::RecordRestoreDeferred).to_owned()));
+        }
+        Err(()) => {
+            signals
+                .save_error
+                .set(Some(text(Key::RecordSetRestoreFailed).to_owned()));
+        }
     }
     refresh_state(training_id, state_signals).await;
 }
@@ -238,20 +247,29 @@ async fn discard_exercise_operation(
         refresh_state(training_id, state_signals).await;
         return;
     };
-    if restore_discarded_exercise(
+    match restore_discarded_exercise(
         record,
         request.training_exercise_id.as_deref(),
         request.operation_kind,
+        request.sequence,
     )
     .await
     {
-        signals
-            .exercise_revision
-            .set((signals.exercise_revision)() + 1);
-    } else {
-        signals
-            .save_error
-            .set(Some(text(Key::RecordExerciseRestoreFailed).to_owned()));
+        Ok(RestoreOutcome::Restored) => {
+            signals
+                .exercise_revision
+                .set((signals.exercise_revision)() + 1);
+        }
+        Ok(RestoreOutcome::Deferred) => {
+            signals
+                .save_error
+                .set(Some(text(Key::RecordRestoreDeferred).to_owned()));
+        }
+        Err(()) => {
+            signals
+                .save_error
+                .set(Some(text(Key::RecordExerciseRestoreFailed).to_owned()));
+        }
     }
     refresh_state(training_id, state_signals).await;
 }

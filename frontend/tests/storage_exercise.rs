@@ -9,7 +9,7 @@ use serde_json::json;
 use warrior_core::set_calc::SetKind;
 use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload};
 use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
-use warrior_frontend::storage::{DiscardOutcome, Store};
+use warrior_frontend::storage::{DiscardOutcome, RestoreOutcome, Store};
 use warrior_frontend::training_set::{self, SetValues};
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
@@ -332,6 +332,18 @@ async fn discarding_a_failed_exercise_create_removes_its_set_operations() {
         .save_set_complete(&completed, &set_complete)
         .await
         .expect("the set completion must be saved");
+    let ordered_sets = vec![set.set.id.clone()];
+    let set_reorder = training_set::reorder(TRAINING_ID, EXERCISE_ROW_ID, &ordered_sets)
+        .expect("the set reorder");
+    storage
+        .save_set_reorder(TRAINING_ID, EXERCISE_ROW_ID, &ordered_sets, &set_reorder)
+        .await
+        .expect("the set reorder must be saved");
+    let set_delete = training_set::delete(TRAINING_ID, &set.set.id).expect("the set delete");
+    storage
+        .save_set_delete(TRAINING_ID, &set.set.id, &set_delete)
+        .await
+        .expect("the set delete must be saved");
 
     let (other_set, other_set_create) =
         training_set::create(TRAINING_ID, OTHER_EXERCISE_ROW_ID, 1, &set_values(80.0, 8))
@@ -340,6 +352,15 @@ async fn discarding_a_failed_exercise_create_removes_its_set_operations() {
         .save_set_create(&other_set.set, &other_set.segment, &other_set_create)
         .await
         .expect("the other set must be saved");
+    let ordered_exercises = vec![OTHER_EXERCISE_ROW_ID.to_owned(), EXERCISE_ROW_ID.to_owned()];
+    storage
+        .save_training_exercise_reorder(
+            TRAINING_ID,
+            &ordered_exercises,
+            &exercise_reorder_operation(REORDER_EXERCISE_ID, &ordered_exercises),
+        )
+        .await
+        .expect("the exercise reorder must be saved");
 
     storage
         .mark_sending(CREATE_EXERCISE_ID)
@@ -373,6 +394,9 @@ async fn discarding_a_failed_exercise_create_removes_its_set_operations() {
         set_create.operation_id.as_str(),
         set_update.operation_id.as_str(),
         set_complete.operation_id.as_str(),
+        set_reorder.operation_id.as_str(),
+        set_delete.operation_id.as_str(),
+        REORDER_EXERCISE_ID,
     ] {
         assert!(
             !entries
@@ -559,6 +583,93 @@ async fn discarding_a_failed_exercise_delete_restores_only_the_target() {
             .memo,
         "draft"
     );
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn restoring_an_exercise_defers_for_a_newer_reorder() {
+    let storage = open(&database_name("restore-exercise-newer")).await;
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+    for (row_id, operation_id, position) in [
+        (EXERCISE_ROW_ID, CREATE_EXERCISE_ID, 1),
+        (OTHER_EXERCISE_ROW_ID, OTHER_CREATE_EXERCISE_ID, 2),
+    ] {
+        storage
+            .save_training_exercise_create(
+                &training_exercise_record(row_id, position),
+                &exercise_create_operation(operation_id, row_id, position),
+            )
+            .await
+            .expect("the exercise must be saved");
+        storage
+            .mark_success(operation_id)
+            .await
+            .expect("the exercise must succeed");
+    }
+
+    let delete = exercise_delete_operation(DELETE_EXERCISE_ID, EXERCISE_ROW_ID);
+    storage
+        .save_training_exercise_delete(TRAINING_ID, EXERCISE_ROW_ID, &delete)
+        .await
+        .expect("the delete must be saved");
+    storage
+        .mark_sending(DELETE_EXERCISE_ID)
+        .await
+        .expect("the delete must be sending");
+    storage
+        .mark_permanent_failure(DELETE_EXERCISE_ID)
+        .await
+        .expect("the delete must fail");
+    assert_eq!(
+        storage
+            .discard(DELETE_EXERCISE_ID)
+            .await
+            .expect("the discard must work"),
+        DiscardOutcome::OperationsRemoved
+    );
+
+    let ordered = vec![OTHER_EXERCISE_ROW_ID.to_owned()];
+    let reorder = exercise_reorder_operation(REORDER_EXERCISE_ID, &ordered);
+    storage
+        .save_training_exercise_reorder(TRAINING_ID, &ordered, &reorder)
+        .await
+        .expect("the reorder must be saved");
+
+    assert_eq!(
+        storage
+            .restore_training_exercise_with_outcome(
+                &two_exercise_server_record(),
+                EXERCISE_ROW_ID,
+                delete.sequence,
+            )
+            .await
+            .expect("the restore"),
+        RestoreOutcome::Deferred,
+        "a newer reorder must defer the restore"
+    );
+    let exercises = storage
+        .training_exercises(TRAINING_ID)
+        .await
+        .expect("the exercises must be readable");
+    assert_eq!(exercises.len(), 1);
+    assert_eq!(exercises[0].id, OTHER_EXERCISE_ROW_ID);
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox")
+        .iter()
+        .any(|entry| entry.operation.operation_id == reorder.operation_id));
 
     storage
         .clear_account()

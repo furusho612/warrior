@@ -5,15 +5,15 @@
 //! 一緒に消す。記録した時点の体重はセットの行が持ち、段の重量は自重種目では加重である。
 
 use warrior_core::sync::{
-    Operation, OperationKind, OutboxEntry, OutboxState, SetCompletePayload, SetCreatePayload,
-    SetDeletePayload, SetReorderPayload, SetUpdatePayload,
+    Operation, OperationKind, OutboxEntry, SetCompletePayload, SetCreatePayload, SetDeletePayload,
+    SetReorderPayload, SetUpdatePayload,
 };
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use wasm_bindgen::JsValue;
 use web_sys::{IdbObjectStore, IdbTransactionMode};
 
 use super::exercise::{enqueue_operation, read_rows};
-use super::{abort, indexeddb, outbox, Storage, StorageError, Store};
+use super::{abort, indexeddb, outbox, RestoreOutcome, Storage, StorageError, Store};
 
 /// 端末に保存した 1 つのセットと、その段。
 #[derive(Debug, Clone, PartialEq)]
@@ -306,15 +306,27 @@ impl Storage {
     }
 
     /// サーバーに保存済みの 1 つのセットと段を端末へ戻す。
-    ///
-    /// 破棄した操作より後の、同じセットの送信待ちの作成、更新、完了、削除があるときは、
-    /// 端末の値を上書きしない。
     pub async fn restore_set(
         &self,
         record: &TrainingRecord,
         set_id: &str,
         after_sequence: u64,
     ) -> Result<(), StorageError> {
+        self.restore_set_with_outcome(record, set_id, after_sequence)
+            .await
+            .map(|_| ())
+    }
+
+    /// サーバーに保存済みの 1 つのセットと段を端末へ戻し、見送ったかを返す。
+    ///
+    /// 破棄した操作より後の、同じセットの未解決の操作または同じ種目の並べ替えがあるときは、
+    /// 端末の値を上書きしない。
+    pub async fn restore_set_with_outcome(
+        &self,
+        record: &TrainingRecord,
+        set_id: &str,
+        after_sequence: u64,
+    ) -> Result<RestoreOutcome, StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
@@ -329,9 +341,14 @@ impl Storage {
         let segments = transaction.store(Store::SetSegments.name())?;
         let outbox_store = transaction.store(Store::Outbox.name())?;
         let entries = outbox::read(&outbox_store).await?;
-        if has_pending_set_change(&entries, set_id, after_sequence) {
+        let training_exercise_id = record
+            .sets
+            .iter()
+            .find(|set| set.id == set_id)
+            .map(|set| set.training_exercise_id.as_str());
+        if has_newer_set_change(&entries, set_id, training_exercise_id, after_sequence) {
             transaction.finish().await?;
-            return Ok(());
+            return Ok(RestoreOutcome::Deferred);
         }
         if let Err(error) = delete_set_rows_in(&sets, &segments, set_id).await {
             return abort(transaction, error).await;
@@ -350,20 +367,41 @@ impl Storage {
                 }
             }
         }
-        transaction.finish().await
+        transaction.finish().await?;
+        Ok(RestoreOutcome::Restored)
     }
 
     /// サーバーに保存済みのセットの位置を端末へ戻す。
     ///
     /// サーバーに無いセットは、端末だけにある未送信の行として残す。
     pub async fn restore_set_positions(&self, record: &TrainingRecord) -> Result<(), StorageError> {
+        self.restore_set_positions_with_outcome(record, None, 0)
+            .await
+            .map(|_| ())
+    }
+
+    /// サーバーに保存済みのセットの位置を端末へ戻し、見送ったかを返す。
+    pub async fn restore_set_positions_with_outcome(
+        &self,
+        record: &TrainingRecord,
+        training_exercise_id: Option<&str>,
+        after_sequence: u64,
+    ) -> Result<RestoreOutcome, StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::Sets.name()],
+            &[Store::Sets.name(), Store::Outbox.name()],
             IdbTransactionMode::Readwrite,
         )?;
         let sets = transaction.store(Store::Sets.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if training_exercise_id.is_some_and(|training_exercise_id| {
+            has_newer_set_reorder(&entries, training_exercise_id, after_sequence)
+        }) {
+            transaction.finish().await?;
+            return Ok(RestoreOutcome::Deferred);
+        }
         let rows = read_rows::<SetRecordRow>(&sets).await?;
         for row in rows {
             let Some(server) = record.sets.iter().find(|set| set.id == row.id) else {
@@ -376,7 +414,8 @@ impl Storage {
                 return abort(transaction, error).await;
             }
         }
-        transaction.finish().await
+        transaction.finish().await?;
+        Ok(RestoreOutcome::Restored)
     }
 }
 
@@ -419,29 +458,43 @@ pub(super) fn payload_set_id(operation: &Operation) -> Result<String, StorageErr
         .ok_or_else(|| StorageError::InvalidOperation("the operation has no set id".to_owned()))
 }
 
-/// 同じセットの、指定の順序より後の送信待ちの変更があるか。
+/// 同じセットの、指定の順序より後の未解決の変更があるか。
 ///
 /// 失敗した操作の破棄で、端末に残る未送信の値をサーバーの値で上書きしないために見る。
-fn has_pending_set_change(entries: &[OutboxEntry], set_id: &str, after_sequence: u64) -> bool {
-    entries.iter().any(|entry| {
-        entry.operation.sequence > after_sequence
+fn has_newer_set_change(
+    entries: &[OutboxEntry],
+    set_id: &str,
+    training_exercise_id: Option<&str>,
+    after_sequence: u64,
+) -> bool {
+    let same_set = entries.iter().any(|entry| {
+        let operation = &entry.operation;
+        operation.sequence > after_sequence
             && matches!(
-                entry.state,
-                OutboxState::Pending | OutboxState::Sending | OutboxState::Blocked
-            )
-            && matches!(
-                entry.operation.kind,
+                operation.kind,
                 OperationKind::SetCreate
                     | OperationKind::SetUpdate
                     | OperationKind::SetComplete
                     | OperationKind::SetDelete
             )
-            && entry
-                .operation
-                .payload
-                .get("set_id")
-                .and_then(|value| value.as_str())
-                == Some(set_id)
+            && super::discard::payload_text(operation, "set_id") == Some(set_id)
+    });
+    same_set
+        || training_exercise_id.is_some_and(|training_exercise_id| {
+            has_newer_set_reorder(entries, training_exercise_id, after_sequence)
+        })
+}
+
+fn has_newer_set_reorder(
+    entries: &[OutboxEntry],
+    training_exercise_id: &str,
+    after_sequence: u64,
+) -> bool {
+    entries.iter().any(|entry| {
+        entry.operation.sequence > after_sequence
+            && entry.operation.kind == OperationKind::SetReorder
+            && super::discard::payload_text(&entry.operation, "training_exercise_id")
+                == Some(training_exercise_id)
     })
 }
 
