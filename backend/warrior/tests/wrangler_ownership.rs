@@ -19,6 +19,9 @@ const ORIGIN: &str = "http://localhost:8787";
 const PORT: u16 = 8805;
 const RACE_UPDATE_PORT: u16 = 8807;
 const RACE_FINISH_PORT: u16 = 8808;
+const RESEND_PORT: u16 = 8809;
+const RACE_CREATE_PORT: u16 = 8810;
+const RACE_CLAIM_PORT: u16 = 8811;
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4601";
 const OTHER_USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4602";
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4610";
@@ -156,6 +159,19 @@ fn a_takeover_and_a_recording_update_never_leave_an_unapplied_operation() {
                 update.body
             ),
         }
+        let resent = post_sync(
+            &server,
+            &cookie_a,
+            &update_operation_for(&training_id, &update_id, 2, "race-a"),
+        );
+        if update.status == 200 {
+            assert_eq!(resent.status, 200, "{}", resent.body);
+            assert_eq!(status_of(&resent), "already_applied");
+            assert_eq!(applied_count(&server, &update_id), 1);
+        } else {
+            assert_eq!(resent.status, 403, "{}", resent.body);
+            assert_eq!(applied_count(&server, &update_id), 0);
+        }
     }
 }
 
@@ -207,6 +223,11 @@ fn a_takeover_and_a_finish_never_both_succeed() {
                 "SELECT finished_at, owner_terminal_id FROM training_sessions WHERE id = '{training_id}'"
             ),
         );
+        assert_eq!(
+            applied_training_count(&server, &training_id),
+            1,
+            "the finish and the takeover must not add operations"
+        );
         match finish.status {
             200 => {
                 assert_eq!(takeover.status, 409, "{}", takeover.body);
@@ -247,6 +268,225 @@ fn a_takeover_and_a_finish_never_both_succeed() {
             ),
         }
     }
+}
+
+/// 拒否された操作は操作 ID を残さず、同じ ID の再送も拒否される。
+///
+/// 終了後の更新は受理され、同じ ID の再送は適用済みとして成功する。
+#[test]
+fn a_rejected_operation_is_not_recorded_and_the_same_id_stays_rejected() {
+    let server = start_server_at(RESEND_PORT);
+    let (session_token, _, token_a, token_b) = seed(&server);
+    let cookie_a = terminal_cookie(&session_token, &token_a);
+    let cookie_b = terminal_cookie(&session_token, &token_b);
+
+    let training_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4c01";
+    let create_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4c02";
+    let rejected_update_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4c03";
+    let rejected_create_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4c04";
+    let applied_update_id = "3f2504e0-4f89-41d3-9a0c-0305e82c4c05";
+    let created = post_sync(
+        &server,
+        &cookie_a,
+        &create_operation_for(training_id, create_id, ""),
+    );
+    assert_eq!(created.status, 200, "{}", created.body);
+    let takeover = post(
+        &server,
+        &cookie_b,
+        &format!("/api/trainings/{training_id}/takeover"),
+    );
+    assert_eq!(takeover.status, 200, "{}", takeover.body);
+
+    let rejected = update_operation_for(training_id, rejected_update_id, 2, "rejected");
+    for _ in 0..2 {
+        let response = post_sync(&server, &cookie_a, &rejected);
+        assert_eq!(response.status, 403, "{}", response.body);
+    }
+    assert_eq!(applied_count(&server, rejected_update_id), 0);
+    assert_eq!(d1_memo(&server, training_id), "");
+
+    let rejected_create = create_operation_for(training_id, rejected_create_id, "rejected");
+    for _ in 0..2 {
+        let response = post_sync(&server, &cookie_a, &rejected_create);
+        assert_eq!(response.status, 403, "{}", response.body);
+    }
+    assert_eq!(applied_count(&server, rejected_create_id), 0);
+    assert_eq!(d1_memo(&server, training_id), "");
+
+    let finished = post(
+        &server,
+        &cookie_b,
+        &format!("/api/trainings/{training_id}/finish"),
+    );
+    assert_eq!(finished.status, 200, "{}", finished.body);
+
+    let applied = update_operation_for(training_id, applied_update_id, 3, "applied");
+    let first = post_sync(&server, &cookie_a, &applied);
+    assert_eq!(first.status, 200, "{}", first.body);
+    assert_eq!(status_of(&first), "applied");
+    assert_eq!(applied_count(&server, applied_update_id), 1);
+    assert_eq!(d1_memo(&server, training_id), "applied");
+
+    let again = post_sync(&server, &cookie_a, &applied);
+    assert_eq!(again.status, 200, "{}", again.body);
+    assert_eq!(status_of(&again), "already_applied");
+    assert_eq!(applied_count(&server, applied_update_id), 1);
+    assert_eq!(d1_memo(&server, training_id), "applied");
+}
+
+/// 記録中の作成と引き継ぎが重なっても、0 行の作成は操作 ID を残さない。
+#[test]
+fn a_takeover_and_a_second_create_never_leave_an_unapplied_operation() {
+    let server = start_server_at(RACE_CREATE_PORT);
+    let (session_token, _, token_a, token_b) = seed(&server);
+    let cookie_a = terminal_cookie(&session_token, &token_a);
+    let cookie_b = terminal_cookie(&session_token, &token_b);
+
+    for round in 0..6u8 {
+        let training_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c4d{round:02x}");
+        let base_create_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c4e{round:02x}");
+        let second_create_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c4f{round:02x}");
+        let created = post_sync(
+            &server,
+            &cookie_a,
+            &create_operation_for(&training_id, &base_create_id, ""),
+        );
+        assert_eq!(created.status, 200, "{}", created.body);
+        let second_create = create_operation_for(&training_id, &second_create_id, "race-create");
+
+        let (create, takeover) = std::thread::scope(|scope| {
+            let create = scope.spawn(|| post_sync(&server, &cookie_a, &second_create));
+            let takeover = scope.spawn(|| {
+                post(
+                    &server,
+                    &cookie_b,
+                    &format!("/api/trainings/{training_id}/takeover"),
+                )
+            });
+            (
+                create.join().expect("the create must finish"),
+                takeover.join().expect("the takeover must finish"),
+            )
+        });
+
+        assert_eq!(takeover.status, 200, "{}", takeover.body);
+        let resent = post_sync(&server, &cookie_a, &second_create);
+        match create.status {
+            200 => {
+                assert_eq!(status_of(&create), "applied");
+                assert_eq!(applied_count(&server, &second_create_id), 1);
+                assert_eq!(d1_memo(&server, &training_id), "race-create");
+                assert_eq!(resent.status, 200, "{}", resent.body);
+                assert_eq!(status_of(&resent), "already_applied");
+                assert_eq!(applied_count(&server, &second_create_id), 1);
+            }
+            403 => {
+                assert_eq!(
+                    serde_json::from_str::<Value>(&create.body).expect("an error body")["error"]
+                        ["code"],
+                    json!("forbidden")
+                );
+                assert_eq!(applied_count(&server, &second_create_id), 0);
+                assert_eq!(d1_memo(&server, &training_id), "");
+                assert_eq!(resent.status, 403, "{}", resent.body);
+                assert_eq!(applied_count(&server, &second_create_id), 0);
+            }
+            other => panic!(
+                "the create must be applied or rejected: {other} {}",
+                create.body
+            ),
+        }
+        assert_eq!(
+            first_row(
+                &server,
+                &format!(
+                    "SELECT owner_terminal_id FROM training_sessions WHERE id = '{training_id}'"
+                )
+            )["owner_terminal_id"],
+            json!(TERMINAL_B_ID)
+        );
+    }
+}
+
+/// 所有者の無い記録の claim が終了と競合しても、終了後の更新として適用される。
+#[test]
+fn a_claim_that_loses_to_the_finish_is_reapplied_after_the_finish() {
+    let server = start_server_at(RACE_CLAIM_PORT);
+    let (session_token, _, token_a, token_b) = seed(&server);
+    let cookie_a = terminal_cookie(&session_token, &token_a);
+    let cookie_b = terminal_cookie(&session_token, &token_b);
+
+    for round in 0..6u8 {
+        let training_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c50{round:02x}");
+        let update_id = format!("3f2504e0-4f89-41d3-9a0c-0305e82c51{round:02x}");
+        seed_a_recording_session_without_an_owner(&server, &training_id);
+        let update = update_operation_for(&training_id, &update_id, 2, "claim-a");
+
+        let (update_response, finish_response) = std::thread::scope(|scope| {
+            let update = scope.spawn(|| post_sync(&server, &cookie_a, &update));
+            let finish = scope.spawn(|| {
+                post(
+                    &server,
+                    &cookie_b,
+                    &format!("/api/trainings/{training_id}/finish"),
+                )
+            });
+            (
+                update.join().expect("the update must finish"),
+                finish.join().expect("the finish must finish"),
+            )
+        });
+
+        assert_eq!(
+            update_response.status, 200,
+            "the update must apply before or after the finish: {}",
+            update_response.body
+        );
+        assert_eq!(applied_count(&server, &update_id), 1);
+        let stored = first_row(
+            &server,
+            &format!(
+                "SELECT memo, finished_at, owner_terminal_id FROM training_sessions WHERE id = '{training_id}'"
+            ),
+        );
+        assert_eq!(stored["memo"], json!("claim-a"));
+        match finish_response.status {
+            200 => {
+                assert!(
+                    stored["finished_at"].as_str().is_some(),
+                    "a successful finish must store the finish time"
+                );
+                assert_eq!(stored["owner_terminal_id"], Value::Null);
+            }
+            403 => {
+                assert_eq!(
+                    serde_json::from_str::<Value>(&finish_response.body).expect("an error body")
+                        ["error"]["code"],
+                    json!("forbidden")
+                );
+                assert_eq!(
+                    stored["finished_at"],
+                    Value::Null,
+                    "a rejected finish must not finish the training"
+                );
+                assert_eq!(stored["owner_terminal_id"], json!(TERMINAL_A_ID));
+            }
+            other => panic!(
+                "the finish must be saved or rejected: {other} {}",
+                finish_response.body
+            ),
+        }
+    }
+}
+
+fn seed_a_recording_session_without_an_owner(server: &DevServer, training_id: &str) {
+    server
+        .execute_d1_json(&format!(
+            "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \
+             VALUES ('{training_id}', '{USER_ID}', '{DATE}', '{STARTED_AT}', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .expect("the recording session must be seeded");
 }
 
 fn start_server_at(port: u16) -> DevServer {
@@ -801,6 +1041,25 @@ fn applied_count(server: &DevServer, operation_id: &str) -> i64 {
             "SELECT COUNT(*) AS count FROM applied_operations WHERE operation_id = '{operation_id}'"
         ),
     )
+}
+
+fn applied_training_count(server: &DevServer, training_id: &str) -> i64 {
+    count(
+        server,
+        &format!(
+            "SELECT COUNT(*) AS count FROM applied_operations WHERE training_id = '{training_id}'"
+        ),
+    )
+}
+
+fn d1_memo(server: &DevServer, training_id: &str) -> String {
+    first_row(
+        server,
+        &format!("SELECT memo FROM training_sessions WHERE id = '{training_id}'"),
+    )["memo"]
+        .as_str()
+        .expect("a stored memo")
+        .to_owned()
 }
 
 fn first_row(server: &DevServer, sql: &str) -> Value {

@@ -15,7 +15,7 @@ pub enum TrainingApiError {
     Rejected,
     /// トレーニングが見つからない。
     NotFound,
-    /// ほかの端末が記録中のトレーニングを編集しようとした。
+    /// 編集権が無い、または記録の状態が変わった。
     Forbidden,
     /// 終了済みのトレーニングは引き継げない。
     Conflict,

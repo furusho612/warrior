@@ -1,7 +1,7 @@
 //! IndexedDB の保存、送信待ちの列、編集権を失った記録、サーバーの記録での置き換え、
 //! 移行、アカウント削除のブラウザのテスト。
 //!
-//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`。
+//! 対応する要求: `REQ-NFR-003`、`REQ-NFR-004`、`REQ-NFR-005`、`REQ-NFR-010`、`REQ-NFR-015`。
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
 //! 永続ストレージの拒否を強制する API はないため、`request_persistence` の結果に
 //! かかわらず保存が続くことで、保存が許可の結果に依存しないことを確かめる。
@@ -196,6 +196,12 @@ fn server_record(training_id: &str, memo: &str) -> TrainingRecord {
         }]
     }))
     .expect("the server record must deserialize")
+}
+
+fn finished_server_record(training_id: &str, memo: &str) -> TrainingRecord {
+    let mut record = server_record(training_id, memo);
+    record.session.finished_at = Some("2026-11-12T04:00:00Z".to_owned());
+    record
 }
 
 /// メモをサーバーが受理した状態のトレーニングを作る。
@@ -1622,6 +1628,47 @@ async fn forbidden_trainings_are_sorted_and_only_a_takeover_clears_them() {
         vec![OTHER_TRAINING_ID.to_owned()],
         "a takeover must clear only the taken training"
     );
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn reloading_a_finished_session_clears_the_forbidden_mark() {
+    let name = database_name("forbidden-finished");
+    let storage = open(&name).await;
+    storage
+        .mark_training_forbidden(TRAINING_ID)
+        .await
+        .expect("the training must be marked");
+    storage
+        .mark_training_forbidden(OTHER_TRAINING_ID)
+        .await
+        .expect("the other training must be marked");
+
+    storage
+        .replace_session_tree(
+            &finished_server_record(TRAINING_ID, "finished"),
+            ReplacePurpose::Reload,
+        )
+        .await
+        .expect("the reload must replace the tree");
+    assert_eq!(
+        storage
+            .forbidden_trainings()
+            .await
+            .expect("the meta store must be readable"),
+        vec![OTHER_TRAINING_ID.to_owned()],
+        "a finished training must be editable on every terminal after a reload"
+    );
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.finished_at.as_deref(), Some("2026-11-12T04:00:00Z"));
 
     storage
         .clear_account()

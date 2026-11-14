@@ -147,21 +147,40 @@ pub async fn takeover(request: Request, context: RouteContext<()>) -> Result<Res
 
 /// 編集権の更新が 0 行だった引き継ぎを拒否する。
 ///
-/// 判定の後、更新の前にほかの端末が終了した場合は 409 を返す。
+/// 判定の後、更新の前にほかの端末が終了した場合は 409、状態が変わった場合は
+/// 再試行できる 403 を返す。
 async fn reject_takeover(db: &Db, training_id: &str, user_id: &str) -> Result<Response> {
-    let Some(state) = load_state(db, training_id, user_id).await? else {
-        return Ok(response(ErrorCode::NotFound, "resource not found"));
-    };
-    if state.finished_at.is_some() {
-        return Ok(response(
+    let state = load_state(db, training_id, user_id).await?;
+    match takeover_rejection(state.as_ref()) {
+        TakeoverRejection::Finished => Ok(response(
             ErrorCode::Conflict,
             "the finished training cannot be taken over",
-        ));
+        )),
+        TakeoverRejection::Changed => Ok(response(
+            ErrorCode::Forbidden,
+            "the training changed while taking over",
+        )),
+        TakeoverRejection::Missing => Ok(response(ErrorCode::NotFound, "resource not found")),
     }
-    Ok(response(
-        ErrorCode::Conflict,
-        "the training changed while taking over",
-    ))
+}
+
+/// 0 行だった引き継ぎの拒否。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TakeoverRejection {
+    /// ほかの端末が終了した。
+    Finished,
+    /// 記録中だが、判定の後に状態が変わった。
+    Changed,
+    /// 行が無い。
+    Missing,
+}
+
+fn takeover_rejection(state: Option<&SessionStateRow>) -> TakeoverRejection {
+    match state {
+        None => TakeoverRejection::Missing,
+        Some(state) if state.finished_at.is_some() => TakeoverRejection::Finished,
+        Some(_) => TakeoverRejection::Changed,
+    }
 }
 
 async fn load_state(db: &Db, training_id: &str, user_id: &str) -> Result<Option<SessionStateRow>> {
@@ -308,7 +327,10 @@ fn invalid_stored_data(error: StoredRecordError) -> worker::Error {
 mod tests {
     use serde_json::json;
 
-    use super::{stored_session, SessionRecordRow, StoredRecordError};
+    use super::{
+        stored_session, takeover_rejection, SessionRecordRow, SessionStateRow, StoredRecordError,
+        TakeoverRejection,
+    };
     use warrior_core::training_session::SessionSource;
 
     fn row() -> SessionRecordRow {
@@ -383,5 +405,22 @@ mod tests {
             stored_session(row),
             Err(StoredRecordError::InvalidPersonalBests)
         );
+    }
+
+    #[test]
+    fn a_zero_row_takeover_distinguishes_the_finish_from_a_changed_state() {
+        let recording = SessionStateRow { finished_at: None };
+        let finished = SessionStateRow {
+            finished_at: Some("2026-11-12T04:00:00Z".to_owned()),
+        };
+        assert_eq!(
+            takeover_rejection(Some(&recording)),
+            TakeoverRejection::Changed
+        );
+        assert_eq!(
+            takeover_rejection(Some(&finished)),
+            TakeoverRejection::Finished
+        );
+        assert_eq!(takeover_rejection(None), TakeoverRejection::Missing);
     }
 }

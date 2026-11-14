@@ -67,13 +67,13 @@ impl std::error::Error for StorageError {}
 
 /// サーバーに保存済みの記録で端末の木を置き換える目的。
 ///
-/// 引き継ぎだけが編集権を失った記録を消す。読み直しは閲覧のみの端末で行うため、
-/// 編集権を失った記録を残したままサーバーの内容だけを反映する。
+/// 引き継ぎは編集権を失った記録を消す。読み直しは閲覧のみの端末で行い、
+/// 記録中は編集権を失った記録を残し、終了済みは消す。終了後はどの端末も編集できる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplacePurpose {
     /// 編集権をこの端末へ引き継ぐ。
     Takeover,
-    /// サーバーに保存済みの内容を読み直す。
+    /// サーバーに保存済みの内容を読み直す。終了済みの記録は編集権を失った記録を消す。
     Reload,
 }
 
@@ -579,7 +579,7 @@ impl Storage {
     ///
     /// 引き継ぎと、閲覧のみの端末の読み直しで使う。トレーニングの木の古い行と、
     /// そのトレーニングの送信待ちの操作を削除してから、応答の行だけを書く (ADR-002)。
-    /// 編集権を失った記録を消すのは引き継ぎだけである。
+    /// 編集権を失った記録を消すのは引き継ぎと、終了済みの記録の読み直しである。
     pub async fn replace_session_tree(
         &self,
         record: &TrainingRecord,
@@ -721,7 +721,7 @@ async fn replace_session_tree_steps(
         .collect::<Vec<_>>();
     put_rows(transaction, Store::SupersetMembers, &members).await?;
 
-    if purpose == ReplacePurpose::Takeover {
+    if purpose == ReplacePurpose::Takeover || record.session.finished_at.is_some() {
         let meta = transaction.store(Store::Meta.name())?;
         outbox::clear_forbidden(&meta, training_id).await?;
     }

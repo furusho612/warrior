@@ -3,8 +3,9 @@
 //! 対応する要求: `REQ-NFR-015`、`REQ-NFR-006`。
 //! Chrome の 2 つの WebDriver セッションは別のプロファイルを使うため、Cookie と IndexedDB を
 //! 共有しない。開始した端末だけが編集でき、ほかの端末は閲覧のみになり、引き継いだ端末が
-//! 編集できること、元の端末が書き込みと終了で 403 になり閲覧のみになること、読み直しで
-//! 閲覧のみが解けないこと、同じ利用者でログインし直すと編集権に再接続することを確かめる。
+//! 編集できること、書き込みと終了の 403 で閲覧のみになること、記録中の読み直しでは
+//! 閲覧のみが解けず、終了後の読み直しでは解けること、同じ利用者でログインし直すと
+//! 編集権に再接続することを確かめる。
 //! 端末トークンが応答とログに出ないことも確かめる。
 //! SafariDriver は 1 つのブラウザを共有し、プロファイルを分けられないため対象外とする。
 //! ほかの E2E と同時に走れるよう、Worker は 8805、テスト専用の OIDC の提供者は 8806 を使う。
@@ -88,6 +89,8 @@ async fn the_starting_terminal_edits_and_the_other_terminal_takes_over() {
 
     finish_as_the_losing_terminal(&driver_a, &server, &training_id).await;
     reload_the_server_record(&driver_a, &server, &training_id).await;
+    finish_as_the_owner(&driver_b, &server, &training_id).await;
+    reload_the_finished_record(&driver_a, &server, &training_id).await;
 
     check_terminal_tokens(&driver_a, &driver_b, &server, &training_id).await;
     switch_account_and_drop_the_old_terminal(&driver_b, &server, &provider).await;
@@ -203,7 +206,7 @@ async fn finish_as_the_losing_terminal(driver: &WebDriver, server: &DevServer, t
     wait_for_disabled(driver, "textarea[data-memo]").await;
 }
 
-/// 閲覧のみになった後で読み直しても、閲覧のみのままで、入力と終了は無効のままである。
+/// 閲覧のみになった後で読み直しても、記録中は閲覧のみのままで、入力と終了は無効のままである。
 async fn reload_the_server_record(driver: &WebDriver, server: &DevServer, training_id: &str) {
     driver
         .find(By::Css("[data-reload-server]"))
@@ -223,10 +226,84 @@ async fn reload_the_server_record(driver: &WebDriver, server: &DevServer, traini
     );
 }
 
+/// 編集権を持つ端末が終了する。
+async fn finish_as_the_owner(driver: &WebDriver, server: &DevServer, training_id: &str) {
+    driver
+        .find(By::Css("button[data-finish]"))
+        .await
+        .expect("the finish button must exist")
+        .click()
+        .await
+        .expect("the finish button must be clickable");
+    browser::wait_for_route(driver, "/summary/:training_id").await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !is_finished(server, training_id) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the owner's finish did not finish the training"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// 終了済みの記録を読み直すと、閲覧のみが解けて入力と終了が有効になる。
+async fn reload_the_finished_record(driver: &WebDriver, server: &DevServer, training_id: &str) {
+    driver
+        .find(By::Css("[data-reload-server]"))
+        .await
+        .expect("the reload button must exist")
+        .click()
+        .await
+        .expect("the reload button must be clickable");
+    wait_for_enabled(driver, "textarea[data-memo]").await;
+    wait_for_enabled(driver, "button[data-finish]").await;
+    wait_for_absent(driver, "[data-view-only]").await;
+    assert_eq!(
+        d1_memo(server, training_id),
+        "A のメモBC",
+        "reloading must not change the server"
+    );
+}
+
+async fn wait_for_enabled(driver: &WebDriver, selector: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if element_disabled(driver, selector).await == Some(false) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{selector} did not become enabled"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+async fn wait_for_absent(driver: &WebDriver, selector: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let present = browser::eval_json(
+            driver,
+            "const done = arguments[arguments.length - 1]; \
+             done(JSON.stringify(document.querySelector(arguments[0]) !== null));",
+            vec![json!(selector)],
+        )
+        .await;
+        if present == json!(false) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{selector} did not disappear"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 async fn wait_for_disabled(driver: &WebDriver, selector: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
-        if element_disabled(driver, selector).await {
+        if element_disabled(driver, selector).await == Some(true) {
             return;
         }
         assert!(
@@ -237,7 +314,7 @@ async fn wait_for_disabled(driver: &WebDriver, selector: &str) {
     }
 }
 
-async fn element_disabled(driver: &WebDriver, selector: &str) -> bool {
+async fn element_disabled(driver: &WebDriver, selector: &str) -> Option<bool> {
     browser::eval_json(
         driver,
         "const element = document.querySelector(arguments[0]); \
@@ -246,7 +323,7 @@ async fn element_disabled(driver: &WebDriver, selector: &str) -> bool {
         vec![json!(selector)],
     )
     .await
-        == json!(true)
+    .as_bool()
 }
 
 fn is_finished(server: &DevServer, training_id: &str) -> bool {

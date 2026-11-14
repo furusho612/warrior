@@ -12,6 +12,7 @@ use warrior_core::sync::{
     validate_operation, Operation, OperationKind, SessionCreatePayload, SessionUpdatePayload,
     ValidatedPayload,
 };
+use worker::d1::D1Result;
 use worker::{console_error, Request, Response, Result, RouteContext};
 
 use crate::auth::session;
@@ -25,7 +26,7 @@ struct AppliedRow {
     training_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct SessionOwnerRow {
     user_id: String,
     owner_terminal_id: Option<String>,
@@ -120,11 +121,7 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
-    let Some(result) = results.get(1) else {
-        console_error!("the batch returned no result for the write");
-        return Ok(response(ErrorCode::Internal, "internal error"));
-    };
-    let changed = match changed_rows(result) {
+    let changed = match batch_changes(&results) {
         Ok(changed) => changed,
         Err(error) => {
             console_error!("failed to read the changed rows: {error}");
@@ -132,36 +129,109 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         }
     };
     if changed == 0 {
-        return reject_unapplied(&db, &authenticated.id, &operation).await;
+        return reject_or_reapply(&db, &authenticated.id, &operation, &validated, &now).await;
     }
 
     status_response("applied")
 }
 
-/// 書き込みが 0 行だった batch の操作の記録を取り消し、拒否の応答を返す。
+/// batch の最初の文が変更した行数を返す。最初の文はトレーニングへの適用である。
+fn batch_changes(results: &[D1Result]) -> Result<usize> {
+    let result = results
+        .first()
+        .ok_or_else(|| worker::Error::RustError("the batch returned no result".into()))?;
+    changed_rows(result)
+}
+
+/// 適用が 0 行だったときに、再取得した行から次の応答を決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ZeroChangeOutcome {
+    /// 終了済みである。終了後の更新として再適用する。
+    ReapplyFinished,
+    /// 同じ利用者の行をほかの端末が所有している。
+    Forbidden,
+    /// 行が無い、または別の利用者の行である。
+    NotFound,
+}
+
+fn zero_change_outcome(
+    kind: OperationKind,
+    session: Option<&SessionOwnerRow>,
+    user_id: &str,
+) -> ZeroChangeOutcome {
+    match kind {
+        OperationKind::TrainingSessionCreate => match create_rejection(session, user_id) {
+            CreateRejection::Forbidden => ZeroChangeOutcome::Forbidden,
+            CreateRejection::NotFound => ZeroChangeOutcome::NotFound,
+        },
+        OperationKind::TrainingSessionUpdate => match session {
+            Some(session) if session.user_id == user_id && session.finished_at.is_some() => {
+                ZeroChangeOutcome::ReapplyFinished
+            }
+            Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
+            _ => ZeroChangeOutcome::NotFound,
+        },
+    }
+}
+
+/// 適用が 0 行だった操作を、再取得した行から拒否するか、終了後の更新として再適用する。
 ///
 /// 判定の後、文を実行するまでにほかの端末が所有者を変えるか終了していると、
-/// 更新の条件が 0 行になる。このとき操作 ID を残すと、同じ操作の再送が適用済みに見える。
-async fn reject_unapplied(db: &Db, user_id: &str, operation: &Operation) -> Result<Response> {
-    let statement = SqlStatement::new(
-        "DELETE FROM applied_operations WHERE operation_id = ?",
-        vec![SqlValue::Text(operation.operation_id.clone())],
-    );
-    db.run(&statement).await?;
-    if operation.kind == OperationKind::TrainingSessionCreate {
-        let session = session_row(db, &operation.training_id).await?;
-        return Ok(match create_rejection(session.as_ref(), user_id) {
-            CreateRejection::Forbidden => response(
-                ErrorCode::Forbidden,
-                "the training is being edited on another terminal",
-            ),
-            CreateRejection::NotFound => response(ErrorCode::NotFound, "resource not found"),
-        });
+/// 更新の条件が 0 行になる。所有者の無い記録を claim している間に終了した場合は、
+/// 終了後の更新として適用できる。
+async fn reject_or_reapply(
+    db: &Db,
+    user_id: &str,
+    operation: &Operation,
+    validated: &warrior_core::sync::ValidatedOperation,
+    now: &str,
+) -> Result<Response> {
+    let session = session_row(db, &operation.training_id).await?;
+    match zero_change_outcome(operation.kind, session.as_ref(), user_id) {
+        ZeroChangeOutcome::ReapplyFinished => {
+            let ValidatedPayload::Update(payload) = &validated.payload else {
+                return Ok(response(ErrorCode::BadRequest, "operation is invalid"));
+            };
+            reapply_finished_update(db, user_id, operation, payload, now).await
+        }
+        ZeroChangeOutcome::Forbidden => Ok(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        )),
+        ZeroChangeOutcome::NotFound => Ok(response(ErrorCode::NotFound, "resource not found")),
     }
-    Ok(response(
-        ErrorCode::Forbidden,
-        "the training is being edited on another terminal",
-    ))
+}
+
+/// 終了済みのトレーニングに、更新を終了後の書き込みとして適用する。
+async fn reapply_finished_update(
+    db: &Db,
+    user_id: &str,
+    operation: &Operation,
+    payload: &SessionUpdatePayload,
+    now: &str,
+) -> Result<Response> {
+    let statements = update_statements(user_id, OwnerCondition::Finished, operation, payload, now);
+    let results = match db.batch(&statements).await {
+        Ok(results) => results,
+        Err(error) => {
+            console_error!("failed to reapply the update: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    let changed = match batch_changes(&results) {
+        Ok(changed) => changed,
+        Err(error) => {
+            console_error!("failed to read the changed rows of the reapplied update: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    if changed == 0 {
+        return Ok(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        ));
+    }
+    status_response("applied")
 }
 
 /// 0 行だった作成の拒否。
@@ -326,7 +396,6 @@ fn create_statements(
     now: &str,
 ) -> Vec<SqlStatement> {
     vec![
-        applied_statement(user_id, operation, now),
         SqlStatement::new(
             "INSERT INTO training_sessions \
              (id, user_id, date, started_at, memo, source_kind, routine_id, program_day_id, \
@@ -358,13 +427,18 @@ fn create_statements(
                 SqlValue::Text(now.to_owned()),
             ],
         ),
+        applied_statement(user_id, operation, now),
     ]
 }
 
+/// 直前の適用が変更した行があるときだけ、操作 ID を保存する。
+///
+/// `changes()` は同じ batch の直前の文が変更した行数を返す。適用と操作 ID の保存を
+/// 1 つの batch に入れ、0 行の適用では操作 ID を残さない (ADR-002、ADR-015)。
 fn applied_statement(user_id: &str, operation: &Operation, now: &str) -> SqlStatement {
     SqlStatement::new(
         "INSERT INTO applied_operations (operation_id, user_id, training_id, kind, applied_at) \
-         VALUES (?, ?, ?, ?, ?)",
+         SELECT ?, ?, ?, ?, ? WHERE changes() > 0",
         vec![
             SqlValue::Text(operation.operation_id.clone()),
             SqlValue::Text(user_id.to_owned()),
@@ -387,8 +461,8 @@ fn update_statements(
     now: &str,
 ) -> Vec<SqlStatement> {
     vec![
-        applied_statement(user_id, operation, now),
         update_statement(user_id, owner, operation, payload, now),
+        applied_statement(user_id, operation, now),
     ]
 }
 
@@ -447,8 +521,8 @@ mod tests {
     use warrior_core::training_session::SessionSource;
 
     use super::{
-        create_rejection, create_statements, owner_condition, update_statements, write_decision,
-        CreateRejection, OwnerCondition, SessionOwnerRow,
+        create_statements, owner_condition, update_statements, write_decision, zero_change_outcome,
+        OwnerCondition, SessionOwnerRow, ZeroChangeOutcome,
     };
 
     const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -500,30 +574,71 @@ mod tests {
     }
 
     #[test]
-    fn an_unapplied_create_hides_a_foreign_training_and_rejects_an_owned_one() {
-        let same_user = SessionOwnerRow {
+    fn a_zero_change_operation_reapplies_only_a_finished_update() {
+        let recording = SessionOwnerRow {
             user_id: USER_ID.to_owned(),
             owner_terminal_id: Some("another-terminal".to_owned()),
             finished_at: None,
         };
-        let foreign_user = SessionOwnerRow {
+        let mut finished = recording.clone();
+        finished.finished_at = Some("2026-11-12T04:00:00Z".to_owned());
+        let foreign = SessionOwnerRow {
             user_id: "another-user".to_owned(),
             owner_terminal_id: Some(TERMINAL_ID.to_owned()),
-            finished_at: None,
+            finished_at: Some("2026-11-12T04:00:00Z".to_owned()),
         };
         assert_eq!(
-            create_rejection(Some(&same_user), USER_ID),
-            CreateRejection::Forbidden
+            zero_change_outcome(
+                OperationKind::TrainingSessionCreate,
+                Some(&recording),
+                USER_ID
+            ),
+            ZeroChangeOutcome::Forbidden
         );
         assert_eq!(
-            create_rejection(Some(&foreign_user), USER_ID),
-            CreateRejection::NotFound
+            zero_change_outcome(
+                OperationKind::TrainingSessionCreate,
+                Some(&foreign),
+                USER_ID
+            ),
+            ZeroChangeOutcome::NotFound
         );
-        assert_eq!(create_rejection(None, USER_ID), CreateRejection::NotFound);
+        assert_eq!(
+            zero_change_outcome(OperationKind::TrainingSessionCreate, None, USER_ID),
+            ZeroChangeOutcome::NotFound
+        );
+        assert_eq!(
+            zero_change_outcome(
+                OperationKind::TrainingSessionUpdate,
+                Some(&finished),
+                USER_ID
+            ),
+            ZeroChangeOutcome::ReapplyFinished
+        );
+        assert_eq!(
+            zero_change_outcome(
+                OperationKind::TrainingSessionUpdate,
+                Some(&recording),
+                USER_ID
+            ),
+            ZeroChangeOutcome::Forbidden
+        );
+        assert_eq!(
+            zero_change_outcome(
+                OperationKind::TrainingSessionUpdate,
+                Some(&foreign),
+                USER_ID
+            ),
+            ZeroChangeOutcome::NotFound
+        );
+        assert_eq!(
+            zero_change_outcome(OperationKind::TrainingSessionUpdate, None, USER_ID),
+            ZeroChangeOutcome::NotFound
+        );
     }
 
     #[test]
-    fn the_create_batch_saves_the_operation_the_session_and_its_owner() {
+    fn the_create_batch_applies_the_session_before_the_operation_id() {
         let statements = create_statements(
             USER_ID,
             TERMINAL_ID,
@@ -532,24 +647,25 @@ mod tests {
             "2026-11-12T00:00:00Z",
         );
         assert_eq!(statements.len(), 2);
-        assert!(statements[0].sql().contains("applied_operations"));
-        assert!(statements[1].sql().contains("ON CONFLICT(id)"));
-        assert!(statements[1].sql().contains("owner_terminal_id"));
-        assert!(statements[1]
+        assert!(statements[0].sql().contains("ON CONFLICT(id)"));
+        assert!(statements[0].sql().contains("owner_terminal_id"));
+        assert!(statements[0]
             .sql()
             .contains("training_sessions.owner_terminal_id = excluded.owner_terminal_id"));
-        assert!(statements[1]
+        assert!(statements[0]
             .sql()
             .contains("training_sessions.owner_terminal_id IS NULL"));
-        assert!(statements[1]
+        assert!(statements[0]
             .sql()
             .contains("training_sessions.finished_at IS NOT NULL"));
+        assert!(statements[1].sql().contains("applied_operations"));
+        assert!(statements[1].sql().contains("changes() > 0"));
         assert_eq!(
-            statements[1].bindings()[5],
+            statements[0].bindings()[5],
             SqlValue::Text("empty".to_owned())
         );
         assert_eq!(
-            statements[1].bindings()[9],
+            statements[0].bindings()[9],
             SqlValue::Text(TERMINAL_ID.to_owned())
         );
     }
@@ -564,21 +680,26 @@ mod tests {
             "2026-11-12T00:00:00Z",
         );
         assert_eq!(statements.len(), 2);
-        assert!(statements[0].sql().contains("applied_operations"));
-        assert!(statements[1].sql().contains("WHERE id = ? AND user_id = ?"));
-        assert!(statements[1].sql().contains("owner_terminal_id = ?"));
+        assert!(statements[0].sql().contains("WHERE id = ? AND user_id = ?"));
+        assert!(statements[0].sql().contains("owner_terminal_id = ?"));
         assert_eq!(
-            statements[1].bindings()[4],
+            statements[0].bindings()[4],
             SqlValue::Text(TRAINING_ID.to_owned())
         );
         assert_eq!(
-            statements[1].bindings()[5],
+            statements[0].bindings()[5],
             SqlValue::Text(USER_ID.to_owned())
         );
         assert_eq!(
-            statements[1].bindings()[6],
+            statements[0].bindings()[6],
             SqlValue::Text(TERMINAL_ID.to_owned()),
             "the owner condition takes the terminal id after the user and the training"
+        );
+        assert!(statements[1].sql().contains("applied_operations"));
+        assert!(statements[1].sql().contains("changes() > 0"));
+        assert_eq!(
+            statements[1].bindings()[0],
+            SqlValue::Text(OPERATION_ID.to_owned())
         );
     }
 
@@ -591,14 +712,14 @@ mod tests {
             &update_payload(),
             "2026-11-12T00:00:00Z",
         );
-        let sql = statements[1].sql();
+        let sql = statements[0].sql();
         assert!(sql.contains("owner_terminal_id = ?"));
         assert!(sql.contains("finished_at IS NULL AND owner_terminal_id IS NULL"));
         assert_eq!(
-            statements[1].bindings()[4],
+            statements[0].bindings()[4],
             SqlValue::Text(TERMINAL_ID.to_owned())
         );
-        assert_eq!(statements[1].bindings().len(), 7);
+        assert_eq!(statements[0].bindings().len(), 7);
     }
 
     #[test]
@@ -610,8 +731,8 @@ mod tests {
             &update_payload(),
             "2026-11-12T00:00:00Z",
         );
-        assert!(statements[1].sql().contains("finished_at IS NOT NULL"));
-        assert_eq!(statements[1].bindings().len(), 6);
+        assert!(statements[0].sql().contains("finished_at IS NOT NULL"));
+        assert_eq!(statements[0].bindings().len(), 6);
     }
 
     #[test]
