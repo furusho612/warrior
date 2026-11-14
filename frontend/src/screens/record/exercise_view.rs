@@ -1,12 +1,9 @@
-//! 記録画面の種目の状態と、セットの保存の処理。
+//! 記録画面の種目の状態と、セットの操作の処理。
 //!
-//! セットの入力は画面へすぐ反映し、端末内の保存は入力の版が変わるたびに行う。
+//! セットの入力は画面へすぐ反映し、端末内の保存は
+//! `frontend/src/screens/record/set_save.rs` のループが行う。
 //! セットの完了は `SetCompleted` を 1 回発行する。表示は
 //! `frontend/src/screens/record/exercises.rs` が担う。
-
-use std::cell::RefCell;
-use std::collections::HashSet;
-use std::rc::Rc;
 
 use dioxus::prelude::*;
 use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
@@ -20,6 +17,7 @@ use warrior_core::superset::{rest_timer_starts, SupersetMembers};
 use warrior_core::training_record::TrainingExerciseRecord;
 
 use super::set_events::{SetCompleted, SetCompletedEvents};
+use super::set_save::{save_set_loop, SetSaver};
 use super::sets::{
     kind_allowed, move_allowed, previous_values, Field, SegmentView, SetAction, SetView,
 };
@@ -59,22 +57,6 @@ pub(super) struct ExerciseView {
 
 fn is_lateral(snapshot: &ExerciseSnapshot) -> bool {
     snapshot.laterality == Laterality::Unilateral
-}
-
-/// セットの保存が同時に走らないようにする印。
-#[derive(Clone, Default)]
-pub(super) struct SetSaver {
-    in_flight: Rc<RefCell<HashSet<String>>>,
-}
-
-impl SetSaver {
-    fn start(&self, set_id: &str) -> bool {
-        self.in_flight.borrow_mut().insert(set_id.to_owned())
-    }
-
-    fn finish(&self, set_id: &str) {
-        self.in_flight.borrow_mut().remove(set_id);
-    }
 }
 
 /// 今回の入力から作った種目の合計。
@@ -406,76 +388,6 @@ pub(super) async fn add_set(
     sync::flush_in_background();
 }
 
-/// 入力の最新の値を端末内へ保存する。保存中に新しい入力があれば繰り返す。
-pub(super) async fn save_set_loop(
-    training_id: String,
-    set_id: String,
-    views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
-    saver: SetSaver,
-) {
-    if !saver.start(&set_id) {
-        return;
-    }
-    let lateral = lateral_for_set(views, &set_id);
-    while let Some(set) = find_set(views, &set_id) {
-        if let Some(key) = set.validation_error(lateral) {
-            set_error(error, key);
-            break;
-        }
-        let revision = set.revision;
-        let values = set.values(lateral);
-        let segment_records = set
-            .segments
-            .iter()
-            .map(|segment| segment.record.clone())
-            .collect::<Vec<_>>();
-        let (rows, operation) =
-            match training_set::update(&training_id, &set.record, &segment_records, &values) {
-                Ok(rows) => rows,
-                Err(_) => {
-                    set_error(error, Key::RecordSetSaveFailed);
-                    break;
-                }
-            };
-        let result = match storage::current().await {
-            Ok(storage) => {
-                storage
-                    .save_set_update(&rows.set, &rows.segments, &operation)
-                    .await
-            }
-            Err(error) => Err(error),
-        };
-        if result.is_err() {
-            set_error(error, Key::RecordSetSaveFailed);
-            break;
-        }
-        sync::flush_in_background();
-        match find_set(views, &set_id) {
-            None => {
-                saver.finish(&set_id);
-                return;
-            }
-            Some(latest) if latest.revision == revision => {
-                // 版を確かめてから保存の印を外すまでの間にも入力が届く。
-                // 印を外した後にもう一度確かめ、変わっていれば自分で続ける。
-                saver.finish(&set_id);
-                match find_set(views, &set_id) {
-                    None => return,
-                    Some(latest) if latest.revision == revision => return,
-                    _ => {
-                        if !saver.start(&set_id) {
-                            return;
-                        }
-                    }
-                }
-            }
-            Some(_) => {}
-        }
-    }
-    saver.finish(&set_id);
-}
-
 /// 前回の値をセットの行としてコピーする。
 pub(super) async fn copy_sets(
     training_id: String,
@@ -567,11 +479,15 @@ pub(super) async fn copy_sets(
 }
 
 /// セットの完了の状態を変え、完了したらイベントを 1 回発行する。
+///
+/// 完了の書き込みは、そのセットの実行中の保存が終わってから行う。完了の後ろに
+/// 値の更新を積むと、サーバーが完了済みのセットの更新を 409 で拒否するためである。
 pub(super) async fn complete_set(
     training_id: String,
     set_id: String,
     views: Signal<Vec<ExerciseView>>,
     error: Signal<Option<String>>,
+    saver: SetSaver,
     completed_events: SetCompletedEvents,
 ) {
     let Some((view, set)) = find_view_and_set(views, &set_id) else {
@@ -599,46 +515,31 @@ pub(super) async fn complete_set(
             return;
         }
     };
+    if completed {
+        // 保存のループを止めて、実行中の保存を待つ。画面の印も先に付けて、
+        // 待つ間の入力と保存を閉じる。
+        saver.stop(&set_id);
+        update_completed(views, &set_id, true);
+        saver.wait_finished(&set_id).await;
+    }
     let storage = match storage::current().await {
         Ok(storage) => storage,
         Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
+            abort_completion(views, &set_id, completed, &saver, error);
             return;
         }
     };
     // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
-    if completed {
-        let values = set.values(lateral);
-        let segments = set
-            .segments
-            .iter()
-            .map(|segment| segment.record.clone())
-            .collect::<Vec<_>>();
-        let (rows, update_operation) =
-            match training_set::update(&training_id, &set.record, &segments, &values) {
-                Ok(rows) => rows,
-                Err(_) => {
-                    set_error(error, Key::RecordSetSaveFailed);
-                    return;
-                }
-            };
-        if storage
-            .save_set_update(&rows.set, &rows.segments, &update_operation)
-            .await
-            .is_err()
-        {
-            set_error(error, Key::RecordSetSaveFailed);
-            return;
-        }
+    if completed && !save_completed_values(&storage, &training_id, &set, lateral, error).await {
+        abort_completion(views, &set_id, completed, &saver, error);
+        return;
     }
-    update_completed(views, &set_id, completed);
     if storage
         .save_set_complete(&updated, &operation)
         .await
         .is_err()
     {
-        update_completed(views, &set_id, !completed);
-        set_error(error, Key::RecordSetSaveFailed);
+        abort_completion(views, &set_id, completed, &saver, error);
         return;
     }
     if completed {
@@ -654,8 +555,58 @@ pub(super) async fn complete_set(
             set_id,
             starts_rest_timer,
         });
+    } else {
+        saver.resume(&set_id);
     }
     sync::flush_in_background();
+}
+
+/// 完了するセットの値の更新を端末内へ保存する。保存できたら true を返す。
+async fn save_completed_values(
+    storage: &storage::Storage,
+    training_id: &str,
+    set: &SetView,
+    lateral: bool,
+    error: Signal<Option<String>>,
+) -> bool {
+    let values = set.values(lateral);
+    let segments = set
+        .segments
+        .iter()
+        .map(|segment| segment.record.clone())
+        .collect::<Vec<_>>();
+    let (rows, operation) = match training_set::update(training_id, &set.record, &segments, &values)
+    {
+        Ok(rows) => rows,
+        Err(_) => {
+            set_error(error, Key::RecordSetSaveFailed);
+            return false;
+        }
+    };
+    if storage
+        .save_set_update(&rows.set, &rows.segments, &operation)
+        .await
+        .is_err()
+    {
+        set_error(error, Key::RecordSetSaveFailed);
+        return false;
+    }
+    true
+}
+
+/// 完了を書き込めなかったときに、画面の印と保存の停止を戻す。
+fn abort_completion(
+    views: Signal<Vec<ExerciseView>>,
+    set_id: &str,
+    completed: bool,
+    saver: &SetSaver,
+    error: Signal<Option<String>>,
+) {
+    if completed {
+        update_completed(views, set_id, false);
+        saver.resume(set_id);
+    }
+    set_error(error, Key::RecordSetSaveFailed);
 }
 
 fn update_completed(mut views: Signal<Vec<ExerciseView>>, set_id: &str, completed: bool) {
@@ -892,21 +843,6 @@ pub(super) async fn dissolve_superset(
     true
 }
 
-fn find_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<SetView> {
-    (views)()
-        .iter()
-        .flat_map(|view| view.sets.iter())
-        .find(|set| set.record.id == set_id)
-        .cloned()
-}
-
-fn lateral_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> bool {
-    (views)()
-        .iter()
-        .find(|view| view.sets.iter().any(|set| set.record.id == set_id))
-        .is_some_and(|view| is_lateral(&view.snapshot))
-}
-
 fn find_view_and_set(
     views: Signal<Vec<ExerciseView>>,
     set_id: &str,
@@ -919,7 +855,7 @@ fn find_view_and_set(
     None
 }
 
-fn set_error(mut error: Signal<Option<String>>, key: Key) {
+pub(super) fn set_error(mut error: Signal<Option<String>>, key: Key) {
     error.set(Some(text(key).to_owned()));
 }
 
@@ -978,6 +914,7 @@ pub(super) fn dispatch(
                 set_id,
                 views,
                 error,
+                saver,
                 completed_events,
             ));
         }

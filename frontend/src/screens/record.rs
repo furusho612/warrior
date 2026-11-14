@@ -32,6 +32,7 @@ mod personal_bests;
 mod set_drawer;
 mod set_events;
 mod set_inputs;
+mod set_save;
 mod sets;
 mod stopwatch;
 mod superset_panel;

@@ -5,10 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
-use web_sys::IdbObjectStore;
+use web_sys::{IdbObjectStore, IdbTransactionMode};
 
 use super::indexeddb::{self, from_js, get, to_js};
-use super::StorageError;
+use super::{abort, Storage, StorageError, Store};
 
 /// ストップウォッチを計る対象の側。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,4 +76,63 @@ pub(super) async fn clear(
     side: StopwatchSide,
 ) -> Result<(), StorageError> {
     indexeddb::delete_entry(meta, &JsValue::from_str(&key(set_id, side))).await
+}
+
+impl Storage {
+    /// ストップウォッチの開始時刻を端末内へ保存する。
+    pub async fn save_stopwatch_started_at(
+        &self,
+        set_id: &str,
+        side: StopwatchSide,
+        started_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Meta.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let meta = transaction.store(Store::Meta.name())?;
+        match save(&meta, set_id, side, started_at_ms).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
+    }
+
+    /// 保存したストップウォッチの開始時刻を返す。無ければ None。
+    pub async fn stopwatch_started_at(
+        &self,
+        set_id: &str,
+        side: StopwatchSide,
+    ) -> Result<Option<i64>, StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Meta.name()],
+            IdbTransactionMode::Readonly,
+        )?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let started_at = load(&meta, set_id, side).await?;
+        transaction.finish().await?;
+        Ok(started_at)
+    }
+
+    /// 保存したストップウォッチの開始時刻を消す。
+    pub async fn clear_stopwatch_started_at(
+        &self,
+        set_id: &str,
+        side: StopwatchSide,
+    ) -> Result<(), StorageError> {
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[Store::Meta.name()],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let meta = transaction.store(Store::Meta.name())?;
+        match clear(&meta, set_id, side).await {
+            Ok(()) => transaction.finish().await,
+            Err(error) => abort(transaction, error).await,
+        }
+    }
 }

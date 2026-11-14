@@ -17,10 +17,11 @@ use warrior_core::previous::{
 
 use super::exercise_view::{
     dispatch, dissolve_superset, exercise_diff, save_superset_group, training_difference,
-    ExerciseView, SetSaver, SupersetGroupView,
+    ExerciseView, SupersetGroupView,
 };
 use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
+use super::set_save::SetSaver;
 use super::sets::{format_number, set_kind_text, SelectedSet, SetAction, SetTable, SetView};
 use super::superset_panel::{SupersetCandidate, SupersetPanel};
 use super::RecordSignals;
