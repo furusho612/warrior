@@ -11,7 +11,10 @@ use crate::text::{text, Key};
 pub fn AppShell() -> Element {
     let current = router().current::<Route>();
     let route_name = crate::routes::route_name(&current);
-    let record = matches!(current, Route::Record {} | Route::RecordSession { .. });
+    let record = matches!(
+        current,
+        Route::Record {} | Route::RecordSession { .. } | Route::RecordExerciseSelect { .. }
+    );
 
     rsx! {
         div {

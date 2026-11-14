@@ -167,6 +167,7 @@ fn apply_record(record: &TrainingRecord, mut signals: RecordSignals) {
     signals.persisted_memo.set(record.session.memo.clone());
     signals.memo_revision.set((signals.memo_revision)() + 1);
     signals.session.set(Some(record.session.clone()));
+    signals.tree_revision.set((signals.tree_revision)() + 1);
 }
 
 /// 端末の記録を、サーバーに保存済みの記録で置き換える。

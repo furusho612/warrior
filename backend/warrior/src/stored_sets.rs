@@ -48,6 +48,8 @@ pub struct StoredExercise {
     pub snapshot: ExerciseSnapshot,
     /// 完了したセットの記録。
     pub sets: Vec<SetRecord>,
+    /// セットごとのグリップの選択の JSON。`sets` と同じ並びである。
+    pub set_grips: Vec<Option<String>>,
 }
 
 const SET_SEGMENT_COLUMNS: &str = "te.training_id AS training_id, \
@@ -228,6 +230,7 @@ fn build_training(
     let mut exercises = Vec::new();
     for group in groups {
         let mut sets = Vec::new();
+        let mut set_grips = Vec::new();
         for set in group.sets {
             if set.segments.is_empty() {
                 return Err(BuildSetsError::MissingSegments);
@@ -250,11 +253,13 @@ fn build_training(
             )
             .map_err(BuildSetsError::InvalidSetRecord)?;
             sets.push(record);
+            set_grips.push(set.grip);
         }
         exercises.push(StoredExercise {
             training_id: training_id.to_owned(),
             snapshot: group.snapshot,
             sets,
+            set_grips,
         });
     }
     Ok(exercises)

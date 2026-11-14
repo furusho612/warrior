@@ -21,7 +21,7 @@ use warrior_core::sync::{
     Operation, OperationKind, OutboxEntry, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
-use warrior_core::training_record::TrainingRecord;
+use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 
 pub mod indexeddb;
 pub mod outbox;
@@ -212,6 +212,28 @@ impl Storage {
         Ok(sessions.pop())
     }
 
+    /// トレーニングに追加した種目を位置の昇順で返す。
+    pub async fn training_exercises(
+        &self,
+        training_id: &str,
+    ) -> Result<Vec<TrainingExerciseRecord>, StorageError> {
+        let values = self.all_records(Store::TrainingExercises).await?;
+        let mut exercises = values
+            .iter()
+            .map(|value| {
+                serde_json::from_value::<TrainingExerciseRecord>(value.clone())
+                    .map_err(|error| StorageError::Serialize(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        exercises.retain(|exercise| exercise.training_id == training_id);
+        exercises.sort_by(|left, right| {
+            left.position
+                .cmp(&right.position)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(exercises)
+    }
+
     /// 送信待ちの列を順序の昇順で返す。
     pub async fn outbox_entries(&self) -> Result<Vec<OutboxEntry>, StorageError> {
         let database = self.database().await?;
@@ -364,6 +386,141 @@ impl Storage {
         transaction.finish().await
     }
 
+    /// トレーニングへの種目の追加とその操作を 1 つのトランザクションで保存する。
+    pub async fn save_training_exercise_create(
+        &self,
+        exercise: &TrainingExerciseRecord,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        if operation.kind != OperationKind::TrainingExerciseCreate
+            || operation.training_id != exercise.training_id
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not an exercise creation".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::TrainingExercises.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let exercises = transaction.store(Store::TrainingExercises.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+
+        if let Err(error) = indexeddb::put(&exercises, &indexeddb::to_js(exercise)?).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// トレーニングからの種目の削除とその操作を 1 つのトランザクションで保存する。
+    ///
+    /// 種目に属するセットと段、スーパーセットの参照も同じトランザクションで削除する。
+    pub async fn save_training_exercise_delete(
+        &self,
+        training_id: &str,
+        training_exercise_id: &str,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        if operation.kind != OperationKind::TrainingExerciseDelete
+            || operation.training_id != training_id
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not an exercise deletion".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::TrainingExercises.name(),
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::SupersetMembers.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let exercises = transaction.store(Store::TrainingExercises.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        let stored = read_exercise(&exercises, training_exercise_id).await?;
+        let Some(stored) = stored.filter(|exercise| exercise.training_id == training_id) else {
+            return Err(StorageError::InvalidOperation(
+                "the exercise does not exist in the training".to_owned(),
+            ));
+        };
+        if let Err(error) = delete_training_exercise_rows(&transaction, &stored.id).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// トレーニングの種目の並べ替えとその操作を 1 つのトランザクションで保存する。
+    pub async fn save_training_exercise_reorder(
+        &self,
+        training_id: &str,
+        ordered_ids: &[String],
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        if operation.kind != OperationKind::TrainingExerciseReorder
+            || operation.training_id != training_id
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not an exercise reorder".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::TrainingExercises.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let exercises = transaction.store(Store::TrainingExercises.name())?;
+        let stored = read_rows::<TrainingExerciseRecord>(&exercises).await?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        let now = crate::ids::now_iso();
+        for (index, id) in ordered_ids.iter().enumerate() {
+            let Some(exercise) = stored
+                .iter()
+                .find(|exercise| exercise.training_id == training_id && exercise.id == *id)
+            else {
+                continue;
+            };
+            let mut updated = exercise.clone();
+            updated.position = i64::try_from(index).unwrap_or(i64::MAX).saturating_add(1);
+            updated.updated_at = now.clone();
+            if let Err(error) = indexeddb::put(&exercises, &indexeddb::to_js(&updated)?).await {
+                return abort(transaction, error).await;
+            }
+        }
+        if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
     /// 終了したトレーニングのサマリーを端末内へ保存する。
     ///
     /// サマリーはサーバーが計算して保存した値であり、送信待ちの列には入れない。
@@ -398,7 +555,7 @@ impl Storage {
 
     /// 任意の記録用ストアに 1 件を書く。
     ///
-    /// 0021 のブラウザテスト用であり、0025 はセット用の型付き API を使う。
+    /// ブラウザテストの準備に使う。型付きの API があるストアには型付きの API を使う。
     pub async fn put_record(
         &self,
         store_name: Store,
@@ -418,7 +575,7 @@ impl Storage {
 
     /// 任意の記録用ストアのすべての行を読む。
     ///
-    /// 0021 のブラウザテスト用であり、0025 はセット用の型付き API を使う。
+    /// ブラウザテストの準備に使う。型付きの API があるストアには型付きの API を使う。
     pub async fn all_records(
         &self,
         store_name: Store,
@@ -761,6 +918,11 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
                 .map(|payload| payload.memo)
                 .map_err(|error| StorageError::Serialize(error.to_string()))
         }
+        OperationKind::TrainingExerciseCreate
+        | OperationKind::TrainingExerciseDelete
+        | OperationKind::TrainingExerciseReorder => Err(StorageError::InvalidOperation(
+            "the operation has no memo".to_owned(),
+        )),
     }
 }
 
@@ -778,11 +940,14 @@ async fn retry_steps(
     else {
         return Ok(());
     };
+    let target_is_update = target.operation.kind == OperationKind::TrainingSessionUpdate;
     let key = JsValue::from_str(&target.operation.training_id);
-    if let Some(value) = indexeddb::get(&sessions, &key).await? {
-        let session: SessionRecord = indexeddb::from_js(&value)?;
-        if target.operation.sequence <= session.confirmed_sequence {
-            return Ok(());
+    if target_is_update {
+        if let Some(value) = indexeddb::get(&sessions, &key).await? {
+            let session: SessionRecord = indexeddb::from_js(&value)?;
+            if target.operation.sequence <= session.confirmed_sequence {
+                return Ok(());
+            }
         }
     }
 
@@ -816,6 +981,9 @@ async fn discard_steps(
     if target.operation.kind == OperationKind::TrainingSessionCreate {
         delete_session_tree(transaction, &target.operation.training_id).await?;
         return Ok(DiscardOutcome::SessionDeleted);
+    }
+    if target.operation.kind != OperationKind::TrainingSessionUpdate {
+        return Ok(DiscardOutcome::OperationsRemoved);
     }
 
     let has_newer_update = updated.iter().any(|entry| {
@@ -867,6 +1035,12 @@ async fn mark_success_steps(
     }
     write_outbox_differences(&outbox_store, &entries, &updated).await?;
 
+    if !matches!(
+        target.operation.kind,
+        OperationKind::TrainingSessionCreate | OperationKind::TrainingSessionUpdate
+    ) {
+        return Ok(());
+    }
     let memo = payload_memo(&target.operation)?;
     let key = JsValue::from_str(&target.operation.training_id);
     if let Some(value) = indexeddb::get(&sessions, &key).await? {
@@ -897,6 +1071,35 @@ async fn write_outbox_differences(
         }
     }
     Ok(())
+}
+
+/// 新しい操作を送信待ちの列に加える。
+///
+/// 未解決の作成があれば、その作成を親にして Blocked で積む。親が成功して列から消えたら
+/// `mark_success` が Pending に戻す。
+async fn enqueue_operation(
+    outbox_store: &IdbObjectStore,
+    meta: &IdbObjectStore,
+    entries: &[OutboxEntry],
+    operation: &Operation,
+) -> Result<(), StorageError> {
+    let parent = unresolved_create(entries, &operation.training_id)
+        .map(|entry| entry.operation.operation_id.clone());
+    let state = if parent.is_some() {
+        OutboxState::Blocked
+    } else {
+        OutboxState::Pending
+    };
+    let mut stored = operation.clone();
+    stored.sequence = outbox::next_sequence(meta, &operation.training_id).await?;
+    stored.parent_operation_id = parent;
+    let entry = OutboxEntry {
+        operation: stored,
+        state,
+        attempts: 0,
+        attempted: false,
+    };
+    indexeddb::add(outbox_store, &indexeddb::to_js(&entry)?).await
 }
 
 #[derive(Deserialize)]
@@ -939,6 +1142,69 @@ async fn read_rows<T: serde::de::DeserializeOwned>(
         .collect()
 }
 
+async fn read_exercise(
+    store: &IdbObjectStore,
+    training_exercise_id: &str,
+) -> Result<Option<TrainingExerciseRecord>, StorageError> {
+    let value = indexeddb::get(store, &JsValue::from_str(training_exercise_id)).await?;
+    value
+        .as_ref()
+        .map(indexeddb::from_js::<TrainingExerciseRecord>)
+        .transpose()
+}
+
+/// 1 つの種目の行と、その種目に属するセット、段、スーパーセットの参照を削除する。
+async fn delete_training_exercise_rows(
+    transaction: &indexeddb::Transaction,
+    training_exercise_id: &str,
+) -> Result<(), StorageError> {
+    let sets_store = transaction.store(Store::Sets.name())?;
+    let sets = read_rows::<SetRow>(&sets_store).await?;
+    let set_ids = sets
+        .iter()
+        .filter(|row| row.training_exercise_id == training_exercise_id)
+        .map(|row| row.id.clone())
+        .collect::<Vec<_>>();
+    for id in &set_ids {
+        indexeddb::delete_entry(&sets_store, &JsValue::from_str(id)).await?;
+    }
+
+    let segments_store = transaction.store(Store::SetSegments.name())?;
+    let segments = read_rows::<SegmentRow>(&segments_store).await?;
+    for segment in segments.iter().filter(|row| set_ids.contains(&row.set_id)) {
+        indexeddb::delete_entry(&segments_store, &JsValue::from_str(&segment.id)).await?;
+    }
+
+    let members_store = transaction.store(Store::SupersetMembers.name())?;
+    let members = read_rows::<MemberRow>(&members_store).await?;
+    for member in members
+        .iter()
+        .filter(|row| row.training_exercise_id == training_exercise_id)
+    {
+        delete_member(
+            &members_store,
+            &member.superset_id,
+            &member.training_exercise_id,
+        )
+        .await?;
+    }
+
+    let exercises_store = transaction.store(Store::TrainingExercises.name())?;
+    indexeddb::delete_entry(&exercises_store, &JsValue::from_str(training_exercise_id)).await?;
+    Ok(())
+}
+
+async fn delete_member(
+    store: &IdbObjectStore,
+    superset_id: &str,
+    training_exercise_id: &str,
+) -> Result<(), StorageError> {
+    let key = Array::new();
+    key.push(&JsValue::from_str(superset_id));
+    key.push(&JsValue::from_str(training_exercise_id));
+    indexeddb::delete_entry(store, &key.into()).await
+}
+
 async fn delete_session_tree(
     transaction: &indexeddb::Transaction,
     training_id: &str,
@@ -954,29 +1220,7 @@ async fn delete_session_tree(
         .map(|row| row.id.clone())
         .collect::<Vec<_>>();
     for id in &exercise_ids {
-        indexeddb::delete_entry(&exercises_store, &JsValue::from_str(id)).await?;
-    }
-
-    let sets_store = transaction.store(Store::Sets.name())?;
-    let sets = read_rows::<SetRow>(&sets_store).await?;
-    let set_ids = sets
-        .iter()
-        .filter(|row| exercise_ids.contains(&row.training_exercise_id))
-        .map(|row| row.id.clone())
-        .collect::<Vec<_>>();
-    for id in &set_ids {
-        indexeddb::delete_entry(&sets_store, &JsValue::from_str(id)).await?;
-    }
-
-    let segments_store = transaction.store(Store::SetSegments.name())?;
-    let segments = read_rows::<SegmentRow>(&segments_store).await?;
-    let segment_ids = segments
-        .iter()
-        .filter(|row| set_ids.contains(&row.set_id))
-        .map(|row| row.id.clone())
-        .collect::<Vec<_>>();
-    for id in &segment_ids {
-        indexeddb::delete_entry(&segments_store, &JsValue::from_str(id)).await?;
+        delete_training_exercise_rows(transaction, id).await?;
     }
 
     let supersets_store = transaction.store(Store::Supersets.name())?;
@@ -995,10 +1239,12 @@ async fn delete_session_tree(
     for member in members.iter().filter(|row| {
         superset_ids.contains(&row.superset_id) || exercise_ids.contains(&row.training_exercise_id)
     }) {
-        let key = Array::new();
-        key.push(&JsValue::from_str(&member.superset_id));
-        key.push(&JsValue::from_str(&member.training_exercise_id));
-        indexeddb::delete_entry(&members_store, &key.into()).await?;
+        delete_member(
+            &members_store,
+            &member.superset_id,
+            &member.training_exercise_id,
+        )
+        .await?;
     }
     Ok(())
 }

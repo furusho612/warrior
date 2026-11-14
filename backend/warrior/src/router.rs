@@ -8,9 +8,11 @@ use worker::{Request, Response, Result, RouteContext, Router};
 use crate::account;
 use crate::auth::{oauth, passkey, session};
 use crate::calendar;
+use crate::library;
 use crate::sync;
 use crate::training_record;
 use crate::training_session;
+use crate::training_session_exercise;
 
 /// ヘルスチェックの経路の名前。
 pub const HEALTH_ROUTE_NAME: &str = "health";
@@ -30,6 +32,10 @@ pub const TRAINING_FINISH_ROUTE_NAME: &str = "training_finish";
 pub const TRAINING_SUMMARY_ROUTE_NAME: &str = "training_summary";
 /// サーバーに保存済みのトレーニングを返す経路の名前。
 pub const TRAINING_GET_ROUTE_NAME: &str = "training_get";
+/// 種目ごととトレーニング全体の前回を返す経路の名前。
+pub const TRAINING_PREVIOUS_ROUTE_NAME: &str = "training_previous";
+/// 種目ライブラリの一覧を返す経路の名前。
+pub const EXERCISES_ROUTE_NAME: &str = "exercises";
 /// トレーニングの編集権を引き継ぐ経路の名前。
 pub const TRAINING_TAKEOVER_ROUTE_NAME: &str = "training_takeover";
 /// カレンダーの月を返す経路の名前。
@@ -52,8 +58,13 @@ pub fn build_router() -> Router<'static, ()> {
         .post_async("/api/sync/operations", sync::apply_operation)
         .post_async("/api/trainings/:id/finish", training_session::finish)
         .get_async("/api/trainings/:id/summary", training_session::summary)
+        .get_async(
+            "/api/trainings/:id/previous",
+            training_session_exercise::previous,
+        )
         .get_async("/api/trainings/:id", training_record::get)
         .post_async("/api/trainings/:id/takeover", training_record::takeover)
+        .get_async("/api/exercises", library::exercises)
         .get_async("/api/calendar", calendar::month)
         .get_async("/api/calendar/:date", calendar::day)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
@@ -89,6 +100,9 @@ pub fn route_name(path: &str) -> &'static str {
     if path.starts_with("/api/trainings/") && path.ends_with("/summary") {
         return TRAINING_SUMMARY_ROUTE_NAME;
     }
+    if path.starts_with("/api/trainings/") && path.ends_with("/previous") {
+        return TRAINING_PREVIOUS_ROUTE_NAME;
+    }
     if path.starts_with("/api/calendar/") {
         return CALENDAR_DAY_ROUTE_NAME;
     }
@@ -105,6 +119,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/auth/logout" => LOGOUT_ROUTE_NAME,
         "/api/me" => ME_ROUTE_NAME,
         "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
+        "/api/exercises" => EXERCISES_ROUTE_NAME,
         "/api/calendar" => CALENDAR_MONTH_ROUTE_NAME,
         "/api/me/passkeys" => "passkeys_list",
         "/api/me/passkeys/:id" => "passkeys_delete",
@@ -138,10 +153,10 @@ mod tests {
     use super::{
         route_name, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME,
         LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
-        TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
-        TRAINING_TAKEOVER_ROUTE_NAME,
+        TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_PREVIOUS_ROUTE_NAME,
+        TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
     };
-    use super::{CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME};
+    use super::{CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISES_ROUTE_NAME};
 
     #[test]
     fn names_the_health_route() {
@@ -181,6 +196,10 @@ mod tests {
             TRAINING_SUMMARY_ROUTE_NAME
         );
         assert_eq!(
+            route_name("/api/trainings/3f2504e0-4f89-41d3-9a0c-0305e82c6601/previous"),
+            TRAINING_PREVIOUS_ROUTE_NAME
+        );
+        assert_eq!(
             route_name("/api/trainings/3f2504e0-4f89-41d3-9a0c-0305e82c6601"),
             TRAINING_GET_ROUTE_NAME
         );
@@ -202,6 +221,11 @@ mod tests {
             route_name("/api/calendar/2026-11-12"),
             CALENDAR_DAY_ROUTE_NAME
         );
+    }
+
+    #[test]
+    fn names_the_exercise_list_route() {
+        assert_eq!(route_name("/api/exercises"), EXERCISES_ROUTE_NAME);
     }
 
     #[test]

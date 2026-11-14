@@ -5,8 +5,8 @@
 //! テストは並列に走るため、データベースの名前をテストごとに分ける。
 //! 永続ストレージの拒否を強制する API はないため、`request_persistence` の結果に
 //! かかわらず保存が続くことで、保存が許可の結果に依存しないことを確かめる。
-//! セットと段は `put_record` で保存し、outbox の操作は作らない。0021 にはセットの
-//! 同期操作がなく、0025 が型付きの `save_set` を追加する。
+//! セットと段は `put_record` で保存し、outbox の操作は作らない。セットの同期操作は
+//! まだ無い。
 
 use std::cell::Cell;
 
@@ -18,7 +18,7 @@ use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionCreatePayload, SessionRecord,
     SessionUpdatePayload,
 };
-use warrior_core::training_record::TrainingRecord;
+use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 use warrior_core::training_session::{BestKind, PersonalBestItem, SessionSource};
 use warrior_frontend::storage::{
     request_persistence, DiscardOutcome, ReplacePurpose, Storage, StorageError, Store,
@@ -42,6 +42,16 @@ const OTHER_CREATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4306";
 const UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4303";
 const SECOND_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4304";
 const THIRD_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4305";
+const EXERCISE_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4307";
+const OTHER_EXERCISE_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4308";
+const CREATE_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4309";
+const OTHER_CREATE_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4310";
+const DELETE_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4311";
+const REORDER_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4312";
+const EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4313";
+const EXERCISE_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4314";
+const EXERCISE_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4315";
+const EXERCISE_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4316";
 
 fn database_name(test: &str) -> String {
     let sequence = SEQUENCE.with(|sequence| {
@@ -1792,6 +1802,224 @@ async fn replacing_a_session_tree_removes_the_old_rows_and_outbox_of_the_trainin
         .clear_account()
         .await
         .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn an_exercise_creation_and_deletion_use_the_outbox_and_remove_the_tree() {
+    let name = database_name("exercise-tree");
+    let storage = open(&name).await;
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+
+    let record = training_exercise_record(EXERCISE_ROW_ID, 1);
+    storage
+        .save_training_exercise_create(
+            &record,
+            &exercise_create_operation(CREATE_EXERCISE_ID, EXERCISE_ROW_ID, 1),
+        )
+        .await
+        .expect("the exercise must be saved");
+    let exercises = storage
+        .training_exercises(TRAINING_ID)
+        .await
+        .expect("the exercises must be readable");
+    assert_eq!(exercises.len(), 1);
+    assert_eq!(exercises[0].id, EXERCISE_ROW_ID);
+    assert_eq!(exercises[0].position, 1);
+    let entries = storage.outbox_entries().await.expect("the outbox");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].operation.kind,
+        OperationKind::TrainingExerciseCreate
+    );
+    assert_eq!(entries[0].operation.training_id, TRAINING_ID);
+
+    for (store, record) in [
+        (
+            Store::Sets,
+            json!({"id": EXERCISE_SET_ID, "training_exercise_id": EXERCISE_ROW_ID}),
+        ),
+        (
+            Store::SetSegments,
+            json!({"id": EXERCISE_SEGMENT_ID, "set_id": EXERCISE_SET_ID}),
+        ),
+        (
+            Store::SupersetMembers,
+            json!({"superset_id": EXERCISE_SUPERSET_ID, "training_exercise_id": EXERCISE_ROW_ID}),
+        ),
+    ] {
+        storage
+            .put_record(store, &record)
+            .await
+            .expect("the exercise tree must be saved");
+    }
+
+    storage
+        .save_training_exercise_delete(
+            TRAINING_ID,
+            EXERCISE_ROW_ID,
+            &exercise_delete_operation(DELETE_EXERCISE_ID, EXERCISE_ROW_ID),
+        )
+        .await
+        .expect("the exercise must be deleted");
+    assert!(storage
+        .training_exercises(TRAINING_ID)
+        .await
+        .expect("the exercises must be readable")
+        .is_empty());
+    assert!(record_ids(&storage, Store::Sets).await.is_empty());
+    assert!(record_ids(&storage, Store::SetSegments).await.is_empty());
+    assert!(storage
+        .all_records(Store::SupersetMembers)
+        .await
+        .expect("the members must be readable")
+        .is_empty());
+    let entries = storage.outbox_entries().await.expect("the outbox");
+    assert_eq!(entries.len(), 2);
+    assert!(entries
+        .iter()
+        .any(|entry| entry.operation.kind == OperationKind::TrainingExerciseDelete));
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn an_exercise_reorder_updates_the_local_positions_and_the_outbox() {
+    let name = database_name("exercise-reorder");
+    let storage = open(&name).await;
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+    storage
+        .mark_success(CREATE_ID)
+        .await
+        .expect("the create must succeed");
+
+    for (record, operation) in [
+        (
+            training_exercise_record(EXERCISE_ROW_ID, 1),
+            exercise_create_operation(CREATE_EXERCISE_ID, EXERCISE_ROW_ID, 1),
+        ),
+        (
+            training_exercise_record(OTHER_EXERCISE_ROW_ID, 2),
+            exercise_create_operation(OTHER_CREATE_EXERCISE_ID, OTHER_EXERCISE_ROW_ID, 2),
+        ),
+    ] {
+        storage
+            .save_training_exercise_create(&record, &operation)
+            .await
+            .expect("the exercise must be saved");
+    }
+
+    let ordered = vec![OTHER_EXERCISE_ROW_ID.to_owned(), EXERCISE_ROW_ID.to_owned()];
+    storage
+        .save_training_exercise_reorder(
+            TRAINING_ID,
+            &ordered,
+            &exercise_reorder_operation(REORDER_EXERCISE_ID, &ordered),
+        )
+        .await
+        .expect("the reorder must be saved");
+    let exercises = storage
+        .training_exercises(TRAINING_ID)
+        .await
+        .expect("the exercises must be readable");
+    assert_eq!(
+        exercises
+            .iter()
+            .map(|exercise| (exercise.id.as_str(), exercise.position))
+            .collect::<Vec<_>>(),
+        vec![(OTHER_EXERCISE_ROW_ID, 1), (EXERCISE_ROW_ID, 2)]
+    );
+    let entries = storage.outbox_entries().await.expect("the outbox");
+    assert!(entries
+        .iter()
+        .any(|entry| entry.operation.kind == OperationKind::TrainingExerciseReorder));
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+fn exercise_snapshot() -> serde_json::Value {
+    json!({
+        "exercise_id": EXERCISE_ID,
+        "name": "ベンチプレス",
+        "body_part": "chest",
+        "muscles": [{"muscle": "pectoralis_major_middle", "role": "primary"}],
+        "record_mode": "weight_and_reps",
+        "laterality": "bilateral",
+        "grip_mode": "none",
+        "grip_options": []
+    })
+}
+
+fn training_exercise_record(id: &str, position: i64) -> TrainingExerciseRecord {
+    TrainingExerciseRecord {
+        id: id.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        exercise_id: EXERCISE_ID.to_owned(),
+        snapshot: exercise_snapshot().to_string(),
+        position,
+        created_at: "2026-11-12T03:00:00Z".to_owned(),
+        updated_at: "2026-11-12T03:00:00Z".to_owned(),
+    }
+}
+
+fn exercise_create_operation(operation_id: &str, row_id: &str, position: i64) -> Operation {
+    Operation {
+        operation_id: operation_id.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 0,
+        kind: OperationKind::TrainingExerciseCreate,
+        parent_operation_id: None,
+        payload: json!({
+            "training_id": TRAINING_ID,
+            "training_exercise_id": row_id,
+            "exercise_id": EXERCISE_ID,
+            "snapshot": exercise_snapshot(),
+            "position": position
+        }),
+    }
+}
+
+fn exercise_delete_operation(operation_id: &str, row_id: &str) -> Operation {
+    Operation {
+        operation_id: operation_id.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 0,
+        kind: OperationKind::TrainingExerciseDelete,
+        parent_operation_id: None,
+        payload: json!({
+            "training_id": TRAINING_ID,
+            "training_exercise_id": row_id
+        }),
+    }
+}
+
+fn exercise_reorder_operation(operation_id: &str, ordered_ids: &[String]) -> Operation {
+    Operation {
+        operation_id: operation_id.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 0,
+        kind: OperationKind::TrainingExerciseReorder,
+        parent_operation_id: None,
+        payload: json!({
+            "training_id": TRAINING_ID,
+            "ordered_ids": ordered_ids
+        }),
+    }
 }
 
 async fn record_ids(storage: &Storage, store: Store) -> Vec<String> {

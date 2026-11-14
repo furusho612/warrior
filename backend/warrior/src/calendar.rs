@@ -375,6 +375,7 @@ mod tests {
                 training_id: "training-b".to_owned(),
                 snapshot: snapshot_of("plank", "プランク", BodyPart::Abs, RecordMode::Time),
                 sets: vec![time_record("plank", 60)],
+                set_grips: vec![None],
             },
             StoredExercise {
                 training_id: "training-a".to_owned(),
@@ -388,6 +389,7 @@ mod tests {
                     weight_record("bench", SetKind::Warmup, 60.0, 10),
                     weight_record("bench", SetKind::Normal, 100.0, 5),
                 ],
+                set_grips: vec![None, None],
             },
         ];
         let detail = build_day(date, sessions, exercises);

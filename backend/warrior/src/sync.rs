@@ -100,6 +100,18 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
             )
             .await?
         }
+        OperationKind::TrainingExerciseCreate
+        | OperationKind::TrainingExerciseDelete
+        | OperationKind::TrainingExerciseReorder => {
+            exercise_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
     };
     let statements = match statements {
         BatchOutcome::Apply(statements) => statements,
@@ -168,6 +180,12 @@ fn zero_change_outcome(
             Some(session) if session.user_id == user_id && session.finished_at.is_some() => {
                 ZeroChangeOutcome::ReapplyFinished
             }
+            Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
+            _ => ZeroChangeOutcome::NotFound,
+        },
+        OperationKind::TrainingExerciseCreate
+        | OperationKind::TrainingExerciseDelete
+        | OperationKind::TrainingExerciseReorder => match session {
             Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
             _ => ZeroChangeOutcome::NotFound,
         },
@@ -339,6 +357,127 @@ async fn update_batch(
         payload,
         now,
     )))
+}
+
+/// 種目の追加、削除、並べ替えの batch を組み立てる。
+///
+/// 先頭の文で編集権を確認してトレーニングの更新時刻を進め、その変更の後に操作 ID を
+/// 保存する。並べ替えが同じ順序でも、また削除が 0 行でも、操作 ID を残して再送を止める。
+async fn exercise_batch(
+    db: &Db,
+    user_id: &str,
+    terminal_id: Option<&str>,
+    validated: &warrior_core::sync::ValidatedOperation,
+    now: &str,
+) -> Result<BatchOutcome> {
+    let Some(session) = session_row(db, &validated.operation.training_id).await? else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    };
+    if session.user_id != user_id {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    }
+    let finished = session.finished_at.is_some();
+    let decision = write_decision(finished, session.owner_terminal_id.as_deref(), terminal_id);
+    let Some(owner) = owner_condition(decision, terminal_id) else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        )));
+    };
+    let Some(data) = exercise_statements(user_id, validated, now) else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::BadRequest,
+            "operation is invalid",
+        )));
+    };
+    let mut statements = vec![
+        ownership_guard_statement(user_id, owner, &validated.operation.training_id, now),
+        applied_statement(user_id, &validated.operation, now),
+    ];
+    statements.extend(data);
+    Ok(BatchOutcome::Apply(statements))
+}
+
+/// 種目の操作の種別に対応するデータの文を返す。
+fn exercise_statements(
+    user_id: &str,
+    validated: &warrior_core::sync::ValidatedOperation,
+    now: &str,
+) -> Option<Vec<SqlStatement>> {
+    let operation = &validated.operation;
+    match &validated.payload {
+        ValidatedPayload::ExerciseCreate(payload) => Some(
+            crate::training_session_exercise::create_statements(
+                user_id,
+                &operation.training_id,
+                payload,
+                now,
+            )
+            .ok()?,
+        ),
+        ValidatedPayload::ExerciseDelete(payload) => {
+            Some(crate::training_session_exercise::delete_statements(
+                user_id,
+                &operation.training_id,
+                payload,
+            ))
+        }
+        ValidatedPayload::ExerciseReorder(payload) => {
+            Some(crate::training_session_exercise::reorder_statements(
+                user_id,
+                &operation.training_id,
+                payload,
+                now,
+            ))
+        }
+        ValidatedPayload::Create(_) | ValidatedPayload::Update(_) => None,
+    }
+}
+
+/// 編集権を確認し、トレーニングの更新時刻を進める文。
+fn ownership_guard_statement(
+    user_id: &str,
+    owner: OwnerCondition<'_>,
+    training_id: &str,
+    now: &str,
+) -> SqlStatement {
+    let user = SqlValue::Text(user_id.to_owned());
+    let training = SqlValue::Text(training_id.to_owned());
+    let updated_at = SqlValue::Text(now.to_owned());
+    match owner {
+        OwnerCondition::Claim(terminal_id) => SqlStatement::new(
+            "UPDATE training_sessions SET owner_terminal_id = ?, updated_at = ? \
+             WHERE id = ? AND user_id = ? AND finished_at IS NULL AND owner_terminal_id IS NULL",
+            vec![
+                SqlValue::Text(terminal_id.to_owned()),
+                updated_at,
+                training,
+                user,
+            ],
+        ),
+        OwnerCondition::Owned(terminal_id) => SqlStatement::new(
+            "UPDATE training_sessions SET updated_at = ? \
+             WHERE id = ? AND user_id = ? \
+             AND (finished_at IS NOT NULL OR owner_terminal_id = ?)",
+            vec![
+                updated_at,
+                training,
+                user,
+                SqlValue::Text(terminal_id.to_owned()),
+            ],
+        ),
+        OwnerCondition::Finished => SqlStatement::new(
+            "UPDATE training_sessions SET updated_at = ? \
+             WHERE id = ? AND user_id = ? AND finished_at IS NOT NULL",
+            vec![updated_at, training, user],
+        ),
+    }
 }
 
 /// 端末トークンも含めて、書き込みの許可を判定する。
@@ -521,8 +660,8 @@ mod tests {
     use warrior_core::training_session::SessionSource;
 
     use super::{
-        create_statements, owner_condition, update_statements, write_decision, zero_change_outcome,
-        OwnerCondition, SessionOwnerRow, ZeroChangeOutcome,
+        create_statements, owner_condition, ownership_guard_statement, update_statements,
+        write_decision, zero_change_outcome, OwnerCondition, SessionOwnerRow, ZeroChangeOutcome,
     };
 
     const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -768,5 +907,72 @@ mod tests {
             None
         );
         assert_eq!(owner_condition(WriteDecision::Claim, None), None);
+    }
+
+    #[test]
+    fn the_ownership_guard_uses_the_same_conditions_as_an_update() {
+        let claim = ownership_guard_statement(
+            USER_ID,
+            OwnerCondition::Claim(TERMINAL_ID),
+            TRAINING_ID,
+            "2026-11-12T00:00:00Z",
+        );
+        assert!(claim.sql().contains("owner_terminal_id = ?"));
+        assert!(claim
+            .sql()
+            .contains("finished_at IS NULL AND owner_terminal_id IS NULL"));
+        assert_eq!(claim.bindings()[0], SqlValue::Text(TERMINAL_ID.to_owned()));
+
+        let owned = ownership_guard_statement(
+            USER_ID,
+            OwnerCondition::Owned(TERMINAL_ID),
+            TRAINING_ID,
+            "2026-11-12T00:00:00Z",
+        );
+        assert!(owned
+            .sql()
+            .contains("(finished_at IS NOT NULL OR owner_terminal_id = ?)"));
+        assert_eq!(owned.bindings().len(), 4);
+
+        let finished = ownership_guard_statement(
+            USER_ID,
+            OwnerCondition::Finished,
+            TRAINING_ID,
+            "2026-11-12T00:00:00Z",
+        );
+        assert!(finished.sql().contains("finished_at IS NOT NULL"));
+        assert_eq!(finished.bindings().len(), 3);
+    }
+
+    #[test]
+    fn a_zero_change_exercise_operation_is_rejected_by_the_session_state() {
+        let recording = SessionOwnerRow {
+            user_id: USER_ID.to_owned(),
+            owner_terminal_id: Some("another-terminal".to_owned()),
+            finished_at: None,
+        };
+        let foreign = SessionOwnerRow {
+            user_id: "another-user".to_owned(),
+            owner_terminal_id: None,
+            finished_at: None,
+        };
+        for kind in [
+            OperationKind::TrainingExerciseCreate,
+            OperationKind::TrainingExerciseDelete,
+            OperationKind::TrainingExerciseReorder,
+        ] {
+            assert_eq!(
+                zero_change_outcome(kind, Some(&recording), USER_ID),
+                ZeroChangeOutcome::Forbidden
+            );
+            assert_eq!(
+                zero_change_outcome(kind, Some(&foreign), USER_ID),
+                ZeroChangeOutcome::NotFound
+            );
+            assert_eq!(
+                zero_change_outcome(kind, None, USER_ID),
+                ZeroChangeOutcome::NotFound
+            );
+        }
     }
 }

@@ -22,7 +22,7 @@ pub use analysis::AnalysisScreen;
 pub use calendar::CalendarScreen;
 pub use exercise::ExerciseScreen;
 pub use home::HomeScreen;
-pub use library::LibraryScreen;
+pub use library::{ExerciseSelectScreen, LibraryScreen};
 pub use login::LoginScreen;
 pub use mypage::MyPageScreen;
 pub use not_found::NotFoundScreen;

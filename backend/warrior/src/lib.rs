@@ -11,6 +11,7 @@ pub mod calendar;
 pub mod db;
 pub mod error;
 pub mod exercise;
+pub mod library;
 pub mod log;
 pub mod ownership;
 pub mod random;
@@ -22,6 +23,7 @@ pub mod stored_sets;
 pub mod sync;
 pub mod training_record;
 pub mod training_session;
+pub mod training_session_exercise;
 
 use error::ErrorCode;
 

@@ -5,8 +5,9 @@ use dioxus_router::Routable;
 
 use crate::layout::AppShell;
 use crate::screens::{
-    AnalysisScreen, CalendarScreen, ExerciseScreen, HomeScreen, LibraryScreen, LoginScreen,
-    MyPageScreen, NotFoundScreen, RecordScreen, RecordSessionScreen, RoutinesScreen, SummaryScreen,
+    AnalysisScreen, CalendarScreen, ExerciseScreen, ExerciseSelectScreen, HomeScreen,
+    LibraryScreen, LoginScreen, MyPageScreen, NotFoundScreen, RecordScreen, RecordSessionScreen,
+    RoutinesScreen, SummaryScreen,
 };
 use crate::text::Key;
 
@@ -27,12 +28,13 @@ const fn route(pattern: &'static str) -> AppRoute {
 }
 
 /// 画面の経路の台帳。
-pub const APP_ROUTES: [AppRoute; 12] = [
+pub const APP_ROUTES: [AppRoute; 13] = [
     route("/login"),
     route("/login/error"),
     route("/"),
     route("/record"),
     route("/record/:training_id"),
+    route("/record/:training_id/exercises"),
     route("/calendar"),
     route("/library"),
     route("/library/:exercise_id"),
@@ -61,6 +63,9 @@ pub enum Route {
     /// 記録中のトレーニング (ID あり)。
     #[route("/record/:training_id", RecordSessionScreen)]
     RecordSession { training_id: String },
+    /// 記録に追加する種目の選択。
+    #[route("/record/:training_id/exercises", ExerciseSelectScreen)]
+    RecordExerciseSelect { training_id: String },
     /// カレンダー。
     #[route("/calendar", CalendarScreen)]
     Calendar {},
@@ -94,6 +99,7 @@ pub fn screen_key(route: &Route) -> Key {
         Route::LoginError {} => Key::LoginTitle,
         Route::Home {} => Key::HomeTitle,
         Route::Record {} | Route::RecordSession { .. } => Key::RecordTitle,
+        Route::RecordExerciseSelect { .. } => Key::RecordExerciseSelectTitle,
         Route::Calendar {} => Key::CalendarTitle,
         Route::Library {} => Key::LibraryTitle,
         Route::Exercise { .. } => Key::ExerciseTitle,
@@ -113,6 +119,7 @@ pub fn route_name(route: &Route) -> &'static str {
         Route::Home {} => "/",
         Route::Record {} => "/record",
         Route::RecordSession { .. } => "/record/:training_id",
+        Route::RecordExerciseSelect { .. } => "/record/:training_id/exercises",
         Route::Calendar {} => "/calendar",
         Route::Library {} => "/library",
         Route::Exercise { .. } => "/library/:exercise_id",
@@ -205,13 +212,14 @@ mod tests {
     use crate::text::{text, Key};
 
     #[test]
-    fn the_ledger_has_the_twelve_routes() {
+    fn the_ledger_has_the_thirteen_routes() {
         let patterns = [
             "/login",
             "/login/error",
             "/",
             "/record",
             "/record/:training_id",
+            "/record/:training_id/exercises",
             "/calendar",
             "/library",
             "/library/:exercise_id",
@@ -258,6 +266,12 @@ mod tests {
             }
         );
         assert_eq!(
+            Route::from_str("/record/abc/exercises").unwrap(),
+            Route::RecordExerciseSelect {
+                training_id: "abc".to_owned()
+            }
+        );
+        assert_eq!(
             Route::from_str("/library/abc").unwrap(),
             Route::Exercise {
                 exercise_id: "abc".to_owned()
@@ -280,6 +294,12 @@ mod tests {
                 training_id: "abc".to_owned()
             }),
             "/record/:training_id"
+        );
+        assert_eq!(
+            route_name(&Route::RecordExerciseSelect {
+                training_id: "abc".to_owned()
+            }),
+            "/record/:training_id/exercises"
         );
         assert_eq!(
             route_name(&Route::NotFound { segments: vec![] }),
@@ -331,6 +351,12 @@ mod tests {
     fn record_routes_do_not_activate_tabs() {
         for tab in TABS {
             assert!(!tab_is_active(&Route::Record {}, tab));
+            assert!(!tab_is_active(
+                &Route::RecordExerciseSelect {
+                    training_id: "abc".to_owned()
+                },
+                tab
+            ));
         }
     }
 }
