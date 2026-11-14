@@ -492,34 +492,10 @@ impl Exercise {
             if self.other_scope.is_none() {
                 return Err(ExerciseError::OtherScopeMissing);
             }
-            if !self.muscles.is_empty() {
-                return Err(ExerciseError::OtherHasMuscles);
-            }
-        } else {
-            if self.other_scope.is_some() {
-                return Err(ExerciseError::OtherScopeUnexpected);
-            }
-            if !self
-                .muscles
-                .iter()
-                .any(|assignment| assignment.role == MuscleRole::Primary)
-            {
-                return Err(ExerciseError::PrimaryMissing);
-            }
-            if !self.muscles.iter().any(|assignment| {
-                assignment.role == MuscleRole::Primary
-                    && assignment.muscle.body_part() == self.body_part
-            }) {
-                return Err(ExerciseError::MuscleBodyPartMismatch);
-            }
+        } else if self.other_scope.is_some() {
+            return Err(ExerciseError::OtherScopeUnexpected);
         }
-        let mut seen = Vec::new();
-        for assignment in &self.muscles {
-            if seen.contains(&assignment.muscle) {
-                return Err(ExerciseError::DuplicateMuscle);
-            }
-            seen.push(assignment.muscle);
-        }
+        validate_muscles(self.body_part, &self.muscles)?;
         if self.record_mode == RecordMode::Time
             && (self.grip_mode != GripMode::None || !self.grip_options.is_empty())
         {
@@ -530,6 +506,37 @@ impl Exercise {
         }
         Ok(())
     }
+}
+
+fn validate_muscles(
+    body_part: BodyPart,
+    muscles: &[MuscleAssignment],
+) -> Result<(), ExerciseError> {
+    if body_part.is_other() {
+        if !muscles.is_empty() {
+            return Err(ExerciseError::OtherHasMuscles);
+        }
+        return Ok(());
+    }
+    if !muscles
+        .iter()
+        .any(|assignment| assignment.role == MuscleRole::Primary)
+    {
+        return Err(ExerciseError::PrimaryMissing);
+    }
+    if !muscles.iter().any(|assignment| {
+        assignment.role == MuscleRole::Primary && assignment.muscle.body_part() == body_part
+    }) {
+        return Err(ExerciseError::MuscleBodyPartMismatch);
+    }
+    let mut seen = Vec::new();
+    for assignment in muscles {
+        if seen.contains(&assignment.muscle) {
+            return Err(ExerciseError::DuplicateMuscle);
+        }
+        seen.push(assignment.muscle);
+    }
+    Ok(())
 }
 
 /// 記録時点の種目の内容。マスターや独自種目を後から変えても過去の記録は変えない。
@@ -570,32 +577,7 @@ impl ExerciseSnapshot {
         if self.name.trim().is_empty() {
             return Err(ExerciseError::EmptyName);
         }
-        if self.body_part.is_other() {
-            if !self.muscles.is_empty() {
-                return Err(ExerciseError::OtherHasMuscles);
-            }
-        } else {
-            if !self
-                .muscles
-                .iter()
-                .any(|assignment| assignment.role == MuscleRole::Primary)
-            {
-                return Err(ExerciseError::PrimaryMissing);
-            }
-            if !self.muscles.iter().any(|assignment| {
-                assignment.role == MuscleRole::Primary
-                    && assignment.muscle.body_part() == self.body_part
-            }) {
-                return Err(ExerciseError::MuscleBodyPartMismatch);
-            }
-        }
-        let mut seen = Vec::new();
-        for assignment in &self.muscles {
-            if seen.contains(&assignment.muscle) {
-                return Err(ExerciseError::DuplicateMuscle);
-            }
-            seen.push(assignment.muscle);
-        }
+        validate_muscles(self.body_part, &self.muscles)?;
         if self.record_mode == RecordMode::Time
             && (self.grip_mode != GripMode::None || !self.grip_options.is_empty())
         {

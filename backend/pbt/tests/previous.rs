@@ -100,48 +100,62 @@ fn training_candidate() -> impl Strategy<Value = PreviousTrainingCandidate> {
         )
 }
 
-fn latest_matching<'a>(
-    candidates: &'a [PreviousExerciseCandidate],
-    key: &PreviousExerciseKey,
-) -> Option<&'a PreviousExerciseCandidate> {
-    candidates
-        .iter()
-        .filter(|candidate| {
-            candidate.sets.iter().any(|set| {
-                set.exercise_id == key.exercise_id
-                    && set.grip == key.grip
-                    && set.attachment == key.attachment
-            })
-        })
-        .max_by(|left, right| {
-            left.finished_at
-                .cmp(&right.finished_at)
-                .then_with(|| left.training_id.cmp(&right.training_id))
-        })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrainingRule {
+    Program,
+    Custom,
+    Routine,
+    Empty,
 }
 
-fn latest_training_matching<'a>(
-    candidates: &'a [PreviousTrainingCandidate],
+fn matches_rule(
+    candidate: &PreviousTrainingCandidate,
     source: &PreviousTrainingSource,
-) -> Option<&'a PreviousTrainingCandidate> {
-    let matching = candidates.iter().filter(|candidate| {
-        if let Some(program_day_id) = &source.program_day_id {
-            return candidate.program_day_id.as_deref() == Some(program_day_id.as_str());
+    rule: TrainingRule,
+) -> bool {
+    match rule {
+        TrainingRule::Program => {
+            let Some(program_day_id) = &source.program_day_id else {
+                return false;
+            };
+            candidate.program_day_id.as_deref() == Some(program_day_id.as_str())
         }
-        if let Some(custom_program_day_id) = &source.custom_program_day_id {
-            return candidate.custom_program_day_id.as_deref()
-                == Some(custom_program_day_id.as_str());
+        TrainingRule::Custom => {
+            let Some(custom_program_day_id) = &source.custom_program_day_id else {
+                return false;
+            };
+            candidate.custom_program_day_id.as_deref() == Some(custom_program_day_id.as_str())
         }
-        if let Some(routine_id) = &source.routine_id {
-            return candidate.routine_id.as_deref() == Some(routine_id.as_str());
+        TrainingRule::Routine => {
+            let Some(routine_id) = &source.routine_id else {
+                return false;
+            };
+            candidate.routine_id.as_deref() == Some(routine_id.as_str())
         }
-        candidate.source_kind == SessionSource::Empty
-    });
-    matching.max_by(|left, right| {
-        left.finished_at
-            .cmp(&right.finished_at)
-            .then_with(|| left.training_id.cmp(&right.training_id))
-    })
+        TrainingRule::Empty => candidate.source_kind == SessionSource::Empty,
+    }
+}
+
+fn first_rule_with_a_candidate(
+    candidates: &[PreviousTrainingCandidate],
+    source: &PreviousTrainingSource,
+) -> Option<TrainingRule> {
+    for rule in [
+        TrainingRule::Program,
+        TrainingRule::Custom,
+        TrainingRule::Routine,
+    ] {
+        if candidates
+            .iter()
+            .any(|candidate| matches_rule(candidate, source, rule))
+        {
+            return Some(rule);
+        }
+    }
+    candidates
+        .iter()
+        .any(|candidate| matches_rule(candidate, source, TrainingRule::Empty))
+        .then_some(TrainingRule::Empty)
 }
 
 fn difference_kg() -> impl Strategy<Value = i64> {
@@ -177,26 +191,25 @@ proptest! {
             attachment,
         };
         let selected = select_exercise_previous(&candidates, &key);
-        let expected = latest_matching(&candidates, &key);
-        prop_assert_eq!(
-            selected.map(|candidate| candidate.training_id.as_str()),
-            expected.map(|candidate| candidate.training_id.as_str())
-        );
-        if let Some(selected) = selected {
-            let selected_matches = selected.sets.iter().any(|set| {
+        let matches = |candidate: &PreviousExerciseCandidate| {
+            candidate.sets.iter().any(|set| {
                 set.exercise_id == key.exercise_id
                     && set.grip == key.grip
                     && set.attachment == key.attachment
-            });
-            prop_assert!(selected_matches);
-            for candidate in &candidates {
-                let matches = candidate.sets.iter().any(|set| {
-                    set.exercise_id == key.exercise_id
-                        && set.grip == key.grip
-                        && set.attachment == key.attachment
-                });
-                if matches {
-                    prop_assert!(candidate.finished_at <= selected.finished_at);
+            })
+        };
+        match selected {
+            None => prop_assert!(!candidates.iter().any(&matches)),
+            Some(selected) => {
+                prop_assert!(matches(selected));
+                for candidate in &candidates {
+                    if matches(candidate) {
+                        prop_assert!(
+                            candidate.finished_at < selected.finished_at
+                                || (candidate.finished_at == selected.finished_at
+                                    && candidate.training_id <= selected.training_id)
+                        );
+                    }
                 }
             }
         }
@@ -211,45 +224,21 @@ proptest! {
     ) {
         let source = PreviousTrainingSource::new(routine, program, custom);
         let selected = select_training_previous(&candidates, &source);
-        let expected = latest_training_matching(&candidates, &source);
-        prop_assert_eq!(
-            selected.map(|candidate| candidate.training_id.as_str()),
-            expected.map(|candidate| candidate.training_id.as_str())
-        );
-        if let Some(program_day_id) = &source.program_day_id {
-            let has_program = candidates
-                .iter()
-                .any(|candidate| candidate.program_day_id.as_deref() == Some(program_day_id.as_str()));
-            if has_program {
-                prop_assert_eq!(
-                    selected.and_then(|candidate| candidate.program_day_id.as_deref()),
-                    Some(program_day_id.as_str())
-                );
+        match first_rule_with_a_candidate(&candidates, &source) {
+            None => prop_assert!(selected.is_none()),
+            Some(rule) => {
+                let selected = selected.expect("a candidate for the first rule");
+                prop_assert!(matches_rule(selected, &source, rule));
+                for candidate in &candidates {
+                    if matches_rule(candidate, &source, rule) {
+                        prop_assert!(
+                            candidate.finished_at < selected.finished_at
+                                || (candidate.finished_at == selected.finished_at
+                                    && candidate.training_id <= selected.training_id)
+                        );
+                    }
+                }
             }
-        } else if let Some(custom_program_day_id) = &source.custom_program_day_id {
-            let has_custom = candidates.iter().any(|candidate| {
-                candidate.custom_program_day_id.as_deref() == Some(custom_program_day_id.as_str())
-            });
-            if has_custom {
-                prop_assert_eq!(
-                    selected.and_then(|candidate| candidate.custom_program_day_id.as_deref()),
-                    Some(custom_program_day_id.as_str())
-                );
-            }
-        } else if let Some(routine_id) = &source.routine_id {
-            let has_routine = candidates
-                .iter()
-                .any(|candidate| candidate.routine_id.as_deref() == Some(routine_id.as_str()));
-            if has_routine {
-                prop_assert_eq!(
-                    selected.and_then(|candidate| candidate.routine_id.as_deref()),
-                    Some(routine_id.as_str())
-                );
-            }
-        } else {
-            prop_assert!(
-                selected.is_none_or(|candidate| candidate.source_kind == SessionSource::Empty)
-            );
         }
     }
 
@@ -370,7 +359,17 @@ proptest! {
             current_longest,
             Some(&previous),
         );
-        prop_assert!(matches!(weight, Some(ExerciseDifference::Weight(_))));
+        match weight {
+            Some(ExerciseDifference::Weight(diff)) => {
+                prop_assert_eq!(diff.current_kg, current_weight);
+                prop_assert_eq!(diff.previous_kg, previous.total_weight_kg);
+                prop_assert!(
+                    (diff.difference_kg - (current_weight - previous.total_weight_kg)).abs()
+                        < 1e-9
+                );
+            }
+            _ => prop_assert!(false, "a weight exercise must return the weight difference"),
+        }
         let time = exercise_difference(
             RecordMode::Time,
             current_weight,
@@ -378,7 +377,15 @@ proptest! {
             current_longest,
             Some(&previous),
         );
-        prop_assert!(matches!(time, Some(ExerciseDifference::Time(_))));
+        match time {
+            Some(ExerciseDifference::Time(diff)) => {
+                prop_assert_eq!(diff.current_total_seconds, current_total);
+                prop_assert_eq!(diff.previous_total_seconds, previous.total_duration_seconds);
+                prop_assert_eq!(diff.current_longest_seconds, current_longest);
+                prop_assert_eq!(diff.previous_longest_seconds, previous.max_duration_seconds);
+            }
+            _ => prop_assert!(false, "a time exercise must return the duration difference"),
+        }
         prop_assert_eq!(
             exercise_difference(
                 RecordMode::WeightAndReps,

@@ -536,6 +536,7 @@ fn FailedOperations(
                             onclick: {
                                 let operation_id = entry.operation.operation_id.clone();
                                 let training_id = entry.operation.training_id.clone();
+                                let operation_kind = entry.operation.kind;
                                 move |_| {
                                     let operation_id = operation_id.clone();
                                     let training_id = training_id.clone();
@@ -551,6 +552,31 @@ fn FailedOperations(
                                                     .memo_revision
                                                     .set((signals.memo_revision)() + 1);
                                                 signals.session.set(Some(*updated));
+                                                refresh_state(&training_id, state_signals).await;
+                                            }
+                                            Some(DiscardOutcome::ExerciseDeleted) => {
+                                                signals
+                                                    .tree_revision
+                                                    .set((signals.tree_revision)() + 1);
+                                                refresh_state(&training_id, state_signals).await;
+                                            }
+                                            Some(DiscardOutcome::OperationsRemoved)
+                                                if matches!(
+                                                    operation_kind,
+                                                    OperationKind::TrainingExerciseDelete
+                                                        | OperationKind::TrainingExerciseReorder
+                                                ) =>
+                                            {
+                                                if !ownership::reload_record(
+                                                    &training_id,
+                                                    signals,
+                                                )
+                                                .await
+                                                {
+                                                    signals.save_error.set(Some(
+                                                        text(Key::RecordReloadFailed).to_owned(),
+                                                    ));
+                                                }
                                                 refresh_state(&training_id, state_signals).await;
                                             }
                                             _ => {}

@@ -29,6 +29,11 @@ pub async fn fetch(
     http::request_json("GET", &url).await
 }
 
+/// トレーニング全体の前回だけを取る。種目が 0 件でも全体の差を出せるようにする。
+pub async fn fetch_training(training_id: &str) -> Result<PreviousResponse, HttpError> {
+    http::request_json("GET", &format!("/api/trainings/{training_id}/previous")).await
+}
+
 fn encode(value: &str) -> String {
     js_sys::encode_uri_component(value)
         .as_string()

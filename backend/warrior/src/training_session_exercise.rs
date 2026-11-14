@@ -1,5 +1,6 @@
 //! トレーニングの種目の追加、並べ替え、削除と、前回の記録の取得。
 //!
+//! 対応する要求: `REQ-REC-002`、`REQ-REC-003`、`REQ-REC-004`。
 //! 種目の操作は端末の送信待ちの列から届き、`backend/warrior/src/sync.rs` が編集権を
 //! 検査してからこのモジュールの文を同じ `batch()` で適用する (ADR-002、ADR-003)。
 //! 前回の選択は `warrior_core::previous` の純粋な関数が行い、このモジュールは D1 の
@@ -25,6 +26,46 @@ use crate::auth::session;
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
 use crate::stored_sets;
+
+/// 種目のデータ文に付ける編集権の条件。
+///
+/// 先頭のガード文が 0 行でも後続の文が実行されるため、各データ文でも同じ条件を確かめる。
+/// `Claim` のあとはガード文が所有者を設定しているので、`Terminal` として扱う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExerciseOwnership<'a> {
+    /// この端末が記録中のトレーニングの所有者である。
+    Terminal(&'a str),
+    /// 終了したトレーニングである。
+    Finished,
+}
+
+fn ownership_condition(
+    user_id: &str,
+    training_id: &str,
+    ownership: ExerciseOwnership<'_>,
+) -> (String, Vec<SqlValue>) {
+    match ownership {
+        ExerciseOwnership::Terminal(terminal_id) => (
+            "EXISTS (SELECT 1 FROM training_sessions ts WHERE ts.id = ? AND ts.user_id = ? \
+             AND (ts.finished_at IS NOT NULL OR ts.owner_terminal_id = ?))"
+                .to_owned(),
+            vec![
+                SqlValue::Text(training_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(terminal_id.to_owned()),
+            ],
+        ),
+        ExerciseOwnership::Finished => (
+            "EXISTS (SELECT 1 FROM training_sessions ts WHERE ts.id = ? AND ts.user_id = ? \
+             AND ts.finished_at IS NOT NULL)"
+                .to_owned(),
+            vec![
+                SqlValue::Text(training_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+            ],
+        ),
+    }
+}
 
 /// 前回の取得で読む、現在のトレーニングの開始元。
 #[derive(Debug, Deserialize)]
@@ -58,7 +99,8 @@ struct TrainingCandidateRow {
 /// `GET /api/trainings/:id/previous`
 ///
 /// 種目ごとの前回とトレーニング全体の前回を返す。前回が無い部分は `null` にする。
-/// `grip` は記録時のグリップの選択の JSON、`attachment` はアタッチメントの比較のキーである。
+/// `exercise_id` を省略すると、トレーニング全体の前回だけを返す。`grip` は現在の
+/// グリップの選択の JSON、`attachment` はアタッチメントの比較のキーである。
 pub async fn previous(request: Request, context: RouteContext<()>) -> Result<Response> {
     let Some(training_id) = context.param("id").cloned() else {
         return Ok(response(ErrorCode::NotFound, "resource not found"));
@@ -72,24 +114,23 @@ pub async fn previous(request: Request, context: RouteContext<()>) -> Result<Res
         .query_pairs()
         .into_owned()
         .collect::<HashMap<_, _>>();
-    let Some(exercise_id) = query
+    let exercise_id = query
         .get("exercise_id")
         .filter(|text| !text.is_empty())
-        .cloned()
-    else {
-        return Ok(response(
-            ErrorCode::BadRequest,
-            "the exercise id is required",
-        ));
-    };
-    let Some((grip, attachment)) = previous_key(
-        query.get("grip").map(String::as_str),
-        query.get("attachment").map(String::as_str),
-    ) else {
-        return Ok(response(
-            ErrorCode::BadRequest,
-            "the grip or attachment is invalid",
-        ));
+        .cloned();
+    let key = if exercise_id.is_some() {
+        let Some(key) = previous_key(
+            query.get("grip").map(String::as_str),
+            query.get("attachment").map(String::as_str),
+        ) else {
+            return Ok(response(
+                ErrorCode::BadRequest,
+                "the grip or attachment is invalid",
+            ));
+        };
+        key
+    } else {
+        (None, None)
     };
     let db = Db::new(env.d1("DB")?);
     let Some(current) = load_current_session(&db, &training_id, &authenticated.id).await? else {
@@ -100,8 +141,8 @@ pub async fn previous(request: Request, context: RouteContext<()>) -> Result<Res
         &authenticated.id,
         &training_id,
         &current,
-        &exercise_id,
-        (grip, attachment),
+        exercise_id.as_deref(),
+        key,
     )
     .await
     {
@@ -157,10 +198,15 @@ async fn build_previous(
     user_id: &str,
     training_id: &str,
     current: &CurrentSessionRow,
-    exercise_id: &str,
+    exercise_id: Option<&str>,
     key: (Option<String>, Option<String>),
 ) -> Result<PreviousResponse> {
-    let exercise = load_exercise_previous(db, user_id, training_id, exercise_id, key).await?;
+    let exercise = match exercise_id {
+        Some(exercise_id) => {
+            load_exercise_previous(db, user_id, training_id, exercise_id, key).await?
+        }
+        None => None,
+    };
     let training = load_training_previous(db, user_id, training_id, current).await?;
     Ok(PreviousResponse { exercise, training })
 }
@@ -252,7 +298,12 @@ fn previous_exercise_from(
             sets.push(PreviousSet {
                 kind: record.kind(),
                 rpe: record.rpe(),
-                grip: exercise.set_grips.get(index).cloned().flatten(),
+                grip: exercise
+                    .set_grips
+                    .get(index)
+                    .cloned()
+                    .flatten()
+                    .and_then(|grip| serde_json::from_str::<GripSelection>(&grip).ok()),
                 segments: record.segments().to_vec(),
             });
         }
@@ -355,29 +406,35 @@ pub fn create_statements(
     user_id: &str,
     training_id: &str,
     payload: &TrainingExerciseCreatePayload,
+    ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Result<Vec<SqlStatement>> {
     let snapshot = serde_json::to_string(&payload.snapshot)
         .map_err(|error| worker::Error::RustError(format!("the snapshot is invalid: {error}")))?;
+    let (condition, mut bindings) = ownership_condition(user_id, training_id, ownership);
+    let mut values = vec![
+        SqlValue::Text(payload.training_exercise_id.clone()),
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(training_id.to_owned()),
+        SqlValue::Text(payload.exercise_id.clone()),
+        SqlValue::Text(snapshot),
+        SqlValue::Integer(payload.position),
+        SqlValue::Text(now.to_owned()),
+        SqlValue::Text(now.to_owned()),
+    ];
+    values.append(&mut bindings);
     Ok(vec![SqlStatement::new(
-        "INSERT INTO training_exercises \
-         (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-         ON CONFLICT(id) DO UPDATE SET exercise_id = excluded.exercise_id, \
-         snapshot = excluded.snapshot, position = excluded.position, \
-         updated_at = excluded.updated_at \
-         WHERE training_exercises.user_id = excluded.user_id \
-         AND training_exercises.training_id = excluded.training_id",
-        vec![
-            SqlValue::Text(payload.training_exercise_id.clone()),
-            SqlValue::Text(user_id.to_owned()),
-            SqlValue::Text(training_id.to_owned()),
-            SqlValue::Text(payload.exercise_id.clone()),
-            SqlValue::Text(snapshot),
-            SqlValue::Integer(payload.position),
-            SqlValue::Text(now.to_owned()),
-            SqlValue::Text(now.to_owned()),
-        ],
+        format!(
+            "INSERT INTO training_exercises \
+             (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
+             SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE {condition} \
+             ON CONFLICT(id) DO UPDATE SET exercise_id = excluded.exercise_id, \
+             snapshot = excluded.snapshot, position = excluded.position, \
+             updated_at = excluded.updated_at \
+             WHERE training_exercises.user_id = excluded.user_id \
+             AND training_exercises.training_id = excluded.training_id"
+        ),
+        values,
     )])
 }
 
@@ -386,38 +443,69 @@ pub fn delete_statements(
     user_id: &str,
     training_id: &str,
     payload: &TrainingExerciseDeletePayload,
+    ownership: ExerciseOwnership<'_>,
 ) -> Vec<SqlStatement> {
+    let (condition, condition_bindings) = ownership_condition(user_id, training_id, ownership);
+    let mut segments = vec![
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(payload.training_exercise_id.clone()),
+        SqlValue::Text(training_id.to_owned()),
+        SqlValue::Text(user_id.to_owned()),
+    ];
+    segments.extend(condition_bindings.iter().cloned());
+    let mut sets = vec![
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(payload.training_exercise_id.clone()),
+        SqlValue::Text(training_id.to_owned()),
+        SqlValue::Text(user_id.to_owned()),
+    ];
+    sets.extend(condition_bindings.iter().cloned());
+    let mut members = vec![
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(payload.training_exercise_id.clone()),
+        SqlValue::Text(training_id.to_owned()),
+        SqlValue::Text(user_id.to_owned()),
+    ];
+    members.extend(condition_bindings.iter().cloned());
+    let mut exercise = vec![
+        SqlValue::Text(payload.training_exercise_id.clone()),
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(training_id.to_owned()),
+    ];
+    exercise.extend(condition_bindings);
     vec![
         SqlStatement::new(
-            "DELETE FROM set_segments WHERE user_id = ? AND set_id IN \
-             (SELECT id FROM sets WHERE training_exercise_id = ? AND user_id = ?)",
-            vec![
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(payload.training_exercise_id.clone()),
-                SqlValue::Text(user_id.to_owned()),
-            ],
+            format!(
+                "DELETE FROM set_segments WHERE user_id = ? AND set_id IN \
+                 (SELECT s.id FROM sets s JOIN training_exercises te \
+                  ON te.id = s.training_exercise_id \
+                  WHERE te.id = ? AND te.training_id = ? AND te.user_id = ?) \
+                 AND {condition}"
+            ),
+            segments,
         ),
         SqlStatement::new(
-            "DELETE FROM sets WHERE training_exercise_id = ? AND user_id = ?",
-            vec![
-                SqlValue::Text(payload.training_exercise_id.clone()),
-                SqlValue::Text(user_id.to_owned()),
-            ],
+            format!(
+                "DELETE FROM sets WHERE user_id = ? AND training_exercise_id IN \
+                 (SELECT id FROM training_exercises WHERE id = ? AND training_id = ? \
+                  AND user_id = ?) AND {condition}"
+            ),
+            sets,
         ),
         SqlStatement::new(
-            "DELETE FROM superset_members WHERE training_exercise_id = ? AND user_id = ?",
-            vec![
-                SqlValue::Text(payload.training_exercise_id.clone()),
-                SqlValue::Text(user_id.to_owned()),
-            ],
+            format!(
+                "DELETE FROM superset_members WHERE user_id = ? AND training_exercise_id IN \
+                 (SELECT id FROM training_exercises WHERE id = ? AND training_id = ? \
+                  AND user_id = ?) AND {condition}"
+            ),
+            members,
         ),
         SqlStatement::new(
-            "DELETE FROM training_exercises WHERE id = ? AND user_id = ? AND training_id = ?",
-            vec![
-                SqlValue::Text(payload.training_exercise_id.clone()),
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(training_id.to_owned()),
-            ],
+            format!(
+                "DELETE FROM training_exercises WHERE id = ? AND user_id = ? AND training_id = ? \
+                 AND {condition}"
+            ),
+            exercise,
         ),
     ]
 }
@@ -427,23 +515,29 @@ pub fn reorder_statements(
     user_id: &str,
     training_id: &str,
     payload: &TrainingExerciseReorderPayload,
+    ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Vec<SqlStatement> {
+    let (condition, condition_bindings) = ownership_condition(user_id, training_id, ownership);
     payload
         .ordered_ids
         .iter()
         .enumerate()
         .map(|(index, id)| {
+            let mut bindings = vec![
+                SqlValue::Integer(index as i64 + 1),
+                SqlValue::Text(now.to_owned()),
+                SqlValue::Text(id.clone()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+            ];
+            bindings.extend(condition_bindings.iter().cloned());
             SqlStatement::new(
-                "UPDATE training_exercises SET position = ?, updated_at = ? \
-                 WHERE id = ? AND user_id = ? AND training_id = ?",
-                vec![
-                    SqlValue::Integer(index as i64 + 1),
-                    SqlValue::Text(now.to_owned()),
-                    SqlValue::Text(id.clone()),
-                    SqlValue::Text(user_id.to_owned()),
-                    SqlValue::Text(training_id.to_owned()),
-                ],
+                format!(
+                    "UPDATE training_exercises SET position = ?, updated_at = ? \
+                     WHERE id = ? AND user_id = ? AND training_id = ? AND {condition}"
+                ),
+                bindings,
             )
         })
         .collect()
@@ -462,7 +556,7 @@ mod tests {
     use super::{
         create_statements, delete_statements, exercise_candidates, previous_exercise_from,
         previous_key, reorder_statements, training_candidates, ExerciseCandidateSetRow,
-        TrainingCandidateRow,
+        ExerciseOwnership, TrainingCandidateRow,
     };
     use crate::stored_sets::StoredExercise;
     use warrior_core::exercise::{BodyPart, ExerciseSnapshot, Laterality};
@@ -472,6 +566,7 @@ mod tests {
     const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4802";
     const EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4803";
     const ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4804";
+    const TERMINAL_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4805";
     const NOW: &str = "2026-11-12T00:00:00Z";
 
     fn create_payload() -> TrainingExerciseCreatePayload {
@@ -495,10 +590,17 @@ mod tests {
 
     #[test]
     fn the_create_statement_is_scoped_to_the_user_and_the_training() {
-        let statements =
-            create_statements(USER_ID, TRAINING_ID, &create_payload(), NOW).expect("statements");
+        let statements = create_statements(
+            USER_ID,
+            TRAINING_ID,
+            &create_payload(),
+            ExerciseOwnership::Terminal(TERMINAL_ID),
+            NOW,
+        )
+        .expect("statements");
         assert_eq!(statements.len(), 1);
         let sql = statements[0].sql();
+        assert!(sql.contains("WHERE EXISTS (SELECT 1 FROM training_sessions"));
         assert!(sql.contains("ON CONFLICT(id) DO UPDATE"));
         assert!(sql.contains("training_exercises.user_id = excluded.user_id"));
         assert!(sql.contains("training_exercises.training_id = excluded.training_id"));
@@ -515,6 +617,14 @@ mod tests {
             SqlValue::Text(TRAINING_ID.to_owned())
         );
         assert_eq!(statements[0].bindings()[5], SqlValue::Integer(1));
+        assert_eq!(
+            statements[0].bindings()[8],
+            SqlValue::Text(TRAINING_ID.to_owned())
+        );
+        assert_eq!(
+            statements[0].bindings()[10],
+            SqlValue::Text(TERMINAL_ID.to_owned())
+        );
         match &statements[0].bindings()[4] {
             SqlValue::Text(text) => assert!(text.contains("ベンチプレス")),
             other => panic!("the snapshot must be text: {other:?}"),
@@ -530,11 +640,20 @@ mod tests {
                 training_id: TRAINING_ID.to_owned(),
                 training_exercise_id: ROW_ID.to_owned(),
             },
+            ExerciseOwnership::Finished,
         );
         assert_eq!(statements.len(), 4);
+        for statement in &statements {
+            assert!(statement
+                .sql()
+                .contains("EXISTS (SELECT 1 FROM training_sessions"));
+        }
         assert!(statements[0].sql().contains("set_segments"));
+        assert!(statements[0].sql().contains("te.training_id = ?"));
         assert!(statements[1].sql().contains("DELETE FROM sets"));
+        assert!(statements[1].sql().contains("training_id = ?"));
         assert!(statements[2].sql().contains("superset_members"));
+        assert!(statements[2].sql().contains("training_id = ?"));
         assert!(statements[3]
             .sql()
             .contains("DELETE FROM training_exercises"));
@@ -554,9 +673,15 @@ mod tests {
                 training_id: TRAINING_ID.to_owned(),
                 ordered_ids: vec![ROW_ID.to_owned(), EXERCISE_ID.to_owned()],
             },
+            ExerciseOwnership::Terminal(TERMINAL_ID),
             NOW,
         );
         assert_eq!(statements.len(), 2);
+        for statement in &statements {
+            assert!(statement
+                .sql()
+                .contains("EXISTS (SELECT 1 FROM training_sessions"));
+        }
         assert_eq!(statements[0].bindings()[0], SqlValue::Integer(1));
         assert_eq!(statements[1].bindings()[0], SqlValue::Integer(2));
         assert_eq!(

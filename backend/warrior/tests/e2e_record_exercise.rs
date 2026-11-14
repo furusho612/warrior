@@ -68,6 +68,18 @@ async fn adds_exercises_copies_the_previous_values_and_shows_the_differences() {
     wait_for_session_row(&server, &training_id).await;
     let user_id = current_user_id(&driver).await;
     seed_past_session(&server, &user_id);
+    driver
+        .goto(format!("{}/", server.origin()))
+        .await
+        .expect("the record must reload with the seeded previous training");
+    browser::wait_for_route(&driver, "/record/:training_id").await;
+    wait_for_attribute(
+        &driver,
+        "[data-training-total-diff]",
+        "data-training-total-diff",
+        "-900",
+    )
+    .await;
 
     add_exercise(&driver, BENCH_EXERCISE_ID).await;
     add_exercise(&driver, PLANK_EXERCISE_ID).await;
@@ -78,6 +90,7 @@ async fn adds_exercises_copies_the_previous_values_and_shows_the_differences() {
     check_training_difference(&driver).await;
 
     if browser == Browser::Chrome {
+        check_reorder_delete_and_outbox(&driver).await;
         browser::assert_no_panic(&driver).await;
     }
     driver.quit().await.expect("the browser must close");
@@ -293,14 +306,129 @@ async fn check_no_previous(driver: &WebDriver, exercise_id: &str) {
 
 async fn select_exercise(driver: &WebDriver, exercise_id: &str) {
     let row = format!("[data-exercise-row][data-exercise-id=\"{exercise_id}\"]");
+    wait_for_selector(driver, &row).await;
     driver
-        .find(By::Css(format!("{row} > button")))
+        .find(By::Css(&row))
         .await
         .expect("the exercise row must exist")
         .click()
         .await
         .expect("the exercise row must be clickable");
     browser::wait_for_attribute(driver, &row, "data-selected", "true").await;
+}
+
+async fn check_reorder_delete_and_outbox(driver: &WebDriver) {
+    browser::offline(driver, true).await;
+
+    select_exercise(driver, PLANK_EXERCISE_ID).await;
+    driver
+        .find(By::Css("[data-exercise-detail] [data-move-down]"))
+        .await
+        .expect("the move down button must exist")
+        .click()
+        .await
+        .expect("the move down button must be clickable");
+    wait_for_exercise_order(
+        driver,
+        &[BENCH_EXERCISE_ID, SQUAT_EXERCISE_ID, PLANK_EXERCISE_ID],
+    )
+    .await;
+    assert!(
+        outbox_kinds(driver)
+            .await
+            .iter()
+            .any(|kind| kind == "training_exercise_reorder"),
+        "the reorder must join the outbox"
+    );
+
+    select_exercise(driver, SQUAT_EXERCISE_ID).await;
+    driver
+        .find(By::Css("[data-exercise-detail] [data-delete-exercise]"))
+        .await
+        .expect("the delete button must exist")
+        .click()
+        .await
+        .expect("the delete button must be clickable");
+    wait_for_exercise_order(driver, &[BENCH_EXERCISE_ID, PLANK_EXERCISE_ID]).await;
+    assert!(
+        outbox_kinds(driver)
+            .await
+            .iter()
+            .any(|kind| kind == "training_exercise_delete"),
+        "the delete must join the outbox"
+    );
+
+    browser::offline(driver, false).await;
+    browser::wait_for_attribute(driver, "[data-sync-status]", "data-sync-status", "saved").await;
+}
+
+async fn wait_for_exercise_order(driver: &WebDriver, expected: &[&str]) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let order = exercise_order(driver).await;
+        if order
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the exercise order did not become {expected:?}: {order:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+async fn exercise_order(driver: &WebDriver) -> Vec<String> {
+    let value = browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         done(JSON.stringify(Array.from(document.querySelectorAll('[data-exercise-row]')) \
+           .map((element) => element.getAttribute('data-exercise-id'))));",
+        Vec::new(),
+    )
+    .await;
+    value
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn outbox_kinds(driver: &WebDriver) -> Vec<String> {
+    let value = browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         const request = indexedDB.open('warrior'); \
+         request.onerror = () => done(JSON.stringify([])); \
+         request.onsuccess = () => { \
+           const db = request.result; \
+           const all = db.transaction('outbox', 'readonly').objectStore('outbox').getAll(); \
+           all.onsuccess = () => { \
+             const kinds = all.result.map((entry) => entry.operation.kind); \
+             db.close(); \
+             done(JSON.stringify(kinds)); \
+           }; \
+           all.onerror = () => { db.close(); done(JSON.stringify([])); }; \
+         };",
+        Vec::new(),
+    )
+    .await;
+    value
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 async fn wait_for_selector(driver: &WebDriver, selector: &str) {

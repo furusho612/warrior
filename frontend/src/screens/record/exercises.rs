@@ -1,11 +1,13 @@
 //! 記録の種目の一覧、追加、並べ替え、削除と、前回の記録の表示、コピー、差。
 //!
-//! 種目の行と入力は端末内の IndexedDB に保存し、送信待ちの列を通す (ADR-002)。
+//! 対応する要求: `REQ-REC-002`、`REQ-REC-003`、`REQ-REC-004`。
+//! 種目の行は端末内の IndexedDB に保存し、送信待ちの列を通す (ADR-002)。
 //! セットの入力は種目ごとの最小の欄であり、重量、回数、時間だけを持つ。
+//! セット入力の永続化は 0025 が担う。
 //! 前回の選択と差の計算は `warrior_core::previous` の純粋な関数を使う。
 
 use dioxus::prelude::*;
-use warrior_core::exercise::{ExerciseSnapshot, RecordMode};
+use warrior_core::exercise::{ExerciseSnapshot, GripSelection, RecordMode};
 use warrior_core::previous::{
     exercise_difference, total_weight_difference, DurationDifference, ExerciseDifference,
     PreviousExercise, PreviousSet, PreviousTraining, TotalWeightDifference,
@@ -15,6 +17,7 @@ use warrior_core::training_record::TrainingExerciseRecord;
 
 use super::RecordSignals;
 use crate::previous as previous_api;
+use crate::record_rail::{RecordRailExercise, RecordRailState};
 use crate::routes::navigate;
 use crate::storage;
 use crate::sync;
@@ -25,7 +28,7 @@ use crate::training_exercise;
 #[component]
 pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> Element {
     let views = use_signal(Vec::<ExerciseView>::new);
-    let mut selected = use_signal(|| Option::<String>::None);
+    let rail = use_context::<Signal<RecordRailState>>();
     let previous_training = use_signal(|| Option::<PreviousTraining>::None);
     let error = use_signal(|| Option::<String>::None);
     let loading = use_signal(|| true);
@@ -43,12 +46,19 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
         spawn(load(
             id,
             views,
-            selected,
+            rail,
             previous_training,
             error,
             loading,
             preserve_inputs,
         ));
+    });
+    let mut rail_for_drop = rail;
+    use_drop(move || {
+        let mut state = rail_for_drop.write();
+        state.training_id = None;
+        state.exercises.clear();
+        state.selected = None;
     });
 
     let on_input = EventHandler::new(
@@ -132,11 +142,17 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
     });
 
     let current_views = (views)();
-    let selected_id = (selected)();
+    let rail_state = (rail)();
+    let selected_id = rail_state.selected;
     let selected_view = selected_id
         .as_ref()
         .and_then(|id| current_views.iter().find(|view| &view.record.id == id))
         .cloned();
+    let selected_index = selected_view.as_ref().and_then(|selected| {
+        current_views
+            .iter()
+            .position(|view| view.record.id == selected.record.id)
+    });
     let view_only = (signals.view_only)();
     let training_diff = training_difference(&current_views, (previous_training)().as_ref());
     let load_error = (error)();
@@ -146,8 +162,7 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
         section {
             class: "flex flex-col gap-2",
             "data-exercises": "true",
-            div { class: "flex items-center justify-between gap-2",
-                h2 { class: "text-sm font-bold", "{text(Key::RecordRail)}" }
+            div { class: "flex items-center justify-end gap-2",
                 button {
                     class: "min-h-11 border border-primary px-3 text-[13px] font-bold text-primary",
                     "data-add-exercise": "true",
@@ -167,40 +182,27 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
             if current_views.is_empty() && !is_loading {
                 p { class: "text-[13px] text-text-sub", "{text(Key::RecordExerciseEmpty)}" }
             }
-            div { class: "flex flex-col gap-1", "data-exercise-list": "true",
-                for (index, view) in current_views.iter().enumerate() {
-                    ExerciseRow {
-                        key: "{view.record.id}",
-                        view: view.clone(),
-                        selected: selected_id.as_deref() == Some(view.record.id.as_str()),
-                        first: index == 0,
-                        last: index + 1 == current_views.len(),
-                        disabled: view_only,
-                        on_select: {
-                            let id = view.record.id.clone();
-                            move |_| selected.set(Some(id.clone()))
-                        },
-                        on_up: {
-                            let id = view.record.id.clone();
-                            move |_| on_move.call((id.clone(), -1))
-                        },
-                        on_down: {
-                            let id = view.record.id.clone();
-                            move |_| on_move.call((id.clone(), 1))
-                        },
-                        on_delete: {
-                            let id = view.record.id.clone();
-                            move |_| on_delete.call(id.clone())
-                        },
-                    }
-                }
-            }
             if let Some(view) = selected_view {
-                ExerciseDetail {
-                    view,
-                    disabled: view_only,
-                    on_input,
-                    on_copy,
+                {
+                    let first = selected_index == Some(0);
+                    let last = selected_index
+                        .is_some_and(|index| index + 1 == current_views.len());
+                    let up_id = view.record.id.clone();
+                    let down_id = view.record.id.clone();
+                    let delete_id = view.record.id.clone();
+                    rsx! {
+                        ExerciseDetail {
+                            view,
+                            disabled: view_only,
+                            first,
+                            last,
+                            on_input,
+                            on_copy,
+                            on_up: move |_| on_move.call((up_id.clone(), -1)),
+                            on_down: move |_| on_move.call((down_id.clone(), 1)),
+                            on_delete: move |_| on_delete.call(delete_id.clone()),
+                        }
+                    }
                 }
             } else {
                 EmptySetTable {}
@@ -229,7 +231,7 @@ struct SetInput {
     weight: String,
     reps: String,
     duration: String,
-    grip: Option<String>,
+    grip: Option<GripSelection>,
 }
 
 impl Default for SetInput {
@@ -254,7 +256,7 @@ impl SetInput {
             duration: segment.map_or_else(String::new, |segment| {
                 segment.longest_duration_seconds().to_string()
             }),
-            grip: set.grip.clone(),
+            grip: set.grip,
         }
     }
 
@@ -396,7 +398,7 @@ fn set_error(mut error: Signal<Option<String>>, key: Key) {
 async fn load(
     training_id: String,
     mut views: Signal<Vec<ExerciseView>>,
-    mut selected: Signal<Option<String>>,
+    mut rail: Signal<RecordRailState>,
     mut previous_training: Signal<Option<PreviousTraining>>,
     mut error: Signal<Option<String>>,
     mut loading: Signal<bool>,
@@ -421,7 +423,10 @@ async fn load(
     };
     let old = (views)();
     let mut next = Vec::with_capacity(records.len());
-    let mut training_previous = None;
+    let mut training_previous = match previous_api::fetch_training(&training_id).await {
+        Ok(response) => response.training,
+        Err(_) => None,
+    };
     for record in records {
         let Ok(snapshot) = serde_json::from_str::<ExerciseSnapshot>(&record.snapshot) else {
             continue;
@@ -451,13 +456,26 @@ async fn load(
             inputs,
         });
     }
-    if selected
-        .peek()
-        .as_ref()
-        .is_none_or(|id| !next.iter().any(|view| &view.record.id == id))
-    {
-        selected.set(next.first().map(|view| view.record.id.clone()));
-    }
+    let current_selected = if rail.peek().training_id.as_deref() == Some(training_id.as_str()) {
+        rail.peek().selected.clone()
+    } else {
+        None
+    };
+    let selected = current_selected
+        .filter(|id| next.iter().any(|view| &view.record.id == id))
+        .or_else(|| next.first().map(|view| view.record.id.clone()));
+    rail.set(RecordRailState {
+        training_id: Some(training_id.clone()),
+        exercises: next
+            .iter()
+            .map(|view| RecordRailExercise {
+                id: view.record.id.clone(),
+                exercise_id: view.snapshot.exercise_id.clone(),
+                name: view.snapshot.name.clone(),
+            })
+            .collect(),
+        selected,
+    });
     previous_training.set(training_previous);
     views.set(next);
     error.set(None);
@@ -465,67 +483,16 @@ async fn load(
 }
 
 #[component]
-fn ExerciseRow(
-    view: ExerciseView,
-    selected: bool,
-    first: bool,
-    last: bool,
-    disabled: bool,
-    on_select: EventHandler<()>,
-    on_up: EventHandler<()>,
-    on_down: EventHandler<()>,
-    on_delete: EventHandler<()>,
-) -> Element {
-    let class = if selected {
-        "flex min-h-11 items-center justify-between gap-2 border border-primary bg-surface px-2"
-    } else {
-        "flex min-h-11 items-center justify-between gap-2 border border-line bg-surface px-2"
-    };
-    rsx! {
-        div {
-            class,
-            "data-exercise-row": "true",
-            "data-training-exercise-id": "{view.record.id}",
-            "data-exercise-id": "{view.snapshot.exercise_id}",
-            "data-selected": if selected { "true" } else { "false" },
-            button {
-                class: "min-h-11 min-w-0 flex-1 truncate text-left text-[13px] font-bold",
-                onclick: move |_| on_select.call(()),
-                "{view.snapshot.name}"
-            }
-            div { class: "flex shrink-0 gap-1",
-                button {
-                    class: "min-h-11 min-w-11 border border-line px-1 text-[11px]",
-                    "data-move-up": "true",
-                    disabled: disabled || first,
-                    onclick: move |_| on_up.call(()),
-                    "{text(Key::RecordExerciseMoveUp)}"
-                }
-                button {
-                    class: "min-h-11 min-w-11 border border-line px-1 text-[11px]",
-                    "data-move-down": "true",
-                    disabled: disabled || last,
-                    onclick: move |_| on_down.call(()),
-                    "{text(Key::RecordExerciseMoveDown)}"
-                }
-                button {
-                    class: "min-h-11 min-w-11 border border-line px-1 text-[11px] text-primary",
-                    "data-delete-exercise": "true",
-                    disabled,
-                    onclick: move |_| on_delete.call(()),
-                    "{text(Key::RecordExerciseDelete)}"
-                }
-            }
-        }
-    }
-}
-
-#[component]
 fn ExerciseDetail(
     view: ExerciseView,
     disabled: bool,
+    first: bool,
+    last: bool,
     on_input: EventHandler<(String, usize, Field, String)>,
     on_copy: EventHandler<String>,
+    on_up: EventHandler<()>,
+    on_down: EventHandler<()>,
+    on_delete: EventHandler<()>,
 ) -> Element {
     let diff = exercise_diff(&view);
     let view_id = view.record.id.clone();
@@ -540,15 +507,38 @@ fn ExerciseDetail(
             class: "flex flex-col gap-2 border border-line bg-surface p-2",
             "data-exercise-detail": "true",
             "data-exercise-id": "{view.snapshot.exercise_id}",
-            div { class: "flex items-center justify-between gap-2",
+            div { class: "flex flex-wrap items-center justify-between gap-1",
                 h3 { class: "text-[13px] font-bold", "{view.snapshot.name}" }
-                if previous.is_some() {
+                div { class: "flex flex-wrap gap-1",
                     button {
-                        class: "min-h-11 border border-primary px-2 text-[11px] font-bold text-primary",
-                        "data-copy-previous": "true",
+                        class: "min-h-11 border border-line px-2 text-[11px]",
+                        "data-move-up": "true",
+                        disabled: disabled || first,
+                        onclick: move |_| on_up.call(()),
+                        "{text(Key::RecordExerciseMoveUp)}"
+                    }
+                    button {
+                        class: "min-h-11 border border-line px-2 text-[11px]",
+                        "data-move-down": "true",
+                        disabled: disabled || last,
+                        onclick: move |_| on_down.call(()),
+                        "{text(Key::RecordExerciseMoveDown)}"
+                    }
+                    button {
+                        class: "min-h-11 border border-line px-2 text-[11px] text-primary",
+                        "data-delete-exercise": "true",
                         disabled,
-                        onclick: move |_| on_copy.call(copy_id.clone()),
-                        "{text(Key::RecordExerciseCopy)}"
+                        onclick: move |_| on_delete.call(()),
+                        "{text(Key::RecordExerciseDelete)}"
+                    }
+                    if previous.is_some() {
+                        button {
+                            class: "min-h-11 border border-primary px-2 text-[11px] font-bold text-primary",
+                            "data-copy-previous": "true",
+                            disabled,
+                            onclick: move |_| on_copy.call(copy_id.clone()),
+                            "{text(Key::RecordExerciseCopy)}"
+                        }
                     }
                 }
             }
@@ -600,7 +590,7 @@ fn ExerciseDifferenceView(diff: ExerciseDifference) -> Element {
         ExerciseDifference::Weight(diff) => rsx! {
             div {
                 class: "text-[13px] font-bold",
-                "data-exercise-weight-diff": "{diff.difference_kg}",
+                "data-exercise-weight-diff": "{rounded_tenth(diff.difference_kg)}",
                 "{text(Key::RecordExerciseWeightDiff)}: {signed_weight(diff.difference_kg)}"
             }
         },
@@ -621,7 +611,7 @@ fn TrainingDifference(diff: TotalWeightDifference) -> Element {
     rsx! {
         div {
             class: "border border-line bg-surface p-2 text-[13px] font-bold",
-            "data-training-total-diff": "{diff.difference_kg}",
+            "data-training-total-diff": "{rounded_tenth(diff.difference_kg)}",
             "{text(Key::RecordTrainingWeightDiff)}: {signed_weight(diff.difference_kg)}"
         }
     }
@@ -751,12 +741,25 @@ fn set_kind_text(kind: SetKind) -> &'static str {
 }
 
 fn signed_weight(value: f64) -> String {
+    let value = rounded_tenth(value);
     if value > 0.0 {
         format!("+{value:.1} kg")
     } else if value < 0.0 {
         format!("{value:.1} kg")
     } else {
         "0 kg".to_owned()
+    }
+}
+
+fn rounded_tenth(value: f64) -> f64 {
+    if !value.is_finite() {
+        return value;
+    }
+    let rounded = (value * 10.0).round() / 10.0;
+    if rounded == 0.0 {
+        0.0
+    } else {
+        rounded
     }
 }
 

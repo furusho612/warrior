@@ -19,6 +19,7 @@ use crate::auth::session;
 use crate::db::{changed_rows, Db};
 use crate::error::{response, ErrorCode};
 use crate::ownership;
+use crate::training_session_exercise::ExerciseOwnership;
 
 #[derive(Debug, Deserialize)]
 struct AppliedRow {
@@ -31,6 +32,11 @@ struct SessionOwnerRow {
     user_id: String,
     owner_terminal_id: Option<String>,
     finished_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExerciseRow {
+    id: String,
 }
 
 /// 更新の SQL が所有者に課す条件。
@@ -390,7 +396,43 @@ async fn exercise_batch(
             "the training is being edited on another terminal",
         )));
     };
-    let Some(data) = exercise_statements(user_id, validated, now) else {
+    match &validated.payload {
+        ValidatedPayload::ExerciseDelete(payload) => {
+            if !exercise_in_training(
+                db,
+                user_id,
+                &validated.operation.training_id,
+                &payload.training_exercise_id,
+            )
+            .await?
+            {
+                return Ok(BatchOutcome::Reject(response(
+                    ErrorCode::NotFound,
+                    "resource not found",
+                )));
+            }
+        }
+        ValidatedPayload::ExerciseReorder(payload) => {
+            let current =
+                training_exercise_ids(db, user_id, &validated.operation.training_id).await?;
+            if !same_exercise_ids(&current, &payload.ordered_ids) {
+                return Ok(BatchOutcome::Reject(response(
+                    ErrorCode::Conflict,
+                    "the exercise order is stale",
+                )));
+            }
+        }
+        ValidatedPayload::Create(_)
+        | ValidatedPayload::Update(_)
+        | ValidatedPayload::ExerciseCreate(_) => {}
+    }
+    let ownership = match owner {
+        OwnerCondition::Claim(terminal_id) | OwnerCondition::Owned(terminal_id) => {
+            ExerciseOwnership::Terminal(terminal_id)
+        }
+        OwnerCondition::Finished => ExerciseOwnership::Finished,
+    };
+    let Some(data) = exercise_statements(user_id, validated, ownership, now) else {
         return Ok(BatchOutcome::Reject(response(
             ErrorCode::BadRequest,
             "operation is invalid",
@@ -408,6 +450,7 @@ async fn exercise_batch(
 fn exercise_statements(
     user_id: &str,
     validated: &warrior_core::sync::ValidatedOperation,
+    ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Option<Vec<SqlStatement>> {
     let operation = &validated.operation;
@@ -417,6 +460,7 @@ fn exercise_statements(
                 user_id,
                 &operation.training_id,
                 payload,
+                ownership,
                 now,
             )
             .ok()?,
@@ -426,6 +470,7 @@ fn exercise_statements(
                 user_id,
                 &operation.training_id,
                 payload,
+                ownership,
             ))
         }
         ValidatedPayload::ExerciseReorder(payload) => {
@@ -433,11 +478,58 @@ fn exercise_statements(
                 user_id,
                 &operation.training_id,
                 payload,
+                ownership,
                 now,
             ))
         }
         ValidatedPayload::Create(_) | ValidatedPayload::Update(_) => None,
     }
+}
+
+async fn exercise_in_training(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    training_exercise_id: &str,
+) -> Result<bool> {
+    Ok(db
+        .first::<ExerciseRow>(&SqlStatement::new(
+            "SELECT id FROM training_exercises \
+             WHERE id = ? AND user_id = ? AND training_id = ?",
+            vec![
+                SqlValue::Text(training_exercise_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+            ],
+        ))
+        .await?
+        .is_some())
+}
+
+async fn training_exercise_ids(db: &Db, user_id: &str, training_id: &str) -> Result<Vec<String>> {
+    let result = db
+        .all(&SqlStatement::new(
+            "SELECT id FROM training_exercises WHERE user_id = ? AND training_id = ? \
+             ORDER BY position, id",
+            vec![
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+            ],
+        ))
+        .await?;
+    Ok(result
+        .results::<ExerciseRow>()?
+        .into_iter()
+        .map(|row| row.id)
+        .collect())
+}
+
+fn same_exercise_ids(current: &[String], ordered: &[String]) -> bool {
+    let mut current = current.to_vec();
+    let mut ordered = ordered.to_vec();
+    current.sort_unstable();
+    ordered.sort_unstable();
+    current == ordered
 }
 
 /// 編集権を確認し、トレーニングの更新時刻を進める文。

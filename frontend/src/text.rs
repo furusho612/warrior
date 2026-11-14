@@ -106,7 +106,6 @@ text_keys! {
     RecordExerciseSelectTitle => "種目を選ぶ",
     RecordExerciseSelectDescription => "追加する種目を選ぶと、記録に加えます。",
     RecordExerciseSelectFailed => "種目の一覧を読み込めませんでした。",
-    RecordExerciseAddAction => "追加",
     RecordExerciseBack => "記録に戻る",
     RecordViewOnly => "ほかの端末で記録中です。この端末では閲覧のみできます。",
     RecordTakeover => "引き継ぐ",

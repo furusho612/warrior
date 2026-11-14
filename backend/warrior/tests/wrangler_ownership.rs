@@ -480,6 +480,109 @@ fn a_claim_that_loses_to_the_finish_is_reapplied_after_the_finish() {
     }
 }
 
+/// 種目の追加、削除、並べ替えと引き継ぎが重なっても、0 行のガードで拒否された操作が
+/// 後続のデータ文だけを残さないことを確かめる。
+#[test]
+fn a_takeover_and_an_exercise_operation_never_leave_a_partial_write() {
+    let server = start_server_at(8819);
+    let (session_token, _, token_a, token_b) = seed(&server);
+    let cookie_a = terminal_cookie(&session_token, &token_a);
+    let cookie_b = terminal_cookie(&session_token, &token_b);
+
+    for kind in 0..3u32 {
+        for round in 0..6u32 {
+            let training_id = exercise_uuid("a100", kind * 10 + round);
+            let create_id = exercise_uuid("a200", kind * 10 + round);
+            let operation_id = exercise_uuid("a300", kind * 10 + round);
+            let first_row_id = exercise_uuid("a400", kind * 10 + round);
+            let second_row_id = exercise_uuid("a500", kind * 10 + round);
+            let set_id = exercise_uuid("a600", kind * 10 + round);
+            let segment_id = exercise_uuid("a700", kind * 10 + round);
+            let created = post_sync(
+                &server,
+                &cookie_a,
+                &create_operation_for(&training_id, &create_id, ""),
+            );
+            assert_eq!(created.status, 200, "{}", created.body);
+
+            if kind >= 1 {
+                seed_exercise_row(&server, &training_id, &first_row_id, 1);
+                seed_exercise_set(&server, &first_row_id, &set_id, &segment_id);
+                if kind == 2 {
+                    seed_exercise_row(&server, &training_id, &second_row_id, 2);
+                }
+            }
+
+            let operation = match kind {
+                0 => exercise_create_operation(&training_id, &operation_id, &first_row_id, 1),
+                1 => exercise_delete_operation(&training_id, &operation_id, &first_row_id),
+                _ => exercise_reorder_operation(
+                    &training_id,
+                    &operation_id,
+                    &[second_row_id.clone(), first_row_id.clone()],
+                ),
+            };
+            let (response, takeover) = std::thread::scope(|scope| {
+                let operation = scope.spawn(|| post_sync(&server, &cookie_a, &operation));
+                let takeover = scope.spawn(|| {
+                    post(
+                        &server,
+                        &cookie_b,
+                        &format!("/api/trainings/{training_id}/takeover"),
+                    )
+                });
+                (
+                    operation
+                        .join()
+                        .expect("the exercise operation must finish"),
+                    takeover.join().expect("the takeover must finish"),
+                )
+            });
+            assert_eq!(takeover.status, 200, "{}", takeover.body);
+            match response.status {
+                200 => {
+                    assert_eq!(status_of(&response), "applied");
+                    assert_eq!(applied_count(&server, &operation_id), 1);
+                    match kind {
+                        0 => {
+                            assert_eq!(row_count(&server, "training_exercises", &first_row_id), 1)
+                        }
+                        1 => {
+                            assert_eq!(row_count(&server, "training_exercises", &first_row_id), 0);
+                            assert_eq!(row_count(&server, "sets", &set_id), 0);
+                            assert_eq!(row_count(&server, "set_segments", &segment_id), 0);
+                        }
+                        _ => {
+                            assert_eq!(position(&server, &second_row_id), 1);
+                            assert_eq!(position(&server, &first_row_id), 2);
+                        }
+                    }
+                }
+                403 => {
+                    assert_eq!(applied_count(&server, &operation_id), 0);
+                    match kind {
+                        0 => {
+                            assert_eq!(row_count(&server, "training_exercises", &first_row_id), 0)
+                        }
+                        1 => {
+                            assert_eq!(row_count(&server, "training_exercises", &first_row_id), 1);
+                            assert_eq!(row_count(&server, "sets", &set_id), 1);
+                            assert_eq!(row_count(&server, "set_segments", &segment_id), 1);
+                        }
+                        _ => {
+                            assert_eq!(position(&server, &first_row_id), 1);
+                            assert_eq!(position(&server, &second_row_id), 2);
+                        }
+                    }
+                }
+                other => {
+                    panic!("the exercise operation must be applied or rejected: {other}")
+                }
+            }
+        }
+    }
+}
+
 fn seed_a_recording_session_without_an_owner(server: &DevServer, training_id: &str) {
     server
         .execute_d1_json(&format!(
@@ -1017,6 +1120,123 @@ fn update_operation_for(training_id: &str, operation_id: &str, sequence: u64, me
             "memo": memo
         }
     })
+}
+
+fn exercise_uuid(prefix: &str, number: u32) -> String {
+    format!("3f2504e0-4f89-41d3-9a0c-{prefix}{number:08x}")
+}
+
+fn exercise_snapshot() -> Value {
+    json!({
+        "exercise_id": "3f2504e0-4f89-41d3-9a0c-0305e82c4e01",
+        "name": "ベンチプレス",
+        "body_part": "chest",
+        "muscles": [{"muscle": "pectoralis_major_middle", "role": "primary"}],
+        "record_mode": "weight_and_reps",
+        "laterality": "bilateral",
+        "grip_mode": "none",
+        "grip_options": []
+    })
+}
+
+fn seed_exercise_row(server: &DevServer, training_id: &str, row_id: &str, position: i64) {
+    server
+        .execute_d1_json(&format!(
+            "INSERT INTO training_exercises \
+             (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
+             VALUES ('{row_id}', '{USER_ID}', '{training_id}', \
+              '3f2504e0-4f89-41d3-9a0c-0305e82c4e01', '{}', {position}, \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            exercise_snapshot().to_string().replace('\'', "''")
+        ))
+        .expect("the exercise row must be seeded");
+}
+
+fn seed_exercise_set(server: &DevServer, row_id: &str, set_id: &str, segment_id: &str) {
+    for sql in [
+        format!(
+            "INSERT INTO sets (id, user_id, training_exercise_id, position, kind, completed, created_at, updated_at) \
+             VALUES ('{set_id}', '{USER_ID}', '{row_id}', 1, 'normal', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO set_segments (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, created_at, updated_at) \
+             VALUES ('{segment_id}', '{USER_ID}', '{set_id}', 1, 100.0, 5, 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    ] {
+        server
+            .execute_d1_json(&sql)
+            .expect("the exercise set must be seeded");
+    }
+}
+
+fn exercise_create_operation(
+    training_id: &str,
+    operation_id: &str,
+    row_id: &str,
+    position: i64,
+) -> Value {
+    json!({
+        "operation_id": operation_id,
+        "training_id": training_id,
+        "sequence": 2,
+        "kind": "training_exercise_create",
+        "parent_operation_id": null,
+        "payload": {
+            "training_id": training_id,
+            "training_exercise_id": row_id,
+            "exercise_id": "3f2504e0-4f89-41d3-9a0c-0305e82c4e01",
+            "snapshot": exercise_snapshot(),
+            "position": position
+        }
+    })
+}
+
+fn exercise_delete_operation(training_id: &str, operation_id: &str, row_id: &str) -> Value {
+    json!({
+        "operation_id": operation_id,
+        "training_id": training_id,
+        "sequence": 2,
+        "kind": "training_exercise_delete",
+        "parent_operation_id": null,
+        "payload": {
+            "training_id": training_id,
+            "training_exercise_id": row_id
+        }
+    })
+}
+
+fn exercise_reorder_operation(
+    training_id: &str,
+    operation_id: &str,
+    ordered_ids: &[String],
+) -> Value {
+    json!({
+        "operation_id": operation_id,
+        "training_id": training_id,
+        "sequence": 2,
+        "kind": "training_exercise_reorder",
+        "parent_operation_id": null,
+        "payload": {
+            "training_id": training_id,
+            "ordered_ids": ordered_ids
+        }
+    })
+}
+
+fn row_count(server: &DevServer, table: &str, id: &str) -> i64 {
+    count(
+        server,
+        &format!("SELECT COUNT(*) AS count FROM {table} WHERE id = '{id}'"),
+    )
+}
+
+fn position(server: &DevServer, row_id: &str) -> i64 {
+    first_row(
+        server,
+        &format!("SELECT position FROM training_exercises WHERE id = '{row_id}'"),
+    )["position"]
+        .as_i64()
+        .expect("a position")
 }
 
 fn status_of(response: &support::HttpResponse) -> String {

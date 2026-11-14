@@ -1,11 +1,13 @@
 //! 前回のトレーニングの選択と、今回との差の計算 (PRD の「計算ルールと用語定義」の「前回」)。
 //!
+//! 対応する要求: `REQ-REC-003`、`REQ-REC-004`。
 //! 前回は、種目ごととトレーニング全体で別の規則で選ぶ。選択を純粋な関数に置き、
 //! D1 からの候補の読み込みは `backend/warrior/src/training_session_exercise.rs` が担う。
 //! 差の計算もここに置き、画面とサーバーで同じ値を使う。
 
 use serde::{Deserialize, Serialize};
 
+use crate::exercise::GripSelection;
 use crate::set_calc::{RecordMode, SetKind, SetSegment};
 use crate::training_session::SessionSource;
 
@@ -38,8 +40,8 @@ pub struct PreviousSet {
     pub kind: SetKind,
     /// RPE。
     pub rpe: Option<f64>,
-    /// 記録時のグリップの選択の JSON。選ばない種目は None。
-    pub grip: Option<String>,
+    /// 記録時のグリップの選択。選ばない種目は None。
+    pub grip: Option<GripSelection>,
     /// 段の値。ドロップセットは複数の段を持つ。
     pub segments: Vec<SetSegment>,
 }
@@ -158,38 +160,52 @@ impl PreviousTrainingSource {
 
 /// トレーニング全体の前回を選ぶ。
 ///
-/// 現在のトレーニングにプログラムの日があれば同じプログラムの日、無ければ同じ独自の
-/// プログラムの日、無ければ同じルーティンの候補を選ぶ。どれも無ければ、空の状態から
-/// 開始した候補を選ぶ。候補の中で終了した時刻が最も新しいものを返し、同じ時刻は
-/// トレーニングの ID の大きい方を選ぶ。
+/// プログラムの日、独自のプログラムの日、ルーティンの順に候補を探し、最初に見つかった
+/// 規則の候補を選ぶ。プログラムの候補が無ければ、独自のプログラムとルーティンへ落ちる。
+/// どの規則にも候補が無ければ、空の状態から開始した候補を選ぶ。候補の中で終了した時刻が
+/// 最も新しいものを返し、同じ時刻はトレーニングの ID の大きい方を選ぶ。
 pub fn select_training_previous<'a>(
     candidates: &'a [PreviousTrainingCandidate],
     source: &PreviousTrainingSource,
 ) -> Option<&'a PreviousTrainingCandidate> {
+    if let Some(program_day_id) = &source.program_day_id {
+        if let Some(selected) = latest_training_matching(candidates, |candidate| {
+            candidate.program_day_id.as_deref() == Some(program_day_id.as_str())
+        }) {
+            return Some(selected);
+        }
+    }
+    if let Some(custom_program_day_id) = &source.custom_program_day_id {
+        if let Some(selected) = latest_training_matching(candidates, |candidate| {
+            candidate.custom_program_day_id.as_deref() == Some(custom_program_day_id.as_str())
+        }) {
+            return Some(selected);
+        }
+    }
+    if let Some(routine_id) = &source.routine_id {
+        if let Some(selected) = latest_training_matching(candidates, |candidate| {
+            candidate.routine_id.as_deref() == Some(routine_id.as_str())
+        }) {
+            return Some(selected);
+        }
+    }
+    latest_training_matching(candidates, |candidate| {
+        candidate.source_kind == SessionSource::Empty
+    })
+}
+
+fn latest_training_matching(
+    candidates: &[PreviousTrainingCandidate],
+    matches: impl Fn(&PreviousTrainingCandidate) -> bool,
+) -> Option<&PreviousTrainingCandidate> {
     candidates
         .iter()
-        .filter(|candidate| training_source_matches(candidate, source))
+        .filter(|candidate| matches(candidate))
         .max_by(|left, right| {
             left.finished_at
                 .cmp(&right.finished_at)
                 .then_with(|| left.training_id.cmp(&right.training_id))
         })
-}
-
-fn training_source_matches(
-    candidate: &PreviousTrainingCandidate,
-    source: &PreviousTrainingSource,
-) -> bool {
-    if let Some(program_day_id) = &source.program_day_id {
-        return candidate.program_day_id.as_deref() == Some(program_day_id.as_str());
-    }
-    if let Some(custom_program_day_id) = &source.custom_program_day_id {
-        return candidate.custom_program_day_id.as_deref() == Some(custom_program_day_id.as_str());
-    }
-    if let Some(routine_id) = &source.routine_id {
-        return candidate.routine_id.as_deref() == Some(routine_id.as_str());
-    }
-    candidate.source_kind == SessionSource::Empty
 }
 
 /// 総重量の差。
@@ -364,6 +380,32 @@ mod tests {
     }
 
     #[test]
+    fn the_exercise_previous_breaks_a_tie_by_the_training_id() {
+        let candidates = vec![
+            exercise_candidate(
+                "training-a",
+                "2026-11-12T10:00:00Z",
+                vec![("bench", None, None)],
+            ),
+            exercise_candidate(
+                "training-b",
+                "2026-11-12T10:00:00Z",
+                vec![("bench", None, None)],
+            ),
+        ];
+        let key = PreviousExerciseKey {
+            exercise_id: "bench".to_owned(),
+            grip: None,
+            attachment: None,
+        };
+        assert_eq!(
+            select_exercise_previous(&candidates, &key)
+                .map(|candidate| candidate.training_id.as_str()),
+            Some("training-b")
+        );
+    }
+
+    #[test]
     fn a_different_grip_is_not_the_previous() {
         let candidates = vec![exercise_candidate(
             "training-a",
@@ -376,6 +418,36 @@ mod tests {
             attachment: None,
         };
         assert_eq!(select_exercise_previous(&candidates, &key), None);
+    }
+
+    #[test]
+    fn the_training_previous_breaks_a_tie_by_the_training_id() {
+        let candidates = vec![
+            training_candidate(
+                "training-a",
+                "2026-11-12T10:00:00Z",
+                SessionSource::Empty,
+                None,
+                None,
+                None,
+                800.0,
+            ),
+            training_candidate(
+                "training-b",
+                "2026-11-12T10:00:00Z",
+                SessionSource::Empty,
+                None,
+                None,
+                None,
+                900.0,
+            ),
+        ];
+        let source = PreviousTrainingSource::new(None, None, None);
+        assert_eq!(
+            select_training_previous(&candidates, &source)
+                .map(|candidate| candidate.training_id.as_str()),
+            Some("training-b")
+        );
     }
 
     #[test]
@@ -409,6 +481,63 @@ mod tests {
             select_training_previous(&candidates, &source)
                 .map(|candidate| candidate.training_id.as_str()),
             Some("training-program")
+        );
+    }
+
+    #[test]
+    fn a_missing_program_day_falls_back_to_the_routine() {
+        let candidates = vec![
+            training_candidate(
+                "training-routine",
+                "2026-11-12T10:00:00Z",
+                SessionSource::Routine,
+                Some("routine-1"),
+                None,
+                None,
+                1_000.0,
+            ),
+            training_candidate(
+                "training-custom",
+                "2026-11-10T10:00:00Z",
+                SessionSource::CustomProgram,
+                None,
+                None,
+                Some("custom-1"),
+                900.0,
+            ),
+        ];
+        let source = PreviousTrainingSource::new(
+            Some("routine-1".to_owned()),
+            Some("missing-day".to_owned()),
+            Some("missing-custom".to_owned()),
+        );
+        assert_eq!(
+            select_training_previous(&candidates, &source)
+                .map(|candidate| candidate.training_id.as_str()),
+            Some("training-routine")
+        );
+    }
+
+    #[test]
+    fn a_missing_program_and_custom_day_falls_back_to_the_routine() {
+        let candidates = vec![training_candidate(
+            "training-routine",
+            "2026-11-12T10:00:00Z",
+            SessionSource::Routine,
+            Some("routine-1"),
+            None,
+            None,
+            1_000.0,
+        )];
+        let source = PreviousTrainingSource::new(
+            Some("routine-1".to_owned()),
+            Some("missing-day".to_owned()),
+            Some("missing-custom".to_owned()),
+        );
+        assert_eq!(
+            select_training_previous(&candidates, &source)
+                .map(|candidate| candidate.training_id.as_str()),
+            Some("training-routine")
         );
     }
 

@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 use dioxus_router::{router, Link, Outlet};
 
+use crate::record_rail::RecordRailState;
 use crate::routes::{tab_is_active, tab_key, tab_route, Route, Tab, TABS};
 use crate::text::{text, Key};
 
@@ -15,6 +16,12 @@ pub fn AppShell() -> Element {
         current,
         Route::Record {} | Route::RecordSession { .. } | Route::RecordExerciseSelect { .. }
     );
+    let record_training_id = match &current {
+        Route::RecordSession { training_id } | Route::RecordExerciseSelect { training_id } => {
+            Some(training_id.clone())
+        }
+        _ => None,
+    };
 
     rsx! {
         div {
@@ -31,9 +38,9 @@ pub fn AppShell() -> Element {
             if record {
                 div { class: "flex min-h-0 flex-1",
                     aside {
-                        class: "flex w-[60px] shrink-0 flex-col items-center border-r border-line bg-surface pt-3 text-[11px] text-text-sub",
+                        class: "flex w-[60px] shrink-0 flex-col items-stretch gap-1 overflow-y-auto border-r border-line bg-surface pt-3 text-[11px] text-text-sub",
                         "data-exercise-rail": "true",
-                        span { class: "font-bold", "{text(Key::RecordRail)}" }
+                        RecordRail { training_id: record_training_id }
                     }
                     main { class: "min-h-0 min-w-0 flex-1 overflow-y-auto", Outlet::<Route> {} }
                 }
@@ -45,6 +52,46 @@ pub fn AppShell() -> Element {
             } else {
                 main { class: "min-h-0 flex-1 overflow-y-auto", Outlet::<Route> {} }
                 TabBar { current }
+            }
+        }
+    }
+}
+
+#[component]
+fn RecordRail(training_id: Option<String>) -> Element {
+    let mut rail = use_context::<Signal<RecordRailState>>();
+    let state = (rail)();
+    let shows = training_id
+        .as_deref()
+        .is_some_and(|id| state.training_id.as_deref() == Some(id));
+    rsx! {
+        span { class: "shrink-0 text-center font-bold", "{text(Key::RecordRail)}" }
+        if shows {
+            for exercise in state.exercises {
+                {
+                    let selected = state.selected.as_deref() == Some(exercise.id.as_str());
+                    let class = if selected {
+                        "w-full shrink-0 border-b border-primary px-1 py-2 text-center text-[10px] font-bold leading-4 text-primary"
+                    } else {
+                        "w-full shrink-0 border-b border-line px-1 py-2 text-center text-[10px] leading-4 text-text-sub"
+                    };
+                    rsx! {
+                        button {
+                            class,
+                            "data-exercise-row": "true",
+                            "data-training-exercise-id": "{exercise.id}",
+                            "data-exercise-id": "{exercise.exercise_id}",
+                            "data-selected": if selected { "true" } else { "false" },
+                            onclick: {
+                                let id = exercise.id.clone();
+                                move |_| {
+                                    rail.write().selected = Some(id.clone());
+                                }
+                            },
+                            span { class: "w-full break-words", "{exercise.name}" }
+                        }
+                    }
+                }
             }
         }
     }

@@ -116,28 +116,30 @@ async fn reload_from_server(
 ) {
     ownership.busy.set(true);
     ownership.error.set(None);
-    let result = training_api::record(&training_id).await;
+    let reloaded = reload_record(&training_id, signals).await;
     ownership.busy.set(false);
-    let record = match result {
-        Ok(record) => record,
-        Err(_) => {
-            ownership
-                .error
-                .set(Some(text(Key::RecordReloadFailed).to_owned()));
-            return;
-        }
-    };
-    if replace_record(&record, ReplacePurpose::Reload)
-        .await
-        .is_err()
-    {
+    if !reloaded {
         ownership
             .error
             .set(Some(text(Key::RecordReloadFailed).to_owned()));
         return;
     }
-    apply_record(&record, signals);
     navigate(&format!("/record/{training_id}"));
+}
+
+/// サーバーに保存済みの記録を端末へ置き換え、画面の記録を反映する。
+pub(super) async fn reload_record(training_id: &str, signals: RecordSignals) -> bool {
+    let Ok(record) = training_api::record(training_id).await else {
+        return false;
+    };
+    if replace_record(&record, ReplacePurpose::Reload)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    apply_record(&record, signals);
+    true
 }
 
 async fn store_and_reload(

@@ -13,6 +13,7 @@ pub mod library;
 pub mod passkey;
 pub mod previous;
 pub mod pwa;
+pub mod record_rail;
 pub mod routes;
 pub mod screens;
 pub mod storage;
