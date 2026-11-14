@@ -54,6 +54,8 @@ struct SetOwnerRow {
     training_exercise_id: String,
     /// 種目の行が属するトレーニングの ID。
     training_id: String,
+    /// 完了したか。0 か 1 である。
+    completed: i64,
 }
 
 /// 段のある値の件数。
@@ -212,6 +214,9 @@ async fn precheck_create(
                 ErrorCode::Conflict,
                 "the set belongs to another exercise",
             )));
+        }
+        if existing.completed != 0 {
+            return Ok(Some(completed_set_rejection()));
         }
     }
     if !drop_positions_allowed(
@@ -794,7 +799,7 @@ async fn set_row(
 
 async fn set_owner_row(db: &Db, user_id: &str, set_id: &str) -> Result<Option<SetOwnerRow>> {
     db.first(&SqlStatement::new(
-        "SELECT s.training_exercise_id, te.training_id FROM sets s \
+        "SELECT s.training_exercise_id, te.training_id, s.completed FROM sets s \
          JOIN training_exercises te ON te.id = s.training_exercise_id \
          WHERE s.id = ? AND s.user_id = ?",
         vec![

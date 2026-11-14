@@ -44,6 +44,7 @@ const COMPLETED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c563
 const COMPLETED_DELETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5635";
 const COMPLETED_UNCOMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5636";
 const EMPTY_REJECTED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5637";
+const COMPLETED_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5638";
 const SECOND_SET_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5622";
 const TAKEOVER_PORT: u16 = 8824;
 const TAKEOVER_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5640";
@@ -300,6 +301,37 @@ fn reject_edits_of_the_completed_set(server: &DevServer, cookie: &str) {
     assert_eq!(applied_count(server, COMPLETED_DELETE_OPERATION_ID), 0);
     assert_eq!(count(server, "sets", BENCH_SET_ID), 1);
     assert_eq!(count(server, "set_segments", BENCH_SEGMENT_ID), 1);
+
+    let create = create_operation(
+        COMPLETED_CREATE_OPERATION_ID,
+        TRAINING_ID,
+        BENCH_ROW_ID,
+        BENCH_SET_ID,
+        SetSpec {
+            position: 1,
+            kind: "normal",
+            body_weight_kg: Some(70.0),
+        },
+        vec![segment(BENCH_SEGMENT_ID, 1, 130.0, 9)],
+    );
+    let response = post(server, cookie, &create);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(applied_count(server, COMPLETED_CREATE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{BENCH_SET_ID}'")
+        )["completed"],
+        1
+    );
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT weight_kg, reps FROM set_segments WHERE id = '{BENCH_SEGMENT_ID}'")
+        ),
+        json!({"weight_kg": 120, "reps": 7}),
+        "a create with the completed set ID must keep the stored value"
+    );
 
     let uncomplete = complete_operation(
         COMPLETED_UNCOMPLETE_OPERATION_ID,

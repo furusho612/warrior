@@ -119,6 +119,7 @@ fn a_past_session_limits_the_updated_personal_bests() {
     assert_items(&summary.personal_bests, &updated);
     check_summary_endpoint(&server, &cookie, TRAINING_ID, &updated);
     check_stored_bests(&server, TRAINING_ID, &updated);
+    check_past_summary(&server, &cookie);
 }
 
 fn start_server(port: u16) -> DevServer {
@@ -217,6 +218,35 @@ fn check_summary_endpoint(
     let summary: TrainingSessionSummary =
         serde_json::from_str(&response.body).expect("the summary response is a summary");
     assert_items(&summary.personal_bests, expected);
+}
+
+fn check_past_summary(server: &DevServer, cookie: &str) {
+    let response = get(
+        server,
+        cookie,
+        &format!("/api/trainings/{PAST_TRAINING_ID}/summary"),
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let summary: TrainingSessionSummary =
+        serde_json::from_str(&response.body).expect("the past summary is a summary");
+    assert_eq!(summary.personal_bests.len(), 3);
+    let mut max_weights = summary
+        .personal_bests
+        .iter()
+        .filter(|item| item.kind == BestKind::MaxWeight)
+        .collect::<Vec<_>>();
+    max_weights.sort_by(|left, right| left.grip.cmp(&right.grip));
+    assert_eq!(max_weights[0].grip.as_deref(), Some(BENCH_GRIP_KEY));
+    assert_eq!(max_weights[0].value, 105.0);
+    assert_eq!(max_weights[1].grip.as_deref(), Some("supinated_medium"));
+    assert_eq!(max_weights[1].value, 999.0);
+    let total = summary
+        .personal_bests
+        .iter()
+        .find(|item| item.kind == BestKind::TotalWeight)
+        .expect("the past total weight");
+    assert_eq!(total.value, 2_000.0);
+    assert_eq!(total.grip.as_deref(), Some(BENCH_GRIP_KEY));
 }
 
 fn check_replayed_finish(server: &DevServer, cookie: &str, summary: &TrainingSessionSummary) {
