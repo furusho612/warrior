@@ -2,8 +2,10 @@
 //!
 //! 対応する要求: `REQ-SET-006`、`REQ-SET-007`、`REQ-REC-005`。
 //! セット詳細の drawer で反動と補助の回数、RPE を入力し、保存した値を開き直して
-//! 表示することを確かめる。RPE を空にしたセットも保存できることを確かめる。
-//! 終了のサマリーで、補助の回数だけを除いた総重量を確かめる。
+//! 表示することを確かめる。回数の内訳と RPE の無効値を拒否してエラーを表示し、
+//! 正しい値に直すとエラーが消えて保存されることを確かめる。RPE を空にした
+//! セットも保存できることを確かめる。終了のサマリーで、補助の回数だけを除いた
+//! 総重量を確かめる。
 
 mod support;
 
@@ -15,8 +17,8 @@ use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
 
 const BENCH_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
-const SERVER_PORT: u16 = 8829;
-const PROVIDER_PORT: u16 = 8830;
+const SERVER_PORT: u16 = 8846;
+const PROVIDER_PORT: u16 = 8847;
 
 #[tokio::test]
 async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
@@ -71,12 +73,16 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
     browser::set_input(&driver, &weight_selector(&first_set), "100").await;
     browser::set_input(&driver, &reps_selector(&first_set), "10").await;
     open_drawer(&driver, &first_set).await;
+    browser::set_input(&driver, &momentum_selector(), "6").await;
+    browser::set_input(&driver, &assisted_selector(), "5").await;
+    browser::wait_for_text(&driver, "反動と補助の回数の合計は回数以下にしてください。").await;
     browser::set_input(&driver, &momentum_selector(), "3").await;
     browser::set_input(&driver, &assisted_selector(), "1").await;
+    browser::wait_for_absent(&driver, "[data-record-error]").await;
     browser::set_input(&driver, &rpe_selector(), "6.5").await;
     browser::wait_for_value(&driver, &rpe_selector(), "6.5").await;
     browser::click(&driver, &complete_selector(&first_set)).await;
-    wait_for_set(&server, &first_set, "6.5", 3, 1).await;
+    wait_for_set(&server, &first_set, Some("6.5"), 3, 1).await;
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
     driver.refresh().await.expect("the page must reload");
@@ -97,10 +103,26 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
     browser::set_input(&driver, &weight_selector(&second_set), "80").await;
     browser::set_input(&driver, &reps_selector(&second_set), "8").await;
     open_drawer(&driver, &second_set).await;
+    browser::set_input(&driver, &rpe_selector(), "7.25").await;
+    browser::wait_for_text(
+        &driver,
+        "RPE は 6.0 から 10.0 まで 0.5 刻みで入力してください。",
+    )
+    .await;
     browser::set_input(&driver, &rpe_selector(), "10.0").await;
-    browser::wait_for_value(&driver, &rpe_selector(), "10.0").await;
+    browser::wait_for_absent(&driver, "[data-record-error]").await;
     browser::click(&driver, &complete_selector(&second_set)).await;
-    wait_for_set(&server, &second_set, "10", 0, 0).await;
+    wait_for_set(&server, &second_set, Some("10.0"), 0, 0).await;
+    clear_input(&driver, &rpe_selector()).await;
+    browser::wait_for_absent(&driver, "[data-record-error]").await;
+    wait_for_set(&server, &second_set, None, 0, 0).await;
+    browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
+
+    let empty_rpe_set = add_set(&driver).await;
+    browser::set_input(&driver, &weight_selector(&empty_rpe_set), "60").await;
+    browser::set_input(&driver, &reps_selector(&empty_rpe_set), "5").await;
+    browser::click(&driver, &complete_selector(&empty_rpe_set)).await;
+    wait_for_set(&server, &empty_rpe_set, None, 0, 0).await;
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
     finish_and_check_the_summary(&driver).await;
@@ -176,14 +198,30 @@ async fn set_ids(driver: &WebDriver) -> Vec<String> {
         .unwrap_or_default()
 }
 
+async fn clear_input(driver: &WebDriver, selector: &str) {
+    let length = browser::value(driver, selector).await.chars().count();
+    for _ in 0..length {
+        let input = driver
+            .find(By::Css(selector))
+            .await
+            .unwrap_or_else(|error| panic!("the input {selector} must exist: {error}"));
+        input
+            .send_keys(Key::Backspace)
+            .await
+            .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
+    }
+    browser::wait_for_value(driver, selector, "").await;
+}
+
 async fn wait_for_set(
     server: &DevServer,
     set_id: &str,
-    rpe: &str,
+    rpe: Option<&str>,
     momentum_reps: i64,
     assisted_reps: i64,
 ) {
     let deadline = Instant::now() + Duration::from_secs(60);
+    let expected_rpe = rpe.and_then(|value| value.parse::<f64>().ok());
     let set_sql = format!("SELECT rpe, completed FROM sets WHERE id = '{set_id}'");
     let segment_sql =
         format!("SELECT momentum_reps, assisted_reps FROM set_segments WHERE set_id = '{set_id}'");
@@ -191,7 +229,7 @@ async fn wait_for_set(
         let set = record_common::optional_row(server, &set_sql);
         let segment = record_common::optional_row(server, &segment_sql);
         if set.as_ref().is_some_and(|row| {
-            row["rpe"].as_f64() == rpe.parse::<f64>().ok() && row["completed"].as_i64() == Some(1)
+            row["rpe"].as_f64() == expected_rpe && row["completed"].as_i64() == Some(1)
         }) && segment.as_ref().is_some_and(|row| {
             row["momentum_reps"].as_i64() == Some(momentum_reps)
                 && row["assisted_reps"].as_i64() == Some(assisted_reps)
@@ -210,11 +248,11 @@ async fn finish_and_check_the_summary(driver: &WebDriver) {
     browser::wait_for_route(driver, "/summary/:training_id").await;
     assert_eq!(
         browser::attribute(driver, "[data-summary]", "data-set-count").await,
-        "2"
+        "3"
     );
     assert_eq!(
         browser::attribute(driver, "[data-summary]", "data-total-weight-kg").await,
-        "1540"
+        "1840"
     );
 }
 

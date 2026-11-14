@@ -735,3 +735,106 @@ async fn req_set_006_and_007_rows_keep_the_breakdown_and_rpe_in_the_outbox() {
         .await
         .expect("the cleanup must work");
 }
+
+#[wasm_bindgen_test]
+async fn set_operations_reject_a_row_that_differs_from_the_payload() {
+    let name = database_name("set-operation-mismatch");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, CREATE_OPERATION_ID, "").await;
+
+    let (rows, create_operation) = training_set::create(
+        TRAINING_ID,
+        EXERCISE_ROW_ID,
+        1,
+        &values(SetKind::Normal, 100.0, 5),
+    )
+    .expect("the set");
+    let mut other_rpe = rows.set.clone();
+    other_rpe.rpe = Some(8.0);
+    assert!(
+        storage
+            .save_set_create(&other_rpe, &rows.segments, &create_operation)
+            .await
+            .is_err(),
+        "a created row with another RPE must be rejected"
+    );
+    let mut already_completed = rows.set.clone();
+    already_completed.completed = 1;
+    assert!(
+        storage
+            .save_set_create(&already_completed, &rows.segments, &create_operation)
+            .await
+            .is_err(),
+        "a created row that is already completed must be rejected"
+    );
+    assert!(storage
+        .training_sets(EXERCISE_ROW_ID)
+        .await
+        .expect("the sets must be readable")
+        .is_empty());
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox")
+        .iter()
+        .all(|entry| entry.operation.operation_id != create_operation.operation_id));
+
+    storage
+        .save_set_create(&rows.set, &rows.segments, &create_operation)
+        .await
+        .expect("the set must be saved");
+
+    let updated_values = values(SetKind::Normal, 110.0, 6);
+    let (updated, update_operation) =
+        training_set::update(TRAINING_ID, &rows.set, &rows.segments, &updated_values)
+            .expect("the update");
+    let mut other_rpe = updated.set.clone();
+    other_rpe.rpe = Some(8.0);
+    assert!(
+        storage
+            .save_set_update(&other_rpe, &updated.segments, &update_operation)
+            .await
+            .is_err(),
+        "an updated row with another RPE must be rejected"
+    );
+    let stored = storage
+        .training_sets(EXERCISE_ROW_ID)
+        .await
+        .expect("the sets must be readable");
+    assert_eq!(stored[0].set.rpe, None);
+    assert_eq!(stored[0].segments[0].weight_kg, Some(100.0));
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox")
+        .iter()
+        .all(|entry| entry.operation.operation_id != update_operation.operation_id));
+
+    let (completed, complete_operation) =
+        training_set::complete(TRAINING_ID, &rows.set, true).expect("the completion");
+    let mut uncompleted = completed.clone();
+    uncompleted.completed = 0;
+    assert!(
+        storage
+            .save_set_complete(&uncompleted, &complete_operation)
+            .await
+            .is_err(),
+        "a completion whose row disagrees with the payload must be rejected"
+    );
+    let stored = storage
+        .training_sets(EXERCISE_ROW_ID)
+        .await
+        .expect("the sets must be readable");
+    assert_eq!(stored[0].set.completed, 0);
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox")
+        .iter()
+        .all(|entry| entry.operation.operation_id != complete_operation.operation_id));
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}

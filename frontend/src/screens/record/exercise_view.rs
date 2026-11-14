@@ -405,7 +405,7 @@ pub(super) async fn save_set_loop(
     training_id: String,
     set_id: String,
     views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    mut error: Signal<Option<String>>,
     saver: SetSaver,
 ) {
     if !saver.start(&set_id) {
@@ -417,6 +417,7 @@ pub(super) async fn save_set_loop(
             set_error(error, key);
             break;
         }
+        error.set(None);
         let revision = set.revision;
         let values = set.values(lateral);
         let segment_records = set

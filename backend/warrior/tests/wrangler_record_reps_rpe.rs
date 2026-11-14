@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use support::DevServer;
 use warrior_core::base64url;
 
-const PORT: u16 = 8829;
+const PORT: u16 = 8845;
 
 const WARMUP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5a10";
 const WARMUP_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5a11";

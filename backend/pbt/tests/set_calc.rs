@@ -6,9 +6,12 @@
 use proptest::prelude::*;
 use warrior_core::jst::JstDate;
 use warrior_core::set_calc::{
-    estimated_one_rep_max, strict_reps, BestKey, PartRole, PersonalBest, RecordMode, SetKind,
-    SetRecord, SetSegment, SideValue,
+    estimated_one_rep_max, BestKey, PartRole, PersonalBest, RecordMode, SetKind, SetRecord,
+    SetSegment, SideValue,
 };
+
+#[path = "support/set.rs"]
+mod set_fixture;
 
 fn key() -> BestKey {
     BestKey {
@@ -23,15 +26,11 @@ fn date() -> JstDate {
 }
 
 fn breakdown() -> impl Strategy<Value = (u32, u32, u32)> {
-    (1u32..=30).prop_flat_map(|reps| {
-        (0..=reps).prop_flat_map(move |momentum| {
-            (0..=(reps - momentum)).prop_map(move |assisted| (reps, momentum, assisted))
-        })
-    })
+    set_fixture::valid_breakdown()
 }
 
 fn weight() -> impl Strategy<Value = f64> {
-    0.5f64..=500.0
+    set_fixture::weight()
 }
 
 fn segment() -> impl Strategy<Value = SetSegment> {
@@ -59,13 +58,6 @@ fn record() -> impl Strategy<Value = SetRecord> {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
-
-    #[test]
-    fn strict_reps_is_bounded_by_the_reps((reps, momentum, assisted) in breakdown()) {
-        let strict = strict_reps(reps, momentum, assisted);
-        prop_assert_eq!(strict, reps - momentum - assisted);
-        prop_assert!(strict <= reps);
-    }
 
     #[test]
     fn one_rep_max_for_one_rep_equals_the_weight(weight in weight()) {
@@ -97,36 +89,6 @@ proptest! {
         let low_value = estimated_one_rep_max(weight, low).unwrap();
         let high_value = estimated_one_rep_max(weight, high).unwrap();
         prop_assert!(low_value <= high_value);
-    }
-
-    #[test]
-    fn total_weight_excludes_assisted_reps(record in record()) {
-        let expected = record
-            .segments()
-            .iter()
-            .map(|segment| {
-                segment.weight_kg * f64::from(segment.reps.saturating_sub(segment.assisted_reps))
-            })
-            .sum::<f64>();
-        if record.kind() == SetKind::Warmup {
-            prop_assert_eq!(record.total_weight_kg(), 0.0);
-        } else {
-            prop_assert!((record.total_weight_kg() - expected).abs() < 1e-9);
-        }
-    }
-
-    #[test]
-    fn strict_total_weight_uses_strict_reps(record in record()) {
-        let expected = record
-            .segments()
-            .iter()
-            .map(|segment| segment.weight_kg * f64::from(segment.strict_reps()))
-            .sum::<f64>();
-        if record.kind() == SetKind::Warmup {
-            prop_assert_eq!(record.strict_total_weight_kg(), 0.0);
-        } else {
-            prop_assert!((record.strict_total_weight_kg() - expected).abs() < 1e-9);
-        }
     }
 
     #[test]

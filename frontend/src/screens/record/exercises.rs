@@ -233,7 +233,11 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                 }
             }
             if let Some(message) = load_error {
-                p { class: "text-[13px] text-primary", "{message}" }
+                p {
+                    class: "text-[13px] text-primary",
+                    "data-record-error": "true",
+                    "{message}"
+                }
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
                     onclick: move |_| reload.set((reload)() + 1),
