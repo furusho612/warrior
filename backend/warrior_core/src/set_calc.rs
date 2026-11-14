@@ -601,10 +601,8 @@ impl PersonalBest {
 }
 
 pub(crate) fn validate_rpe(rpe: Option<f64>) -> Result<(), SetValidationError> {
-    if let Some(rpe) = rpe {
-        if !(6.0..=10.0).contains(&rpe) || (rpe * 2.0).fract() != 0.0 {
-            return Err(SetValidationError::InvalidRpe);
-        }
+    if rpe.is_some_and(|rpe| !crate::rpe::is_valid(rpe)) {
+        return Err(SetValidationError::InvalidRpe);
     }
     Ok(())
 }
@@ -621,7 +619,9 @@ fn validate_weight_segment(segment: &SetSegment) -> Result<(), SetValidationErro
         if segment.reps == 0 {
             return Err(SetValidationError::InvalidReps);
         }
-        if segment.momentum_reps + segment.assisted_reps > segment.reps {
+        if u64::from(segment.momentum_reps) + u64::from(segment.assisted_reps)
+            > u64::from(segment.reps)
+        {
             return Err(SetValidationError::TooManyAssistedReps);
         }
     }
@@ -635,7 +635,9 @@ fn validate_weight_segment(segment: &SetSegment) -> Result<(), SetValidationErro
         if side.reps == 0 {
             return Err(SetValidationError::InvalidReps);
         }
-        if segment.momentum_reps + segment.assisted_reps > side.reps {
+        if u64::from(segment.momentum_reps) + u64::from(segment.assisted_reps)
+            > u64::from(side.reps)
+        {
             return Err(SetValidationError::TooManyAssistedReps);
         }
     }
@@ -1070,6 +1072,26 @@ mod tests {
     }
 
     #[test]
+    fn validation_accepts_breakdown_equal_to_the_reps() {
+        let mut segment = segment(100.0, 5);
+        segment.momentum_reps = 3;
+        segment.assisted_reps = 2;
+        let record = SetRecord::new(
+            key(),
+            SetKind::Normal,
+            vec![segment],
+            None,
+            None,
+            RecordMode::WeightAndReps,
+        )
+        .expect("a set whose breakdown equals the reps");
+        assert_eq!(record.segments()[0].strict_reps(), 0);
+        assert_eq!(record.total_weight_kg(), 300.0);
+        assert_eq!(record.strict_total_weight_kg(), 0.0);
+        assert_eq!(record.estimated_one_rep_max(), None);
+    }
+
+    #[test]
     fn validation_rejects_too_many_assisted_reps() {
         let mut segment = segment(100.0, 5);
         segment.momentum_reps = 3;
@@ -1088,8 +1110,22 @@ mod tests {
     }
 
     #[test]
+    fn validation_accepts_an_empty_rpe() {
+        let record = SetRecord::new(
+            key(),
+            SetKind::Normal,
+            vec![segment(100.0, 5)],
+            None,
+            None,
+            RecordMode::WeightAndReps,
+        )
+        .expect("an empty RPE is allowed");
+        assert_eq!(record.rpe(), None);
+    }
+
+    #[test]
     fn validation_rejects_invalid_rpe() {
-        for rpe in [5.5, 10.5, 7.25] {
+        for rpe in [5.5, 10.5, 7.25, 6.25] {
             assert_eq!(
                 SetRecord::new(
                     key(),
@@ -1106,7 +1142,7 @@ mod tests {
 
     #[test]
     fn validation_accepts_rpe_of_six_to_ten_in_half_steps() {
-        for rpe in [6.0, 7.5, 10.0] {
+        for rpe in [6.0, 6.5, 7.5, 10.0] {
             assert!(SetRecord::new(
                 key(),
                 SetKind::Normal,

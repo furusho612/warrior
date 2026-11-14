@@ -27,6 +27,7 @@ mod exercise_view;
 mod exercises;
 mod failed_operations;
 mod ownership;
+mod set_drawer;
 mod set_events;
 mod set_inputs;
 mod sets;
@@ -247,7 +248,6 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
                 training_id: training_id.clone(),
                 signals,
             }
-            SetDrawer {}
             RecordLoadError {
                 training_id: training_id.clone(),
                 signals,
@@ -275,18 +275,6 @@ fn ProfilePrompt() -> Element {
                 class: "flex min-h-11 items-center border border-line px-3 text-[13px] text-primary",
                 "{text(Key::ProfilePromptAction)}"
             }
-        }
-    }
-}
-
-#[component]
-fn SetDrawer() -> Element {
-    rsx! {
-        aside {
-            class: "hidden border border-line bg-surface p-3",
-            "data-set-drawer": "true",
-            h2 { class: "text-sm font-bold", "{text(Key::RecordSetDetail)}" }
-            p { class: "text-[11px] text-text-sub", "{text(Key::RecordSetDetailEmpty)}" }
         }
     }
 }

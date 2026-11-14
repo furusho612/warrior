@@ -17,8 +17,9 @@ use super::exercise_view::{
     dispatch, dissolve_superset, exercise_diff, save_superset_group, training_difference,
     ExerciseView, SetSaver, SupersetGroupView,
 };
+use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
-use super::sets::{format_number, set_kind_text, SetAction, SetTable, SetView};
+use super::sets::{format_number, set_kind_text, SelectedSet, SetAction, SetTable, SetView};
 use super::superset_panel::{SupersetCandidate, SupersetPanel};
 use super::RecordSignals;
 use crate::previous as previous_api;
@@ -33,6 +34,8 @@ use crate::training_exercise;
 #[component]
 pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> Element {
     let views = use_signal(Vec::<ExerciseView>::new);
+    let selected_set = use_signal(|| Option::<String>::None);
+    use_context_provider(|| SelectedSet(selected_set));
     let rail = use_context::<Signal<RecordRailState>>();
     let previous_training = use_signal(|| Option::<PreviousTraining>::None);
     let error = use_signal(|| Option::<String>::None);
@@ -248,6 +251,8 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                     let up_id = view.record.id.clone();
                     let down_id = view.record.id.clone();
                     let delete_id = view.record.id.clone();
+                    let drawer_mode = view.snapshot.record_mode;
+                    let drawer_rows = view.sets.clone();
                     rsx! {
                         ExerciseDetail {
                             view,
@@ -262,6 +267,12 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                             on_delete: move |_| on_delete.call(delete_id.clone()),
                             on_superset_create,
                             on_superset_delete,
+                        }
+                        SetDrawer {
+                            rows: drawer_rows,
+                            mode: drawer_mode,
+                            disabled: view_only,
+                            on_action,
                         }
                     }
                 }

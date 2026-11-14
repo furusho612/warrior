@@ -14,6 +14,7 @@ use warrior_core::previous::{
     exercise_difference, total_weight_difference, ExerciseDifference, PreviousExercise,
     PreviousTraining, TotalWeightDifference,
 };
+use warrior_core::rpe;
 use warrior_core::set_calc::SetKind;
 use warrior_core::superset::{rest_timer_starts, SupersetMembers};
 use warrior_core::training_record::TrainingExerciseRecord;
@@ -157,6 +158,8 @@ pub(super) fn update_set_input(
     match field {
         Field::Weight => segment.weight = value,
         Field::Reps => segment.reps = value,
+        Field::Momentum => segment.momentum = value,
+        Field::Assisted => segment.assisted = value,
         Field::Duration => segment.duration = value,
         Field::LeftWeight => segment.left_weight = value,
         Field::LeftReps => segment.left_reps = value,
@@ -166,6 +169,24 @@ pub(super) fn update_set_input(
     if set.completed() && !set.values(lateral).is_complete() {
         set.record.completed = 0;
     }
+    set.bump();
+    views.set(list);
+}
+
+/// セットの RPE を画面へ反映する。
+pub(super) fn update_set_rpe(mut views: Signal<Vec<ExerciseView>>, set_id: &str, value: String) {
+    let mut list = (views)();
+    let Some(set) = list
+        .iter_mut()
+        .flat_map(|view| view.sets.iter_mut())
+        .find(|set| set.record.id == set_id)
+    else {
+        return;
+    };
+    if let Ok(value) = rpe::parse(&value) {
+        set.record.rpe = value;
+    }
+    set.rpe = value;
     set.bump();
     views.set(list);
 }
@@ -258,6 +279,8 @@ pub(super) fn append_segment(
         },
         weight: String::new(),
         reps: String::new(),
+        momentum: String::new(),
+        assisted: String::new(),
         duration: String::new(),
         left_weight: String::new(),
         left_reps: String::new(),
@@ -331,6 +354,8 @@ pub(super) async fn add_set(
         segments: vec![SetSegmentValues {
             weight_kg: 0.0,
             reps: 0,
+            momentum_reps: 0,
+            assisted_reps: 0,
             duration_seconds: None,
             left: side,
             right: side,
@@ -388,6 +413,10 @@ pub(super) async fn save_set_loop(
     }
     let lateral = lateral_for_set(views, &set_id);
     while let Some(set) = find_set(views, &set_id) {
+        if let Some(key) = set.validation_error(lateral) {
+            set_error(error, key);
+            break;
+        }
         let revision = set.revision;
         let values = set.values(lateral);
         let segment_records = set
@@ -911,6 +940,10 @@ pub(super) fn dispatch(
             value,
         } => {
             update_set_input(views, &set_id, &segment_id, field, value);
+            spawn(save_set_loop(training_id, set_id, views, error, saver));
+        }
+        SetAction::Rpe { set_id, value } => {
+            update_set_rpe(views, &set_id, value);
             spawn(save_set_loop(training_id, set_id, views, error, saver));
         }
         SetAction::Kind { set_id, kind } => {

@@ -466,6 +466,8 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
                 && payload.position == segment.position
                 && payload.weight_kg == segment.weight_kg.unwrap_or(0.0)
                 && payload.reps == u32::try_from(segment.reps.unwrap_or(0)).unwrap_or(0)
+                && segment.momentum_reps == i64::from(payload.momentum_reps)
+                && segment.assisted_reps == i64::from(payload.assisted_reps)
                 && payload.duration_seconds
                     == segment
                         .duration_seconds

@@ -9,6 +9,7 @@ use dioxus::prelude::*;
 use warrior_core::exercise::{GripSelection, Laterality, RecordMode};
 use warrior_core::previous::PreviousSet;
 use warrior_core::profile::bodyweight_set_weight;
+use warrior_core::rpe;
 use warrior_core::set_calc::{BestKey, SetKind, SetRecord, SetSegment, SideValue};
 use warrior_core::set_rules;
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
@@ -40,6 +41,13 @@ pub(super) enum SetAction {
         segment_id: String,
         /// 入力の欄。
         field: Field,
+        /// 入力の値。
+        value: String,
+    },
+    /// RPE を変える。
+    Rpe {
+        /// セットの ID。
+        set_id: String,
         /// 入力の値。
         value: String,
     },
@@ -81,6 +89,10 @@ pub(super) enum SetAction {
     },
 }
 
+/// セット詳細の drawer が開いているセット。
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct SelectedSet(pub(super) Signal<Option<String>>);
+
 /// 画面が読む 1 つの段。
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct SegmentView {
@@ -90,6 +102,10 @@ pub(super) struct SegmentView {
     pub(super) weight: String,
     /// 回数の入力。
     pub(super) reps: String,
+    /// 反動を使った回数の入力。
+    pub(super) momentum: String,
+    /// 補助を受けた回数の入力。
+    pub(super) assisted: String,
     /// 時間の入力。
     pub(super) duration: String,
     /// 左の重量または加重の入力。
@@ -107,6 +123,8 @@ impl SegmentView {
         Self {
             weight: number_text(record.weight_kg.unwrap_or(0.0)),
             reps: count_text(record.reps.unwrap_or(0)),
+            momentum: count_text(record.momentum_reps),
+            assisted: count_text(record.assisted_reps),
             duration: duration_text(record.duration_seconds),
             left_weight: number_text(record.left_weight_kg.unwrap_or(0.0)),
             left_reps: count_text(record.left_reps.unwrap_or(0)),
@@ -124,6 +142,8 @@ impl SegmentView {
         SetSegmentValues {
             weight_kg: parse_number(&self.weight).unwrap_or(0.0),
             reps: parse_count(&self.reps).unwrap_or(0),
+            momentum_reps: parse_count_or_zero(&self.momentum),
+            assisted_reps: parse_count_or_zero(&self.assisted),
             duration_seconds: parse_duration(&self.duration),
             left: lateral.then(|| side(&self.left_weight, &self.left_reps)),
             right: lateral.then(|| side(&self.right_weight, &self.right_reps)),
@@ -134,6 +154,9 @@ impl SegmentView {
         match mode {
             RecordMode::Time => parse_duration(&self.duration).is_some(),
             RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+                if self.breakdown_invalid(lateral) {
+                    return false;
+                }
                 if lateral {
                     parse_count(&self.left_reps).is_some()
                         && parse_number(&self.left_weight).is_some()
@@ -152,12 +175,14 @@ impl SegmentView {
         body_weight_kg: Option<f64>,
         lateral: bool,
     ) -> Option<SetSegment> {
+        let momentum_reps = parse_count_or_zero(&self.momentum);
+        let assisted_reps = parse_count_or_zero(&self.assisted);
         if lateral {
             return Some(SetSegment {
                 weight_kg: 0.0,
                 reps: 0,
-                momentum_reps: 0,
-                assisted_reps: 0,
+                momentum_reps,
+                assisted_reps,
                 left: Some(self.to_side(
                     mode,
                     body_weight_kg,
@@ -184,12 +209,24 @@ impl SegmentView {
         Some(SetSegment {
             weight_kg: weight,
             reps,
-            momentum_reps: 0,
-            assisted_reps: 0,
+            momentum_reps,
+            assisted_reps,
             left: None,
             right: None,
             duration_seconds: None,
         })
+    }
+
+    fn breakdown_invalid(&self, lateral: bool) -> bool {
+        let used = u64::from(parse_count_or_zero(&self.momentum))
+            + u64::from(parse_count_or_zero(&self.assisted));
+        if lateral {
+            let left = parse_count(&self.left_reps).unwrap_or(0);
+            let right = parse_count(&self.right_reps).unwrap_or(0);
+            used > u64::from(left) || used > u64::from(right)
+        } else {
+            used > u64::from(parse_count(&self.reps).unwrap_or(0))
+        }
     }
 
     fn to_side(
@@ -222,6 +259,8 @@ pub(super) struct SetView {
     pub(super) record: SetRecordRow,
     /// 端末内の保存の段。並び順である。
     pub(super) segments: Vec<SegmentView>,
+    /// RPE の入力。空でもよい。
+    pub(super) rpe: String,
     /// 入力の版。保存の完了を判定する。
     pub(super) revision: u64,
 }
@@ -233,6 +272,7 @@ impl SetView {
             return None;
         }
         Some(Self {
+            rpe: rpe_text(stored.set.rpe),
             record: stored.set,
             segments: stored
                 .segments
@@ -246,6 +286,7 @@ impl SetView {
     /// 保存した行から画面の行を作る。
     pub(super) fn from_rows(record: SetRecordRow, segments: Vec<SetSegmentRecord>) -> Self {
         Self {
+            rpe: rpe_text(record.rpe),
             record,
             segments: segments.into_iter().map(SegmentView::from_record).collect(),
             revision: 0,
@@ -273,9 +314,24 @@ impl SetView {
                 .collect::<Vec<_>>(),
             completed: self.completed(),
             body_weight_kg: self.record.body_weight_kg,
-            rpe: self.record.rpe,
+            rpe: rpe::parse(&self.rpe).ok().flatten(),
             grip: grip_selection(&self.record),
         }
+    }
+
+    /// 入力の誤りを返す。RPE と回数の内訳を確かめる。
+    pub(super) fn validation_error(&self, lateral: bool) -> Option<Key> {
+        if rpe::parse(&self.rpe).is_err() {
+            return Some(Key::RecordSetRpeInvalid);
+        }
+        if self
+            .segments
+            .iter()
+            .any(|segment| segment.breakdown_invalid(lateral))
+        {
+            return Some(Key::RecordSetBreakdownInvalid);
+        }
+        None
     }
 
     /// 完了できるか。時間の種目は時間、それ以外は回数が要る。
@@ -284,6 +340,9 @@ impl SetView {
             return true;
         }
         if self.segments.is_empty() {
+            return false;
+        }
+        if self.validation_error(lateral).is_some() {
             return false;
         }
         self.segments
@@ -310,9 +369,11 @@ impl SetView {
         match mode {
             RecordMode::Time => {
                 let duration = parse_duration(&self.segments.first()?.duration)?;
-                SetRecord::new(key, kind, Vec::new(), self.record.rpe, Some(duration), mode).ok()
+                let rpe = rpe::parse(&self.rpe).ok().flatten();
+                SetRecord::new(key, kind, Vec::new(), rpe, Some(duration), mode).ok()
             }
             RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+                let rpe = rpe::parse(&self.rpe).ok().flatten();
                 let segments = self
                     .segments
                     .iter()
@@ -320,7 +381,7 @@ impl SetView {
                         segment.to_set_segment(mode, self.record.body_weight_kg, lateral)
                     })
                     .collect::<Option<Vec<_>>>()?;
-                SetRecord::new(key, kind, segments, self.record.rpe, None, mode).ok()
+                SetRecord::new(key, kind, segments, rpe, None, mode).ok()
             }
         }
     }
@@ -377,6 +438,8 @@ pub(super) fn previous_values(
             SetSegmentValues {
                 weight_kg: weight,
                 reps: segment.reps,
+                momentum_reps: segment.momentum_reps,
+                assisted_reps: segment.assisted_reps,
                 duration_seconds: duration,
                 left: lateral.then(|| side(segment.left.as_ref())),
                 right: lateral.then(|| side(segment.right.as_ref())),
@@ -476,6 +539,8 @@ fn SetRow(
 ) -> Element {
     let set_id = set.record.id.clone();
     let add_segment_id = set.record.id.clone();
+    let mut selected_set = use_context::<SelectedSet>();
+    let open_id = set.record.id.clone();
     let completed = set.completed();
     let mode = if is_time {
         RecordMode::Time
@@ -513,7 +578,13 @@ fn SetRow(
             "data-set-completed": if completed { "true" } else { "false" },
             div {
                 class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
-                span { class: "w-4 shrink-0 text-[11px] text-text-sub", "{number_text}" }
+                button {
+                    class: "w-4 shrink-0 text-left text-[11px] text-text-sub",
+                    "data-set-open": "true",
+                    "aria-label": "{text(Key::RecordSetDetail)}",
+                    onclick: move |_| selected_set.0.set(Some(open_id.clone())),
+                    "{number_text}"
+                }
                 KindSelect {
                     set_id: set.record.id.clone(),
                     kind,
@@ -831,6 +902,14 @@ fn parse_count(text: &str) -> Option<u32> {
     (value > 0).then_some(value)
 }
 
+fn parse_count_or_zero(text: &str) -> u32 {
+    text.trim().parse::<u32>().unwrap_or(0)
+}
+
+fn rpe_text(value: Option<f64>) -> String {
+    value.map_or_else(String::new, rpe::format)
+}
+
 fn parse_duration(text: &str) -> Option<u32> {
     let value = text.trim().parse::<u32>().ok()?;
     (1..=86_400).contains(&value).then_some(value)
@@ -845,7 +924,7 @@ fn grip_selection(record: &SetRecordRow) -> Option<GripSelection> {
 
 #[cfg(test)]
 mod tests {
-    //! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`。
+    //! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-006`、`REQ-SET-007`。
 
     use warrior_core::exercise::Laterality;
     use warrior_core::previous::PreviousSet;
@@ -854,6 +933,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test_configure;
 
     use super::{previous_values, set_numbers, SetView};
+    use crate::text::Key;
 
     wasm_bindgen_test_configure!(run_in_browser);
 
@@ -975,6 +1055,21 @@ mod tests {
         assert_eq!(set_numbers(&rows), vec![Some(1), None, Some(2)]);
     }
 
+    #[wasm_bindgen_test]
+    fn req_set_007_the_drawer_formats_and_validates_rpe() {
+        let mut record = set_view("normal").record;
+        record.rpe = Some(6.5);
+        let mut view = SetView::from_rows(record, Vec::new());
+        assert_eq!(view.rpe, "6.5");
+        assert_eq!(view.validation_error(false), None);
+        view.rpe = "10.0".to_owned();
+        assert_eq!(view.validation_error(false), None);
+        view.rpe = "7.25".to_owned();
+        assert_eq!(view.validation_error(false), Some(Key::RecordSetRpeInvalid));
+        view.rpe = String::new();
+        assert_eq!(view.validation_error(false), None);
+    }
+
     fn set_view(kind: &str) -> SetView {
         SetView {
             record: warrior_core::training_record::SetRecordRow {
@@ -991,6 +1086,7 @@ mod tests {
                 updated_at: "2026-11-12T00:00:00Z".to_owned(),
             },
             segments: Vec::new(),
+            rpe: String::new(),
             revision: 0,
         }
     }

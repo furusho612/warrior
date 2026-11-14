@@ -3,6 +3,8 @@
 //! セットの追加、更新、削除、並べ替え、完了の操作は端末で作り、サーバーが検証して
 //! 保存する (ADR-002)。記録した時点の体重はセットの行に持ち、段の重量は自重種目では
 //! セットごとの加重とする。ドロップセットは 1 つのセットに複数の段を持つ。
+//! 段は反動と補助の回数を持ち、セットは RPE を持つ。RPE と回数の内訳は
+//! `warrior_core::rpe` の規則で検証する。
 //! 操作の ID と順序は保存のときに `frontend/src/storage` が決める。
 
 use warrior_core::exercise::GripSelection;
@@ -32,6 +34,10 @@ pub struct SetSegmentValues {
     pub weight_kg: f64,
     /// 回数。
     pub reps: u32,
+    /// 反動を使った回数。
+    pub momentum_reps: u32,
+    /// 補助を受けた回数。
+    pub assisted_reps: u32,
     /// 時間で記録する場合の秒数。
     pub duration_seconds: Option<u32>,
     /// 左の値。左右別の種目だけが持つ。
@@ -100,6 +106,7 @@ pub fn create(
     position: i64,
     values: &SetValues,
 ) -> Result<(SetRows, Operation), StorageError> {
+    validate(values)?;
     if values.segments.is_empty() {
         return Err(StorageError::InvalidOperation(
             "the set has no segments".to_owned(),
@@ -160,6 +167,7 @@ pub fn update(
     segments: &[SetSegmentRecord],
     values: &SetValues,
 ) -> Result<(SetRows, Operation), StorageError> {
+    validate(values)?;
     if segments.len() != values.segments.len() {
         return Err(StorageError::InvalidOperation(
             "the update must keep the number of segments".to_owned(),
@@ -285,8 +293,8 @@ fn segment_record(
         position,
         weight_kg: Some(values.weight_kg),
         reps: Some(i64::from(values.reps)),
-        momentum_reps: 0,
-        assisted_reps: 0,
+        momentum_reps: i64::from(values.momentum_reps),
+        assisted_reps: i64::from(values.assisted_reps),
         duration_seconds: values.duration_seconds.map(i64::from),
         left_weight_kg: values.left.map(|side| side.weight_kg),
         left_reps: values.left.map(|side| i64::from(side.reps)),
@@ -309,8 +317,8 @@ fn updated_segment_record(
         position,
         weight_kg: Some(values.weight_kg),
         reps: Some(i64::from(values.reps)),
-        momentum_reps: 0,
-        assisted_reps: 0,
+        momentum_reps: i64::from(values.momentum_reps),
+        assisted_reps: i64::from(values.assisted_reps),
         duration_seconds: values.duration_seconds.map(i64::from),
         left_weight_kg: values.left.map(|side| side.weight_kg),
         left_reps: values.left.map(|side| i64::from(side.reps)),
@@ -333,8 +341,8 @@ fn payload_segments(segment_ids: &[String], values: &[SetSegmentValues]) -> Vec<
             position: position_of(index),
             weight_kg: values.weight_kg,
             reps: values.reps,
-            momentum_reps: 0,
-            assisted_reps: 0,
+            momentum_reps: values.momentum_reps,
+            assisted_reps: values.assisted_reps,
             duration_seconds: values.duration_seconds,
             left: values.left.map(side_payload),
             right: values.right.map(side_payload),
@@ -352,6 +360,32 @@ fn side_payload(values: SegmentSideValues) -> warrior_core::set_calc::SideValue 
 
 fn position_of(index: usize) -> i64 {
     i64::try_from(index).unwrap_or(i64::MAX).saturating_add(1)
+}
+
+fn validate(values: &SetValues) -> Result<(), StorageError> {
+    if values
+        .rpe
+        .is_some_and(|rpe| !warrior_core::rpe::is_valid(rpe))
+    {
+        return Err(StorageError::InvalidOperation(
+            "the RPE is invalid".to_owned(),
+        ));
+    }
+    for segment in &values.segments {
+        let used = u64::from(segment.momentum_reps) + u64::from(segment.assisted_reps);
+        let over_reps = match (segment.left.as_ref(), segment.right.as_ref()) {
+            (Some(left), Some(right)) => {
+                used > u64::from(left.reps) || used > u64::from(right.reps)
+            }
+            _ => used > u64::from(segment.reps),
+        };
+        if over_reps {
+            return Err(StorageError::InvalidOperation(
+                "the breakdown exceeds the reps".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn grip_json(grip: Option<GripSelection>) -> Option<String> {

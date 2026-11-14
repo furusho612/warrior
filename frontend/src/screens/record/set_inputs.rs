@@ -17,6 +17,10 @@ pub(super) enum Field {
     Weight,
     /// 回数。
     Reps,
+    /// 反動を使った回数。
+    Momentum,
+    /// 補助を受けた回数。
+    Assisted,
     /// 時間。
     Duration,
     /// 左の重量または加重。
