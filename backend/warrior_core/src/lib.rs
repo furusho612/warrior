@@ -14,6 +14,7 @@ pub mod ids;
 pub mod jst;
 pub mod nutrition;
 pub mod ownership;
+pub mod profile;
 pub mod pwa;
 pub mod rate_limit;
 pub mod set_calc;

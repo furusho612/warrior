@@ -24,7 +24,7 @@ struct ApiResult {
 }
 
 #[component]
-pub fn AccountScreen() -> Element {
+pub fn AccountSettings() -> Element {
     let passkeys = use_signal(Vec::<PasskeyItem>::new);
     let message = use_signal(String::new);
     let needs_reauth = use_signal(|| false);
@@ -36,11 +36,7 @@ pub fn AccountScreen() -> Element {
     });
 
     rsx! {
-        section {
-            class: "flex min-h-full flex-col gap-4 p-5",
-            "data-route": "/mypage",
-            h1 { class: "text-lg font-bold", "{text(Key::MyPageTitle)}" }
-            p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::MyPageDescription)}" }
+        div { class: "flex flex-col gap-3",
             div { class: "flex flex-col gap-2 border border-line bg-surface p-3",
                 h2 { class: "text-sm font-bold", "{text(Key::PasskeyTitle)}" }
                 p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::PasskeyDescription)}" }

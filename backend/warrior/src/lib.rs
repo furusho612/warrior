@@ -13,6 +13,7 @@ pub mod error;
 pub mod exercise;
 pub mod log;
 pub mod ownership;
+pub mod profile;
 pub mod random;
 pub mod rate_limit;
 pub mod router;

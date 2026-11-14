@@ -30,7 +30,7 @@ const EXERCISES_QUERY: &str = "SELECT id, training_id, exercise_id, snapshot, po
      FROM training_exercises WHERE user_id = ? AND training_id = ? ORDER BY position, id";
 
 const SETS_QUERY: &str = "SELECT s.id, s.training_exercise_id, s.position, s.kind, s.completed, \
-     s.rpe, s.grip, s.recorded_at, s.created_at, s.updated_at \
+     s.rpe, s.grip, s.body_weight_kg, s.recorded_at, s.created_at, s.updated_at \
      FROM sets s JOIN training_exercises te ON te.id = s.training_exercise_id \
      WHERE te.user_id = ? AND te.training_id = ? \
      ORDER BY s.training_exercise_id, s.position";
