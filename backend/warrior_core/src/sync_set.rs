@@ -1,6 +1,7 @@
 //! セットの追加、更新、削除、並べ替え、完了の操作の本文の検証。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-004`、`REQ-LIB-004`、`REQ-PRF-005`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-004`、`REQ-SET-006`、
+//! `REQ-SET-007`、`REQ-LIB-004`、`REQ-PRF-005`。
 //! `warrior_core::sync` の操作の検証から呼ぶ。本文を操作のトレーニングの ID、セットの
 //! ID、段、セット種別、RPE、記録した時点の体重について確かめ、`SetRecord` への変換を
 //! 提供する。段の入力は warrior_core::set_calc の計算規則と同じ形にそろえる。
@@ -168,7 +169,10 @@ fn validate_segment(segment: &SetSegmentPayload) -> Result<(), SyncError> {
         }
     }
     let has_sides = segment.left.is_some() || segment.right.is_some();
-    if !has_sides && segment.momentum_reps + segment.assisted_reps > segment.reps {
+    if !has_sides
+        && u64::from(segment.momentum_reps) + u64::from(segment.assisted_reps)
+            > u64::from(segment.reps)
+    {
         return Err(SyncError::InvalidReps);
     }
     for side in [segment.left.as_ref(), segment.right.as_ref()]
@@ -196,7 +200,7 @@ fn validate_side(
             return Err(SyncError::InvalidDuration);
         }
     }
-    if momentum_reps + assisted_reps > side.reps {
+    if u64::from(momentum_reps) + u64::from(assisted_reps) > u64::from(side.reps) {
         return Err(SyncError::InvalidReps);
     }
     Ok(())

@@ -11,8 +11,8 @@ use warrior_core::set_rules;
 
 use super::set_inputs::{SegmentInputs, SegmentInputsState};
 use super::sets::{
-    is_lateral, kind_change_allowed, move_candidate_valid, needs_segment_confirmation, set_numbers,
-    SegmentView, SetAction, SetView,
+    detail_open_label, is_lateral, kind_change_allowed, move_candidate_valid,
+    needs_segment_confirmation, set_numbers, SegmentView, SelectedSet, SetAction, SetView,
 };
 use crate::text::{text, Key};
 
@@ -131,6 +131,8 @@ struct SetRowState {
 fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
     let set_id = row.set.record.id.clone();
     let add_segment_id = row.set.record.id.clone();
+    let mut selected_set = use_context::<SelectedSet>();
+    let open_id = set_id.clone();
     let completed = row.set.completed();
     let ready = row.set.can_complete(row.mode, row.lateral);
     let kind = row.set.kind();
@@ -141,6 +143,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
     let number_text = row
         .number
         .map_or_else(|| "D".to_owned(), |number| number.to_string());
+    let open_label = detail_open_label(&number_text, is_drop);
     let first_segment = row.set.segments.first().cloned();
     let mut pending_kind = use_signal(|| Option::<SetKind>::None);
     let kind_set_id = set_id.clone();
@@ -183,7 +186,13 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
             "data-set-completed": if completed { "true" } else { "false" },
             div {
                 class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
-                span { class: "w-4 shrink-0 text-[11px] text-text-sub", "{number_text}" }
+                button {
+                    class: "min-h-11 min-w-11 shrink-0 text-left text-[11px] text-text-sub",
+                    "data-set-open": "true",
+                    "aria-label": "{open_label}",
+                    onclick: move |_| selected_set.0.set(Some(open_id.clone())),
+                    "{number_text}"
+                }
                 KindSelect {
                     kind,
                     disabled,

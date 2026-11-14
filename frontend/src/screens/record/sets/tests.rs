@@ -1,4 +1,7 @@
-//! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-004`。
+//! セットの入力と表のブラウザテスト。
+//!
+//! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-004`、`REQ-SET-006`、
+//! `REQ-SET-007`。
 
 use warrior_core::exercise::Laterality;
 use warrior_core::previous::PreviousSet;
@@ -7,7 +10,11 @@ use warrior_core::training_record::SetSegmentRecord;
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
-use super::{needs_segment_confirmation, previous_values, set_numbers, SegmentView, SetView};
+use super::{
+    detail_open_label, needs_segment_confirmation, parse_count_or_zero, previous_values,
+    set_numbers, SegmentView, SetView,
+};
+use crate::text::Key;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -169,6 +176,75 @@ fn a_unilateral_weight_needs_an_explicit_weight_to_complete() {
     assert!(bodyweight.can_complete(RecordMode::BodyweightAndReps, true));
 }
 
+#[wasm_bindgen_test]
+fn req_set_007_the_drawer_formats_and_validates_rpe() {
+    let mut record = set_view("normal").record;
+    record.rpe = Some(6.5);
+    let mut view = SetView::from_rows(record, Vec::new());
+    assert_eq!(view.rpe, "6.5");
+    assert_eq!(view.validation_error(false), None);
+    view.rpe = "10.0".to_owned();
+    assert_eq!(view.validation_error(false), None);
+    view.rpe = "7.25".to_owned();
+    assert_eq!(view.validation_error(false), Some(Key::RecordSetRpeInvalid));
+    view.rpe = String::new();
+    assert_eq!(view.validation_error(false), None);
+}
+
+#[wasm_bindgen_test]
+fn set_detail_open_labels_include_the_set_number() {
+    assert_eq!(detail_open_label("1", false), "セット 1 の詳細を開く");
+    assert_eq!(detail_open_label("2", false), "セット 2 の詳細を開く");
+    assert_eq!(
+        detail_open_label("D", true),
+        "ドロップセット D の詳細を開く"
+    );
+}
+
+#[wasm_bindgen_test]
+fn req_set_006_parse_count_or_zero_only_accepts_empty_or_u32() {
+    assert_eq!(parse_count_or_zero(""), Some(0));
+    assert_eq!(parse_count_or_zero("0"), Some(0));
+    assert_eq!(parse_count_or_zero("-1"), None);
+    assert_eq!(parse_count_or_zero("1.5"), None);
+    assert_eq!(parse_count_or_zero("4294967296"), None);
+    assert_eq!(parse_count_or_zero("x"), None);
+}
+
+#[wasm_bindgen_test]
+fn req_set_006_the_drawer_rejects_a_breakdown_of_invalid_counts() {
+    for (momentum, assisted) in [
+        ("-1", "0"),
+        ("1.5", "0"),
+        ("4294967296", "0"),
+        ("x", "0"),
+        ("0", "-1"),
+    ] {
+        let mut segment = breakdown_segment();
+        segment.momentum = momentum.to_owned();
+        segment.assisted = assisted.to_owned();
+        assert!(
+            segment.breakdown_invalid(false),
+            "the invalid counts {momentum} and {assisted} must be rejected"
+        );
+    }
+    let mut equal = breakdown_segment();
+    equal.momentum = "3".to_owned();
+    equal.assisted = "2".to_owned();
+    assert!(!equal.breakdown_invalid(false));
+    let empty = breakdown_segment();
+    assert!(!empty.breakdown_invalid(false));
+    let mut over = equal.clone();
+    over.assisted = "3".to_owned();
+    assert!(over.breakdown_invalid(false));
+}
+
+fn breakdown_segment() -> SegmentView {
+    let mut segment = segment_view("", "5", "", "4");
+    segment.reps = "5".to_owned();
+    segment
+}
+
 fn segment_view(
     left_weight: &str,
     left_reps: &str,
@@ -196,6 +272,8 @@ fn segment_view(
         },
         weight: String::new(),
         reps: String::new(),
+        momentum: String::new(),
+        assisted: String::new(),
         duration: String::new(),
         left_weight: left_weight.to_owned(),
         left_reps: left_reps.to_owned(),
@@ -220,6 +298,7 @@ fn set_view(kind: &str) -> SetView {
             updated_at: "2026-11-12T00:00:00Z".to_owned(),
         },
         segments: Vec::new(),
+        rpe: String::new(),
         revision: 0,
     }
 }

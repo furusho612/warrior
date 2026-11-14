@@ -4,6 +4,7 @@
 //! 操作を送信待ちの列へ積む (ADR-002)。段はセットの更新で全置換し、削除ではセットと
 //! 一緒に消す。記録した時点の体重はセットの行が持ち、段の重量は自重種目では加重である。
 
+use warrior_core::exercise::GripSelection;
 use warrior_core::sync::{
     Operation, OperationKind, OutboxEntry, SetCompletePayload, SetCreatePayload, SetDeletePayload,
     SetReorderPayload, SetSegmentPayload, SetUpdatePayload,
@@ -81,6 +82,12 @@ impl Storage {
         if payload.set_id != set.id
             || payload.training_exercise_id != set.training_exercise_id
             || payload.training_id != operation.training_id
+            || set.completed != 0
+            || payload.position != set.position
+            || payload.kind.as_str() != set.kind.as_str()
+            || payload.rpe != set.rpe
+            || !same_grip(payload.grip, set.grip.as_deref())
+            || payload.body_weight_kg != set.body_weight_kg
             || !same_segments(&payload.segments, segments)
         {
             return Err(StorageError::InvalidOperation(
@@ -127,6 +134,12 @@ impl Storage {
         let payload = update_payload(operation)?;
         if payload.set_id != set.id
             || payload.training_id != operation.training_id
+            || payload.position != set.position
+            || payload.kind.as_str() != set.kind.as_str()
+            || payload.completed != (set.completed != 0)
+            || payload.rpe != set.rpe
+            || !same_grip(payload.grip, set.grip.as_deref())
+            || payload.body_weight_kg != set.body_weight_kg
             || !same_segments(&payload.segments, segments)
         {
             return Err(StorageError::InvalidOperation(
@@ -278,7 +291,10 @@ impl Storage {
         operation: &Operation,
     ) -> Result<(), StorageError> {
         let payload = complete_payload(operation)?;
-        if payload.set_id != set.id || payload.training_id != operation.training_id {
+        if payload.set_id != set.id
+            || payload.training_id != operation.training_id
+            || payload.completed != (set.completed != 0)
+        {
             return Err(StorageError::InvalidOperation(
                 "the operation is not this set completion".to_owned(),
             ));
@@ -550,6 +566,14 @@ fn complete_payload(operation: &Operation) -> Result<SetCompletePayload, Storage
     }
     serde_json::from_value(operation.payload.clone())
         .map_err(|error| StorageError::Serialize(error.to_string()))
+}
+
+fn same_grip(grip: Option<GripSelection>, stored: Option<&str>) -> bool {
+    match (grip, stored) {
+        (None, None) => true,
+        (Some(grip), Some(stored)) => serde_json::to_string(&grip).ok().as_deref() == Some(stored),
+        _ => false,
+    }
 }
 
 fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -> bool {

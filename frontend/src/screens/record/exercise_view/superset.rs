@@ -3,7 +3,7 @@
 use dioxus::prelude::*;
 use warrior_core::superset::SupersetMembers;
 
-use super::set_error;
+use super::super::errors::{set_load_error, RecordErrors};
 use super::view::{ExerciseView, SupersetGroupView};
 use crate::storage;
 use crate::sync;
@@ -17,7 +17,7 @@ pub(in crate::screens::record) async fn save_superset_group(
     view_id: String,
     candidate_ids: Vec<String>,
     views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) -> bool {
     let Some(view) = (views)()
         .iter()
@@ -27,7 +27,7 @@ pub(in crate::screens::record) async fn save_superset_group(
         return false;
     };
     if view.superset.is_some() {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
     let mut members = vec![view.record.id.clone()];
@@ -43,11 +43,11 @@ pub(in crate::screens::record) async fn save_superset_group(
         .filter(|id| members.contains(id))
         .collect::<Vec<_>>();
     let Ok(members) = SupersetMembers::new(ordered) else {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
     let Ok(storage) = storage::current().await else {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
     let position = match storage.training_supersets(&training_id).await {
@@ -58,14 +58,14 @@ pub(in crate::screens::record) async fn save_superset_group(
             .unwrap_or(0)
             .saturating_add(1),
         Err(_) => {
-            set_error(error, Key::RecordSupersetSaveFailed);
+            set_load_error(error, Key::RecordSupersetSaveFailed);
             return false;
         }
     };
     let (record, operation) = match crate::superset::create(&training_id, position, &members) {
         Ok(rows) => rows,
         Err(_) => {
-            set_error(error, Key::RecordSupersetSaveFailed);
+            set_load_error(error, Key::RecordSupersetSaveFailed);
             return false;
         }
     };
@@ -74,7 +74,7 @@ pub(in crate::screens::record) async fn save_superset_group(
         .await
         .is_err()
     {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
     apply_superset_group(
@@ -93,16 +93,16 @@ pub(in crate::screens::record) async fn dissolve_superset(
     training_id: String,
     superset_id: String,
     views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) -> bool {
     let Ok(storage) = storage::current().await else {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
     let operation = match crate::superset::delete(&training_id, &superset_id) {
         Ok(operation) => operation,
         Err(_) => {
-            set_error(error, Key::RecordSupersetSaveFailed);
+            set_load_error(error, Key::RecordSupersetSaveFailed);
             return false;
         }
     };
@@ -111,7 +111,7 @@ pub(in crate::screens::record) async fn dissolve_superset(
         .await
         .is_err()
     {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
     clear_superset_group(views, &superset_id);

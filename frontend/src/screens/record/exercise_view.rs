@@ -16,11 +16,3 @@ pub(super) use operations::{dispatch, SetSaver};
 pub(super) use superset::{dissolve_superset, save_superset_group};
 pub(super) use totals::{exercise_diff, training_difference};
 pub(super) use view::{ExerciseView, SupersetGroupView};
-
-use dioxus::prelude::*;
-
-use crate::text::{text, Key};
-
-fn set_error(mut error: Signal<Option<String>>, key: Key) {
-    error.set(Some(text(key).to_owned()));
-}

@@ -15,13 +15,15 @@ use warrior_core::previous::{
     TotalWeightDifference,
 };
 
+use super::errors::{clear_load_error, retain_set_errors, set_load_error, RecordErrors};
 use super::exercise_view::{
     dispatch, dissolve_superset, exercise_diff, save_superset_group, training_difference,
     ExerciseView, SetSaver, SupersetGroupView,
 };
+use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
 use super::set_table::{SetTable, SetTableState};
-use super::sets::{format_number, set_kind_text, SetAction, SetView};
+use super::sets::{format_number, set_kind_text, SelectedSet, SetAction, SetView};
 use super::superset_panel::{SupersetCandidate, SupersetPanel};
 use super::RecordSignals;
 use crate::previous as previous_api;
@@ -36,9 +38,11 @@ use crate::training_exercise;
 #[component]
 pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> Element {
     let views = use_signal(Vec::<ExerciseView>::new);
+    let selected_set = use_signal(|| Option::<String>::None);
+    use_context_provider(|| SelectedSet(selected_set));
     let rail = use_context::<Signal<RecordRailState>>();
     let previous_training = use_signal(|| Option::<PreviousTraining>::None);
-    let error = use_signal(|| Option::<String>::None);
+    let error = use_signal(RecordErrors::default);
     let loading = use_signal(|| true);
     let superset_busy = use_signal(|| false);
     let mut reload = use_signal(|| 0u32);
@@ -91,7 +95,7 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
         let operation = match training_exercise::delete(&delete_training_id, &view_id) {
             Ok(operation) => operation,
             Err(_) => {
-                set_error(error, Key::RecordExerciseSaveFailed);
+                set_load_error(error, Key::RecordExerciseSaveFailed);
                 return;
             }
         };
@@ -106,7 +110,7 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                 Err(error) => Err(error),
             };
             if result.is_err() {
-                set_error(error, Key::RecordExerciseSaveFailed);
+                set_load_error(error, Key::RecordExerciseSaveFailed);
                 return;
             }
             sync::flush_in_background();
@@ -131,7 +135,7 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
         let operation = match training_exercise::reorder(&move_training_id, &ordered) {
             Ok(operation) => operation,
             Err(_) => {
-                set_error(error, Key::RecordExerciseSaveFailed);
+                set_load_error(error, Key::RecordExerciseSaveFailed);
                 return;
             }
         };
@@ -146,7 +150,7 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                 Err(error) => Err(error),
             };
             if result.is_err() {
-                set_error(error, Key::RecordExerciseSaveFailed);
+                set_load_error(error, Key::RecordExerciseSaveFailed);
                 return;
             }
             sync::flush_in_background();
@@ -199,7 +203,9 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
     });
     let view_only = (signals.view_only)();
     let training_diff = training_difference(&current_views, (previous_training)().as_ref());
-    let load_error = (error)();
+    let errors = (error)();
+    let load_error = errors.load;
+    let set_errors = errors.sets;
     let is_loading = (loading)();
     let superset_candidates = selected_view.as_ref().map_or_else(Vec::new, |selected| {
         current_views
@@ -242,11 +248,23 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                 }
             }
             if let Some(message) = load_error {
-                p { class: "text-[13px] text-primary", "{message}" }
+                p {
+                    class: "text-[13px] text-primary",
+                    "data-record-error": "true",
+                    "{message}"
+                }
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
                     onclick: move |_| reload.set((reload)() + 1),
                     "{text(Key::RecordRetry)}"
+                }
+            }
+            for (set_id, message) in set_errors {
+                p {
+                    class: "text-[13px] text-primary",
+                    "data-record-error": "true",
+                    "data-record-error-set-id": "{set_id}",
+                    "{message}"
                 }
             }
             if current_views.is_empty() && !is_loading {
@@ -260,6 +278,8 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                     let up_id = view.record.id.clone();
                     let down_id = view.record.id.clone();
                     let delete_id = view.record.id.clone();
+                    let drawer_mode = view.snapshot.record_mode;
+                    let drawer_rows = view.sets.clone();
                     rsx! {
                         ExerciseDetail {
                             state: ExerciseDetailState {
@@ -285,6 +305,12 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                                 on_superset_delete,
                             },
                         }
+                        SetDrawer {
+                            rows: drawer_rows,
+                            mode: drawer_mode,
+                            disabled: view_only,
+                            on_action,
+                        }
                     }
                 }
             } else {
@@ -302,7 +328,7 @@ async fn load(
     mut views: Signal<Vec<ExerciseView>>,
     mut rail: Signal<RecordRailState>,
     mut previous_training: Signal<Option<PreviousTraining>>,
-    mut error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
     mut loading: Signal<bool>,
     preserve_inputs: bool,
 ) {
@@ -310,7 +336,7 @@ async fn load(
     let storage = match storage::current().await {
         Ok(storage) => storage,
         Err(_) => {
-            set_error(error, Key::RecordExerciseLoadFailed);
+            set_load_error(error, Key::RecordExerciseLoadFailed);
             loading.set(false);
             return;
         }
@@ -318,7 +344,7 @@ async fn load(
     let records = match storage.training_exercises(&training_id).await {
         Ok(records) => records,
         Err(_) => {
-            set_error(error, Key::RecordExerciseLoadFailed);
+            set_load_error(error, Key::RecordExerciseLoadFailed);
             loading.set(false);
             return;
         }
@@ -327,7 +353,7 @@ async fn load(
     let supersets = match storage.training_supersets(&training_id).await {
         Ok(supersets) => supersets,
         Err(_) => {
-            set_error(error, Key::RecordSupersetLoadFailed);
+            set_load_error(error, Key::RecordSupersetLoadFailed);
             loading.set(false);
             return;
         }
@@ -355,7 +381,7 @@ async fn load(
         let stored_sets = match storage.training_sets(&record.id).await {
             Ok(sets) => sets,
             Err(_) => {
-                set_error(error, Key::RecordSetLoadFailed);
+                set_load_error(error, Key::RecordSetLoadFailed);
                 loading.set(false);
                 return;
             }
@@ -417,14 +443,15 @@ async fn load(
             .collect(),
         selected,
     });
+    let set_ids = next
+        .iter()
+        .flat_map(|view| view.sets.iter().map(|set| set.record.id.clone()))
+        .collect::<Vec<_>>();
     previous_training.set(training_previous);
     views.set(next);
-    error.set(None);
+    clear_load_error(error);
+    retain_set_errors(error, &set_ids);
     loading.set(false);
-}
-
-fn set_error(mut error: Signal<Option<String>>, key: Key) {
-    error.set(Some(text(key).to_owned()));
 }
 
 /// 種目の詳細に渡す状態。

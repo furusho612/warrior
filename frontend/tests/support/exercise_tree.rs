@@ -122,6 +122,8 @@ pub fn set_values(weight_kg: f64, reps: u32) -> SetValues {
         segments: vec![SetSegmentValues {
             weight_kg,
             reps,
+            momentum_reps: 0,
+            assisted_reps: 0,
             duration_seconds: None,
             left: None,
             right: None,

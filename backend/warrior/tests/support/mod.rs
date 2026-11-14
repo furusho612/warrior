@@ -250,7 +250,16 @@ impl DevServer {
     }
 
     fn wait_until_healthy(&self) {
-        wait_for_http(self.port, "/api/health");
+        if wait_for_http_until(self.port, "/api/health", STARTUP_TIMEOUT) {
+            return;
+        }
+        let lines = self.log_lines();
+        let start = lines.len().saturating_sub(40);
+        let tail = lines[start..].join("\n");
+        panic!(
+            "the server on port {} did not become ready within {STARTUP_TIMEOUT:?}:\n{tail}",
+            self.port
+        );
     }
 
     fn connect(&self, timeout: Duration) -> std::io::Result<TcpStream> {
@@ -363,15 +372,22 @@ fn stop_process_group(child: &mut Child) {
 }
 
 fn wait_for_http(port: u16, path: &str) {
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    if wait_for_http_until(port, path, STARTUP_TIMEOUT) {
+        return;
+    }
+    panic!("the server on port {port} did not become ready within {STARTUP_TIMEOUT:?}");
+}
+
+fn wait_for_http_until(port: u16, path: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
     loop {
         if let Ok(response) = try_http(port, path) {
             if response.status == 200 {
-                return;
+                return true;
             }
         }
         if Instant::now() >= deadline {
-            panic!("the server on port {port} did not become ready within {STARTUP_TIMEOUT:?}");
+            return false;
         }
         std::thread::sleep(POLL_INTERVAL);
     }
