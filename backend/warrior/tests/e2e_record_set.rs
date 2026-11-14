@@ -111,7 +111,7 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
         },
     )
     .await;
-    change_kind(&driver, &first_set, "drop").await;
+    change_kind(&driver, &first_set, "normal").await;
     wait_for_diff(&driver, "data-exercise-weight-diff", "0").await;
     wait_for_diff(&driver, "data-training-total-diff", "0").await;
     wait_for_set(
@@ -119,7 +119,7 @@ async fn adds_a_set_edits_its_kind_completes_and_deletes_it() {
         &server,
         &first_set,
         SetCheck {
-            kind: "drop",
+            kind: "normal",
             completed: 1,
             body_weight_kg: Some(70.0),
             weight_kg: 100.0,

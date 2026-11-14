@@ -18,11 +18,14 @@ use warrior_core::set_calc::SetKind;
 use warrior_core::training_record::TrainingExerciseRecord;
 
 use super::set_events::{SetCompleted, SetCompletedEvents};
-use super::sets::{previous_values, Field, SetAction, SetView};
+use super::sets::{
+    kind_allowed, move_allowed, previous_values, Field, SegmentView, SetAction, SetView,
+};
+use crate::ids::{new_uuid, now_iso};
 use crate::storage;
 use crate::sync;
 use crate::text::{text, Key};
-use crate::training_set::{self, SetValues};
+use crate::training_set::{self, SetSegmentValues, SetValues};
 
 /// 画面が読む 1 つの種目。
 #[derive(Clone, PartialEq)]
@@ -110,6 +113,7 @@ pub(super) fn training_difference(
 pub(super) fn update_set_input(
     mut views: Signal<Vec<ExerciseView>>,
     set_id: &str,
+    segment_id: &str,
     field: Field,
     value: String,
 ) {
@@ -121,10 +125,17 @@ pub(super) fn update_set_input(
     else {
         return;
     };
+    let Some(segment) = set
+        .segments
+        .iter_mut()
+        .find(|segment| segment.record.id == segment_id)
+    else {
+        return;
+    };
     match field {
-        Field::Weight => set.weight = value,
-        Field::Reps => set.reps = value,
-        Field::Duration => set.duration = value,
+        Field::Weight => segment.weight = value,
+        Field::Reps => segment.reps = value,
+        Field::Duration => segment.duration = value,
     }
     if set.completed() && !set.values().has_values() {
         set.record.completed = 0;
@@ -133,17 +144,124 @@ pub(super) fn update_set_input(
     views.set(list);
 }
 
-/// セット種別を画面へ反映する。
-pub(super) fn update_set_kind(mut views: Signal<Vec<ExerciseView>>, set_id: &str, kind: SetKind) {
+/// セット種別を画面へ反映する。ドロップセットの位置の規則を満たさない変更は拒む。
+pub(super) fn update_set_kind(
+    mut views: Signal<Vec<ExerciseView>>,
+    set_id: &str,
+    kind: SetKind,
+    error: Signal<Option<String>>,
+) -> bool {
     let mut list = (views)();
-    for set in list.iter_mut().flat_map(|view| view.sets.iter_mut()) {
-        if set.record.id != set_id {
-            continue;
-        }
-        set.record.kind = kind.as_str().to_owned();
-        set.bump();
+    let Some(view_index) = list
+        .iter()
+        .position(|view| view.sets.iter().any(|set| set.record.id == set_id))
+    else {
+        return false;
+    };
+    let Some(set_index) = list[view_index]
+        .sets
+        .iter()
+        .position(|set| set.record.id == set_id)
+    else {
+        return false;
+    };
+    if !kind_allowed(&list[view_index].sets, set_index, kind) {
+        set_error(error, Key::RecordSetDropInvalid);
+        return false;
     }
+    let set = &mut list[view_index].sets[set_index];
+    set.record.kind = kind.as_str().to_owned();
+    if kind != SetKind::Drop {
+        set.segments.truncate(1);
+    }
+    set.bump();
     views.set(list);
+    true
+}
+
+/// セットに段を追加して画面へ反映する。
+pub(super) fn append_segment(
+    mut views: Signal<Vec<ExerciseView>>,
+    set_id: &str,
+    error: Signal<Option<String>>,
+) -> bool {
+    let mut list = (views)();
+    let Some(set) = list
+        .iter_mut()
+        .flat_map(|view| view.sets.iter_mut())
+        .find(|set| set.record.id == set_id)
+    else {
+        return false;
+    };
+    if set.kind() != SetKind::Drop {
+        return false;
+    }
+    let Ok(segment_id) = new_uuid() else {
+        set_error(error, Key::RecordSetSaveFailed);
+        return false;
+    };
+    let now = now_iso();
+    set.record.completed = 0;
+    set.segments.push(SegmentView {
+        record: warrior_core::training_record::SetSegmentRecord {
+            id: segment_id,
+            set_id: set_id.to_owned(),
+            position: i64::try_from(set.segments.len())
+                .unwrap_or(i64::MAX)
+                .saturating_add(1),
+            weight_kg: Some(0.0),
+            reps: Some(0),
+            momentum_reps: 0,
+            assisted_reps: 0,
+            duration_seconds: None,
+            left_weight_kg: None,
+            left_reps: None,
+            left_duration_seconds: None,
+            right_weight_kg: None,
+            right_reps: None,
+            right_duration_seconds: None,
+            created_at: now.clone(),
+            updated_at: now,
+        },
+        weight: String::new(),
+        reps: String::new(),
+        duration: String::new(),
+    });
+    set.bump();
+    views.set(list);
+    true
+}
+
+/// 段を削除して画面へ反映する。残りの段が無いときはセットを削除する。
+pub(super) async fn delete_segment(
+    training_id: String,
+    set_id: String,
+    segment_id: String,
+    mut views: Signal<Vec<ExerciseView>>,
+    error: Signal<Option<String>>,
+    saver: SetSaver,
+) {
+    let mut list = (views)();
+    let Some(set) = list
+        .iter_mut()
+        .flat_map(|view| view.sets.iter_mut())
+        .find(|set| set.record.id == set_id)
+    else {
+        return;
+    };
+    set.segments
+        .retain(|segment| segment.record.id != segment_id);
+    if set.segments.is_empty() {
+        views.set(list);
+        delete_set(training_id, set_id, views, error).await;
+        return;
+    }
+    for (index, segment) in set.segments.iter_mut().enumerate() {
+        segment.record.position = i64::try_from(index).unwrap_or(i64::MAX).saturating_add(1);
+    }
+    set.bump();
+    views.set(list);
+    save_set_loop(training_id, set_id, views, error, saver).await;
 }
 
 /// セットの追加を画面へ反映し、端末内へ保存する。
@@ -169,9 +287,11 @@ pub(super) async fn add_set(
         .saturating_add(1);
     let values = SetValues {
         kind: SetKind::Normal,
-        weight_kg: 0.0,
-        reps: 0,
-        duration_seconds: None,
+        segments: vec![SetSegmentValues {
+            weight_kg: 0.0,
+            reps: 0,
+            duration_seconds: None,
+        }],
         completed: false,
         body_weight_kg: view.body_weight_kg,
         rpe: None,
@@ -184,7 +304,7 @@ pub(super) async fn add_set(
             return;
         }
     };
-    let set_view = SetView::from_rows(rows.set.clone(), rows.segment.clone());
+    let set_view = SetView::from_rows(rows.set.clone(), rows.segments.clone());
     {
         let mut list = (views)();
         if let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) {
@@ -195,7 +315,7 @@ pub(super) async fn add_set(
     let result = match storage::current().await {
         Ok(storage) => {
             storage
-                .save_set_create(&rows.set, &rows.segment, &operation)
+                .save_set_create(&rows.set, &rows.segments, &operation)
                 .await
         }
         Err(error) => Err(error),
@@ -226,8 +346,13 @@ pub(super) async fn save_set_loop(
     while let Some(set) = find_set(views, &set_id) {
         let revision = set.revision;
         let values = set.values();
+        let segment_records = set
+            .segments
+            .iter()
+            .map(|segment| segment.record.clone())
+            .collect::<Vec<_>>();
         let (rows, operation) =
-            match training_set::update(&training_id, &set.record, &set.segment, &values) {
+            match training_set::update(&training_id, &set.record, &segment_records, &values) {
                 Ok(rows) => rows,
                 Err(_) => {
                     set_error(error, Key::RecordSetSaveFailed);
@@ -237,7 +362,7 @@ pub(super) async fn save_set_loop(
         let result = match storage::current().await {
             Ok(storage) => {
                 storage
-                    .save_set_update(&rows.set, &rows.segment, &operation)
+                    .save_set_update(&rows.set, &rows.segments, &operation)
                     .await
             }
             Err(error) => Err(error),
@@ -335,7 +460,7 @@ pub(super) async fn copy_sets(
             }
         };
         if storage
-            .save_set_create(&rows.set, &rows.segment, &operation)
+            .save_set_create(&rows.set, &rows.segments, &operation)
             .await
             .is_err()
         {
@@ -343,7 +468,7 @@ pub(super) async fn copy_sets(
             restore_sets(views, &view_id, error).await;
             return;
         }
-        copied.push(SetView::from_rows(rows.set, rows.segment));
+        copied.push(SetView::from_rows(rows.set, rows.segments));
     }
     {
         let mut list = (views)();
@@ -395,8 +520,13 @@ pub(super) async fn complete_set(
     // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
     if completed {
         let values = set.values();
+        let segments = set
+            .segments
+            .iter()
+            .map(|segment| segment.record.clone())
+            .collect::<Vec<_>>();
         let (rows, update_operation) =
-            match training_set::update(&training_id, &set.record, &set.segment, &values) {
+            match training_set::update(&training_id, &set.record, &segments, &values) {
                 Ok(rows) => rows,
                 Err(_) => {
                     set_error(error, Key::RecordSetSaveFailed);
@@ -404,7 +534,7 @@ pub(super) async fn complete_set(
                 }
             };
         if storage
-            .save_set_update(&rows.set, &rows.segment, &update_operation)
+            .save_set_update(&rows.set, &rows.segments, &update_operation)
             .await
             .is_err()
         {
@@ -492,7 +622,7 @@ pub(super) async fn move_set(
     views: Signal<Vec<ExerciseView>>,
     error: Signal<Option<String>>,
 ) {
-    let Some((view_id, ordered)) = move_set_order(views, &set_id, delta) else {
+    let Some((view_id, ordered)) = move_set_order(views, &set_id, delta, error) else {
         return;
     };
     let operation = match training_set::reorder(&training_id, &view_id, &ordered) {
@@ -522,6 +652,7 @@ fn move_set_order(
     mut views: Signal<Vec<ExerciseView>>,
     set_id: &str,
     delta: i32,
+    error: Signal<Option<String>>,
 ) -> Option<(String, Vec<String>)> {
     let mut list = (views)();
     let (view_id, ordered) = {
@@ -531,6 +662,10 @@ fn move_set_order(
         let index = view.sets.iter().position(|set| set.record.id == set_id)?;
         let target = index as i32 + delta;
         if target < 0 || target as usize >= view.sets.len() {
+            return None;
+        }
+        if !move_allowed(&view.sets, index, delta) {
+            set_error(error, Key::RecordSetDropInvalid);
             return None;
         }
         view.sets.swap(index, target as usize);
@@ -614,15 +749,32 @@ pub(super) fn dispatch(
         }
         SetAction::Input {
             set_id,
+            segment_id,
             field,
             value,
         } => {
-            update_set_input(views, &set_id, field, value);
+            update_set_input(views, &set_id, &segment_id, field, value);
             spawn(save_set_loop(training_id, set_id, views, error, saver));
         }
         SetAction::Kind { set_id, kind } => {
-            update_set_kind(views, &set_id, kind);
-            spawn(save_set_loop(training_id, set_id, views, error, saver));
+            if update_set_kind(views, &set_id, kind, error) {
+                spawn(save_set_loop(training_id, set_id, views, error, saver));
+            }
+        }
+        SetAction::AddSegment { set_id } => {
+            if append_segment(views, &set_id, error) {
+                spawn(save_set_loop(training_id, set_id, views, error, saver));
+            }
+        }
+        SetAction::DeleteSegment { set_id, segment_id } => {
+            spawn(delete_segment(
+                training_id,
+                set_id,
+                segment_id,
+                views,
+                error,
+                saver,
+            ));
         }
         SetAction::Complete { set_id } => {
             spawn(complete_set(

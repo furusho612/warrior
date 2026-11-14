@@ -19,6 +19,7 @@ pub mod profile;
 pub mod pwa;
 pub mod rate_limit;
 pub mod set_calc;
+pub mod set_rules;
 pub mod sql;
 pub mod sync;
 mod sync_exercise;

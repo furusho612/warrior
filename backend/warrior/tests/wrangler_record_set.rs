@@ -218,7 +218,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
         BENCH_SET_ID,
         UpdateSpec {
             position: 1,
-            kind: "drop",
+            kind: "normal",
             completed: false,
             body_weight_kg: Some(70.0),
         },
