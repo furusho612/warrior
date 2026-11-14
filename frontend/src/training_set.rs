@@ -52,9 +52,9 @@ pub struct SetValues {
 }
 
 impl SetValues {
-    /// セットに記録する値があるか。
+    /// すべての段に記録する値があるか。
     pub fn has_values(&self) -> bool {
-        self.segments.iter().any(SetSegmentValues::has_values)
+        !self.segments.is_empty() && self.segments.iter().all(SetSegmentValues::has_values)
     }
 
     /// 値を保ったまま完了できるか。

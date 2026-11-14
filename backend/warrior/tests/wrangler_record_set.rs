@@ -40,6 +40,7 @@ const EMPTY_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5630";
 const EMPTY_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5631";
 const EMPTY_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5632";
 const EMPTY_SECOND_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5633";
+const EMPTY_NONCOMPLETED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5634";
 const TAKEOVER_PORT: u16 = 8824;
 const TAKEOVER_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5640";
 const TAKEOVER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5641";
@@ -189,10 +190,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
             completed: false,
             body_weight_kg: Some(70.0),
         },
-        vec![
-            segment(BENCH_SEGMENT_ID, 1, 110.0, 6),
-            segment(EXTRA_SEGMENT_ID, 2, 90.0, 8),
-        ],
+        vec![segment(BENCH_SEGMENT_ID, 1, 110.0, 6)],
     );
     let response = post(server, cookie, &two_segments);
     assert_eq!(response.status, 200, "{}", response.body);
@@ -209,7 +207,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
             server,
             &format!("SELECT COUNT(*) AS count FROM set_segments WHERE set_id = '{BENCH_SET_ID}'")
         ),
-        2
+        1
     );
 
     let one_segment = update_operation(
@@ -526,6 +524,37 @@ fn a_completed_set_requires_values() {
         vec![segment(segment_id, 1, 0.0, 0)],
     );
     let response = post(&server, &user_cookie, &empty_update);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(&server, EMPTY_SECOND_UPDATE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT completed FROM sets WHERE id = '{set_id}'")
+        )["completed"],
+        1,
+        "a rejected completion must keep the set completed"
+    );
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT weight_kg, reps FROM set_segments WHERE id = '{segment_id}'")
+        ),
+        json!({"weight_kg": 100, "reps": 5})
+    );
+
+    let noncompleted_update = update_operation(
+        EMPTY_NONCOMPLETED_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        set_id,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: false,
+            body_weight_kg: None,
+        },
+        vec![segment(segment_id, 1, 0.0, 0)],
+    );
+    let response = post(&server, &user_cookie, &noncompleted_update);
     assert_eq!(response.status, 200, "{}", response.body);
     assert_eq!(
         first_row(

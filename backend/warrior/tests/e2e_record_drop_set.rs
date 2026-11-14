@@ -1,19 +1,23 @@
-//! ドロップセットの選択、段の追加、表示、集計の E2E。
+//! ドロップセットの選択、段の追加、削除、表示、集計の E2E。
 //!
 //! 対応する要求: `REQ-SET-003`、`REQ-SET-009`、`REQ-REC-005`。
 //! 先頭の行ではドロップセットを選べないことを確かめ、通常のセットの直後に
-//! ドロップセットを選んで段を追加し、`D` の表示と段の行、終了サマリーのセット数を
-//! 確かめる。
+//! ドロップセットを選んで段を追加する。段の削除、全段削除によるセットの削除、
+//! 空の段による完了の解除、`D` の表示、終了サマリーのセット数を確かめる。
 
 mod support;
 
-use serde_json::{json, Value};
 use std::time::{Duration, Instant};
+
 use support::browser::{self, Browser};
+use support::record_browser::{
+    add_set, change_kind, complete_selector, current_user_id, element_disabled, login,
+    option_disabled, reps_selector, seed_profile, segment_ids, segment_reps, segment_weight,
+    select_kind, start_training, wait_for_complete_ready, weight_selector,
+};
 use support::record_common;
 use support::{DevServer, TestOidc};
-use thirtyfour::components::SelectElement;
-use thirtyfour::prelude::*;
+use thirtyfour::WebDriver;
 
 const BENCH_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
 const SERVER_PORT: u16 = 8827;
@@ -55,7 +59,7 @@ async fn adds_a_drop_set_and_counts_the_record_sets() {
     let driver_process = browser::DriverProcess::start(browser, driver_port);
     let driver = browser::open(browser, &driver_process).await;
 
-    login(&driver, &server, &provider).await;
+    login(&driver, &server, &provider, "record-drop-set").await;
     let user_id = current_user_id(&driver).await;
     seed_profile(&server, &user_id);
     let _training_id = start_training(&driver).await;
@@ -85,12 +89,12 @@ async fn adds_a_drop_set_and_counts_the_record_sets() {
     )
     .await;
 
-    let drop_set = add_set(&driver).await;
-    change_kind(&driver, &drop_set, "drop").await;
+    let first_drop = add_set(&driver).await;
+    change_kind(&driver, &first_drop, "drop").await;
     assert_eq!(
         browser::attribute(
             &driver,
-            &format!("[data-set-id=\"{drop_set}\"]"),
+            &format!("[data-set-id=\"{first_drop}\"]"),
             "data-set-number"
         )
         .await,
@@ -99,7 +103,7 @@ async fn adds_a_drop_set_and_counts_the_record_sets() {
     assert_eq!(
         browser::attribute(
             &driver,
-            &format!("[data-set-id=\"{drop_set}\"]"),
+            &format!("[data-set-id=\"{first_drop}\"]"),
             "data-set-drop"
         )
         .await,
@@ -107,10 +111,11 @@ async fn adds_a_drop_set_and_counts_the_record_sets() {
     );
     browser::click(
         &driver,
-        &format!("[data-set-id=\"{drop_set}\"] [data-delete-segment]"),
+        &format!("[data-set-id=\"{first_drop}\"] [data-delete-segment]"),
     )
     .await;
-    browser::wait_for_absent(&driver, &format!("[data-set-id=\"{drop_set}\"]")).await;
+    browser::wait_for_absent(&driver, &format!("[data-set-id=\"{first_drop}\"]")).await;
+    wait_for_set_deleted(&server, &first_drop).await;
 
     let drop_set = add_set(&driver).await;
     change_kind(&driver, &drop_set, "drop").await;
@@ -125,6 +130,21 @@ async fn adds_a_drop_set_and_counts_the_record_sets() {
     )
     .await;
     browser::wait_for_attribute(&driver, "[data-set-table]", "data-set-display-rows", "3").await;
+
+    select_kind(&driver, &drop_set, "normal").await;
+    browser::wait_for_present(&driver, "[data-kind-change-confirm]").await;
+    browser::wait_for_text(&driver, "2 段目以降の段が消えます").await;
+    browser::click(&driver, "[data-kind-change-cancel]").await;
+    browser::wait_for_absent(&driver, "[data-kind-change-confirm]").await;
+    assert_eq!(
+        browser::attribute(
+            &driver,
+            &format!("[data-set-id=\"{drop_set}\"]"),
+            "data-set-kind"
+        )
+        .await,
+        "drop"
+    );
 
     let extra_segments = segment_ids(&driver, &drop_set).await;
     assert_eq!(extra_segments.len(), 2);
@@ -160,8 +180,37 @@ async fn adds_a_drop_set_and_counts_the_record_sets() {
     )
     .await;
     wait_for_drop_set(&server, &drop_set).await;
+
+    browser::set_input(&driver, &segment_reps(&segments[1]), "0").await;
+    browser::wait_for_attribute(
+        &driver,
+        &format!("[data-set-id=\"{drop_set}\"]"),
+        "data-set-completed",
+        "false",
+    )
+    .await;
+    browser::set_input(&driver, &segment_reps(&segments[1]), "10").await;
+    wait_for_complete_ready(&driver, &drop_set).await;
+    browser::click(&driver, &complete_selector(&drop_set)).await;
+    browser::wait_for_attribute(
+        &driver,
+        &format!("[data-set-id=\"{drop_set}\"]"),
+        "data-set-completed",
+        "true",
+    )
+    .await;
+    wait_for_drop_set(&server, &drop_set).await;
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
+    assert!(
+        element_disabled(
+            &driver,
+            &format!("[data-set-id=\"{first_set}\"] [data-delete-set]")
+        )
+        .await,
+        "a set before a drop set must not be deletable"
+    );
+    browser::wait_for_text(&driver, "直後のドロップセットも先に削除してください。").await;
     assert_eq!(
         browser::attribute(&driver, "[data-set-table]", "data-set-rows").await,
         "2"
@@ -174,124 +223,6 @@ async fn adds_a_drop_set_and_counts_the_record_sets() {
 
     browser::assert_no_panic(&driver).await;
     driver.quit().await.expect("the browser must close");
-}
-
-async fn login(driver: &WebDriver, server: &DevServer, provider: &TestOidc) {
-    driver
-        .goto(format!(
-            "{}/test/user?sub=record-drop-set",
-            provider.origin()
-        ))
-        .await
-        .expect("the test user must be selected");
-    browser::login_with_google(driver, server).await;
-    browser::wait_for_route(driver, "/").await;
-    browser::wait_for_attribute(
-        driver,
-        "[data-start]",
-        "data-active-session-checked",
-        "true",
-    )
-    .await;
-}
-
-async fn start_training(driver: &WebDriver) -> String {
-    driver
-        .find(By::Css("[data-start]"))
-        .await
-        .expect("the start button must exist")
-        .click()
-        .await
-        .expect("the start button must be clickable");
-    browser::wait_for_route(driver, "/record/:training_id").await;
-    let training_id = browser::attribute(driver, "[data-session-id]", "data-session-id").await;
-    assert!(!training_id.is_empty(), "the record must have a session id");
-    training_id
-}
-
-async fn add_set(driver: &WebDriver) -> String {
-    browser::wait_for_present(driver, "[data-add-set]").await;
-    browser::click(driver, "[data-add-set]").await;
-    browser::wait_for_present(driver, "[data-set-row]").await;
-    let rows = set_ids(driver).await;
-    rows.last().cloned().expect("the new set id")
-}
-
-async fn change_kind(driver: &WebDriver, set_id: &str, kind: &str) {
-    let selector = format!("[data-set-id=\"{set_id}\"] select[data-set-kind]");
-    let select = driver
-        .find(By::Css(&selector))
-        .await
-        .unwrap_or_else(|error| panic!("the select {selector} must exist: {error}"));
-    let select = SelectElement::new(&select)
-        .await
-        .unwrap_or_else(|error| panic!("the select {selector} must be a select: {error}"));
-    select
-        .select_by_value(kind)
-        .await
-        .unwrap_or_else(|error| panic!("the kind {kind} must be selectable: {error}"));
-    browser::wait_for_attribute(
-        driver,
-        &format!("[data-set-id=\"{set_id}\"]"),
-        "data-set-kind",
-        kind,
-    )
-    .await;
-}
-
-async fn option_disabled(driver: &WebDriver, set_id: &str, kind: &str) -> bool {
-    let selector = format!("[data-set-id=\"{set_id}\"] select[data-set-kind]");
-    browser::eval_json(
-        driver,
-        "const done = arguments[arguments.length - 1]; \
-         const select = document.querySelector(arguments[0]); \
-         const option = select ? select.querySelector('option[value=\"' + arguments[1] + '\"]') : null; \
-         done(JSON.stringify(option ? option.disabled : null));",
-        vec![json!(selector), json!(kind)],
-    )
-    .await
-    .as_bool()
-    .unwrap_or(false)
-}
-
-async fn set_ids(driver: &WebDriver) -> Vec<String> {
-    let value = browser::eval_json(
-        driver,
-        "const done = arguments[arguments.length - 1]; \
-         done(JSON.stringify(Array.from(document.querySelectorAll('[data-set-row]')) \
-           .map((element) => element.getAttribute('data-set-id'))));",
-        Vec::new(),
-    )
-    .await;
-    values(value)
-}
-
-async fn segment_ids(driver: &WebDriver, set_id: &str) -> Vec<String> {
-    let value = browser::eval_json(
-        driver,
-        "const done = arguments[arguments.length - 1]; \
-         done(JSON.stringify(Array.from(document.querySelectorAll(arguments[0])) \
-           .map((element) => element.getAttribute('data-segment-id'))));",
-        vec![json!(format!(
-            "[data-set-id=\"{set_id}\"] [data-segment-id]"
-        ))],
-    )
-    .await;
-    let mut segments = values(value);
-    segments.dedup();
-    segments
-}
-
-fn values(value: Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(|value| value.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 async fn wait_for_drop_set(server: &DevServer, set_id: &str) {
@@ -315,6 +246,30 @@ async fn wait_for_drop_set(server: &DevServer, set_id: &str) {
             Instant::now() < deadline,
             "the drop set {set_id} was not saved: {set:?}, {segments:?}"
         );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+async fn wait_for_set_deleted(server: &DevServer, set_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let set_sql = format!("SELECT COUNT(*) AS count FROM sets WHERE id = '{set_id}'");
+    let segment_sql =
+        format!("SELECT COUNT(*) AS count FROM set_segments WHERE set_id = '{set_id}'");
+    loop {
+        let sets = record_common::optional_row(server, &set_sql)
+            .and_then(|row| row["count"].as_i64())
+            .unwrap_or(0);
+        let segments = record_common::optional_row(server, &segment_sql)
+            .and_then(|row| row["count"].as_i64())
+            .unwrap_or(0);
+        if sets == 0 && segments == 0 {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the set {set_id} was not deleted: sets {sets}, segments {segments}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -329,58 +284,4 @@ async fn finish_and_check_the_summary(driver: &WebDriver) {
         browser::attribute(driver, "[data-summary]", "data-total-weight-kg").await,
         "1740"
     );
-}
-
-async fn current_user_id(driver: &WebDriver) -> String {
-    let me = browser::eval_string(
-        driver,
-        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
-        Vec::new(),
-    )
-    .await;
-    serde_json::from_str::<Value>(&me)
-        .expect("the me response is JSON")
-        .get("id")
-        .and_then(|value| value.as_str())
-        .expect("the user id")
-        .to_owned()
-}
-
-fn seed_profile(server: &DevServer, user_id: &str) {
-    server
-        .execute_d1_json(&format!(
-            "INSERT INTO profiles (user_id, weight_kg, created_at, updated_at) \
-             VALUES ('{user_id}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ))
-        .expect("the profile must be seeded");
-}
-
-async fn wait_for_complete_ready(driver: &WebDriver, set_id: &str) {
-    browser::wait_for_attribute(
-        driver,
-        &format!("[data-set-id=\"{set_id}\"] [data-set-complete]"),
-        "data-set-complete-ready",
-        "true",
-    )
-    .await;
-}
-
-fn weight_selector(set_id: &str) -> String {
-    format!("[data-set-id=\"{set_id}\"] [data-set-weight]")
-}
-
-fn reps_selector(set_id: &str) -> String {
-    format!("[data-set-id=\"{set_id}\"] [data-set-reps]")
-}
-
-fn complete_selector(set_id: &str) -> String {
-    format!("[data-set-id=\"{set_id}\"] [data-set-complete]")
-}
-
-fn segment_weight(segment_id: &str) -> String {
-    format!("[data-segment-id=\"{segment_id}\"] [data-set-weight]")
-}
-
-fn segment_reps(segment_id: &str) -> String {
-    format!("[data-segment-id=\"{segment_id}\"] [data-set-reps]")
 }

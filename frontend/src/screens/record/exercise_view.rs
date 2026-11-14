@@ -15,6 +15,7 @@ use warrior_core::previous::{
     PreviousTraining, TotalWeightDifference,
 };
 use warrior_core::set_calc::SetKind;
+use warrior_core::set_rules;
 use warrior_core::training_record::TrainingExerciseRecord;
 
 use super::set_events::{SetCompleted, SetCompletedEvents};
@@ -584,6 +585,16 @@ pub(super) async fn delete_set(
     let Some((view, _set)) = find_view_and_set(views, &set_id) else {
         return;
     };
+    let next = view
+        .sets
+        .iter()
+        .position(|set| set.record.id == set_id)
+        .and_then(|index| view.sets.get(index + 1))
+        .map(SetView::kind);
+    if !set_rules::delete_set_allowed(next) {
+        set_error(error, Key::RecordSetDeleteBlockedByDrop);
+        return;
+    }
     let operation = match training_set::delete(&training_id, &set_id) {
         Ok(operation) => operation,
         Err(_) => {

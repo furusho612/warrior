@@ -356,6 +356,9 @@ pub(super) fn SetTable(
                         warmup_allowed: kind_change_allowed(&kinds, index, SetKind::Warmup),
                         can_move_up: move_candidate_valid(&kinds, index, -1),
                         can_move_down: move_candidate_valid(&kinds, index, 1),
+                        can_delete: set_rules::delete_set_allowed(
+                            rows.get(index + 1).map(SetView::kind),
+                        ),
                         is_time,
                         is_bodyweight,
                         disabled,
@@ -380,13 +383,13 @@ fn SetRow(
     warmup_allowed: bool,
     can_move_up: bool,
     can_move_down: bool,
+    can_delete: bool,
     is_time: bool,
     is_bodyweight: bool,
     disabled: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
     let set_id = set.record.id.clone();
-    let add_segment_id = set.record.id.clone();
     let completed = set.completed();
     let mode = if is_time {
         RecordMode::Time
@@ -399,7 +402,37 @@ fn SetRow(
     let kind = set.kind();
     let is_drop = kind == SetKind::Drop;
     let number_text = number.map_or_else(|| "D".to_owned(), |number| number.to_string());
-    let first_segment = set.segments.first().cloned();
+    let mut pending_kind = use_signal(|| Option::<SetKind>::None);
+    let kind_set_id = set.record.id.clone();
+    let segment_count = set.segments.len();
+    let on_kind = EventHandler::new(move |new_kind: SetKind| {
+        if needs_segment_confirmation(kind, new_kind, segment_count) {
+            pending_kind.set(Some(new_kind));
+        } else {
+            on_action.call(SetAction::Kind {
+                set_id: kind_set_id.clone(),
+                kind: new_kind,
+            });
+        }
+    });
+    let confirm_set_id = set.record.id.clone();
+    let on_kind_decision = EventHandler::new(move |decision: Option<SetKind>| {
+        if let Some(kind) = decision {
+            on_action.call(SetAction::Kind {
+                set_id: confirm_set_id.clone(),
+                kind,
+            });
+        }
+        pending_kind.set(None);
+    });
+    let segments = SegmentListState {
+        set_id: set_id.clone(),
+        segments: set.segments.clone(),
+        is_drop,
+        is_time,
+        is_bodyweight,
+        disabled,
+    };
     let buttons = RowButtonState {
         set_id: set.record.id.clone(),
         first_segment_id: set
@@ -409,8 +442,23 @@ fn SetRow(
         is_drop,
         can_move_up,
         can_move_down,
+        can_delete,
+        can_delete_first_segment: segment_count > 1 || can_delete,
         ready,
         completed,
+    };
+    let header = SetHeaderState {
+        set_id: set_id.clone(),
+        number_text: number_text.clone(),
+        kind,
+        is_drop,
+        disabled,
+        drop_allowed,
+        warmup_allowed,
+        first_segment: set.segments.first().cloned(),
+        is_time,
+        is_bodyweight,
+        buttons,
     };
     rsx! {
         div {
@@ -422,53 +470,164 @@ fn SetRow(
             "data-set-number": "{number_text}",
             "data-set-drop": if is_drop { "true" } else { "false" },
             "data-set-completed": if completed { "true" } else { "false" },
-            div {
-                class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
-                span { class: "w-4 shrink-0 text-[11px] text-text-sub", "{number_text}" }
-                KindSelect {
-                    set_id: set.record.id.clone(),
-                    kind,
-                    disabled,
-                    drop_allowed,
-                    warmup_allowed,
-                    on_action,
+            SetHeader { header, on_kind, on_action }
+            if !can_delete {
+                p {
+                    class: "border-b border-line px-2 py-1 text-[10px] text-primary",
+                    "data-set-delete-blocked": "true",
+                    "{text(Key::RecordSetDeleteBlockedByDrop)}"
                 }
-                if let Some(segment) = first_segment {
-                    div {
-                        class: "flex items-center gap-1",
-                        "data-segment-id": "{segment.record.id}",
-                        "data-segment-index": "0",
-                        SegmentInputs {
-                            segment: segment.clone(),
-                            set_id: set_id.clone(),
-                            is_time,
-                            is_bodyweight,
-                            disabled,
-                            on_action,
-                        }
+            }
+            if let Some(pending) = (pending_kind)() {
+                KindChangeConfirm {
+
+                    pending,
+                    on_decide: on_kind_decision,
+                }
+            }
+            SegmentList { list: segments, on_action }
+        }
+    }
+}
+
+/// セットの行の見出し。
+#[derive(Debug, Clone, PartialEq)]
+struct SetHeaderState {
+    set_id: String,
+    number_text: String,
+    kind: SetKind,
+    is_drop: bool,
+    disabled: bool,
+    drop_allowed: bool,
+    warmup_allowed: bool,
+    first_segment: Option<SegmentView>,
+    is_time: bool,
+    is_bodyweight: bool,
+    buttons: RowButtonState,
+}
+
+/// セットの行の番号、種別、最初の段、操作のボタン。
+#[component]
+fn SetHeader(
+    header: SetHeaderState,
+    on_kind: EventHandler<SetKind>,
+    on_action: EventHandler<SetAction>,
+) -> Element {
+    let SetHeaderState {
+        set_id,
+        number_text,
+        kind,
+        is_drop,
+        disabled,
+        drop_allowed,
+        warmup_allowed,
+        first_segment,
+        is_time,
+        is_bodyweight,
+        buttons,
+    } = header;
+    rsx! {
+        div {
+            class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
+            span { class: "w-4 shrink-0 text-[11px] text-text-sub", "{number_text}" }
+            KindSelect {
+                kind,
+                disabled,
+                drop_allowed,
+                warmup_allowed,
+                on_kind,
+            }
+            if let Some(segment) = first_segment {
+                div {
+                    class: "flex items-center gap-1",
+                    "data-segment-id": "{segment.record.id}",
+                    "data-segment-index": "0",
+                    SegmentInputs {
+                        segment: segment.clone(),
+                        set_id,
+                        is_time,
+                        is_bodyweight,
+                        disabled,
+                        on_action,
                     }
                 }
-                RowButtons { buttons, disabled, on_action }
             }
-            for (segment_index, segment) in set.segments.iter().enumerate().skip(1) {
-                SegmentRow {
-                    set_id: set_id.clone(),
-                    segment: segment.clone(),
-                    segment_index,
-                    is_time,
-                    is_bodyweight,
-                    disabled,
-                    on_action,
-                }
+            RowButtons { buttons, disabled, on_action }
+        }
+    }
+}
+
+/// セット種別の変更の確認。
+#[component]
+fn KindChangeConfirm(pending: SetKind, on_decide: EventHandler<Option<SetKind>>) -> Element {
+    rsx! {
+        div {
+            class: "flex flex-col gap-1 border-b border-line px-2 py-1",
+            p {
+                class: "text-[10px] text-primary",
+                "data-kind-change-confirm": "true",
+                "{text(Key::RecordSetKindChangeConfirm)}"
             }
-            if is_drop && !is_time {
+            div { class: "flex gap-1",
                 button {
-                    class: "min-h-9 border-t border-line px-2 text-left text-[10px] font-bold text-primary",
-                    "data-add-segment": "true",
-                    disabled,
-                    onclick: move |_| on_action.call(SetAction::AddSegment { set_id: add_segment_id.clone() }),
-                    "{text(Key::RecordSetSegmentAdd)}"
+                    class: "min-h-8 border border-primary px-2 text-[10px] font-bold text-primary",
+                    "data-kind-change-accept": "true",
+                    onclick: move |_| on_decide.call(Some(pending)),
+                    "{text(Key::RecordSetKindChangeAccept)}"
                 }
+                button {
+                    class: "min-h-8 border border-line px-2 text-[10px]",
+                    "data-kind-change-cancel": "true",
+                    onclick: move |_| on_decide.call(None),
+                    "{text(Key::RecordSetKindChangeCancel)}"
+                }
+            }
+        }
+    }
+}
+
+/// セットの段の一覧。
+#[derive(Debug, Clone, PartialEq)]
+struct SegmentListState {
+    set_id: String,
+    segments: Vec<SegmentView>,
+    is_drop: bool,
+    is_time: bool,
+    is_bodyweight: bool,
+    disabled: bool,
+}
+
+/// セットの 2 つ目以降の段の行と、段を追加するボタン。
+#[component]
+fn SegmentList(list: SegmentListState, on_action: EventHandler<SetAction>) -> Element {
+    let SegmentListState {
+        set_id,
+        segments,
+        is_drop,
+        is_time,
+        is_bodyweight,
+        disabled,
+    } = list;
+    let add_segment_id = set_id.clone();
+    rsx! {
+        for (segment_index, segment) in segments.iter().enumerate().skip(1) {
+            SegmentRow {
+                set_id: set_id.clone(),
+                segment: segment.clone(),
+                segment_index,
+                is_time,
+                is_bodyweight,
+                disabled,
+                on_action,
+            }
+        }
+        if is_drop && !is_time {
+            button {
+                class: "min-h-9 border-t border-line px-2 text-left text-[10px] font-bold text-primary",
+                "data-add-segment": "true",
+                disabled,
+                onclick: move |_| on_action.call(SetAction::AddSegment { set_id: add_segment_id.clone() }),
+                "{text(Key::RecordSetSegmentAdd)}"
             }
         }
     }
@@ -477,12 +636,11 @@ fn SetRow(
 /// セット種別の選択。
 #[component]
 fn KindSelect(
-    set_id: String,
     kind: SetKind,
     disabled: bool,
     drop_allowed: bool,
     warmup_allowed: bool,
-    on_action: EventHandler<SetAction>,
+    on_kind: EventHandler<SetKind>,
 ) -> Element {
     rsx! {
         select {
@@ -493,7 +651,7 @@ fn KindSelect(
             value: "{kind.as_str()}",
             onchange: move |event| {
                 if let Some(kind) = SetKind::parse(&event.value()) {
-                    on_action.call(SetAction::Kind { set_id: set_id.clone(), kind });
+                    on_kind.call(kind);
                 }
             },
             option { value: "normal", selected: kind == SetKind::Normal, "{text(Key::RecordSetKindNormal)}" }
@@ -516,6 +674,10 @@ struct RowButtonState {
     can_move_up: bool,
     /// 後ろへ移動できるか。
     can_move_down: bool,
+    /// セットを削除できるか。
+    can_delete: bool,
+    /// 最初の段を削除できるか。
+    can_delete_first_segment: bool,
     /// 完了できるか。
     ready: bool,
     /// 完了しているか。
@@ -537,6 +699,8 @@ fn RowButtons(
     let first_segment_id = buttons.first_segment_id.clone();
     let can_move_up = buttons.can_move_up;
     let can_move_down = buttons.can_move_down;
+    let can_delete = buttons.can_delete;
+    let can_delete_first_segment = buttons.can_delete_first_segment;
     let ready = buttons.ready;
     let completed = buttons.completed;
     rsx! {
@@ -571,7 +735,7 @@ fn RowButtons(
                 button {
                     class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
                     "data-delete-segment": "true",
-                    disabled,
+                    disabled: disabled || !can_delete_first_segment,
                     onclick: move |_| on_action.call(SetAction::DeleteSegment {
                         set_id: delete_segment_set_id.clone(),
                         segment_id: segment_id.clone(),
@@ -583,7 +747,7 @@ fn RowButtons(
         button {
             class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
             "data-delete-set": "true",
-            disabled,
+            disabled: disabled || !can_delete,
             onclick: move |_| on_action.call(SetAction::Delete { set_id: delete_id.clone() }),
             "{text(Key::RecordSetDelete)}"
         }
@@ -751,6 +915,10 @@ pub(super) fn move_allowed(rows: &[SetView], index: usize, delta: i32) -> bool {
     move_candidate_valid(&kinds, index, delta)
 }
 
+fn needs_segment_confirmation(kind: SetKind, new_kind: SetKind, segment_count: usize) -> bool {
+    kind == SetKind::Drop && new_kind != SetKind::Drop && segment_count > 1
+}
+
 /// セット種別の文言。
 pub(super) fn set_kind_text(kind: SetKind) -> &'static str {
     match kind {
@@ -818,107 +986,4 @@ fn grip_selection(record: &SetRecordRow) -> Option<GripSelection> {
 }
 
 #[cfg(test)]
-mod tests {
-    //! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`。
-
-    use warrior_core::previous::PreviousSet;
-    use warrior_core::set_calc::{RecordMode, SetKind, SetSegment};
-    use wasm_bindgen_test::wasm_bindgen_test;
-    use wasm_bindgen_test::wasm_bindgen_test_configure;
-
-    use super::{previous_values, set_numbers, SetView};
-
-    wasm_bindgen_test_configure!(run_in_browser);
-
-    fn previous_set(body_weight_kg: Option<f64>, weight_kg: f64) -> PreviousSet {
-        PreviousSet {
-            kind: SetKind::Normal,
-            rpe: None,
-            grip: None,
-            body_weight_kg,
-            segments: vec![SetSegment {
-                weight_kg,
-                reps: 5,
-                momentum_reps: 0,
-                assisted_reps: 0,
-                left: None,
-                right: None,
-                duration_seconds: None,
-            }],
-        }
-    }
-
-    #[wasm_bindgen_test]
-    fn copies_the_added_weight_from_the_previous_body_weight() {
-        let previous = previous_set(Some(70.0), 80.0);
-        let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
-            .expect("the previous values");
-        assert_eq!(values.segments[0].weight_kg, 10.0);
-        assert_eq!(values.body_weight_kg, Some(75.0));
-        assert_eq!(values.segments[0].reps, 5);
-    }
-
-    #[wasm_bindgen_test]
-    fn copies_no_added_weight_without_the_previous_body_weight() {
-        let previous = previous_set(None, 0.0);
-        let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
-            .expect("the previous values");
-        assert_eq!(values.segments[0].weight_kg, 0.0);
-        assert_eq!(values.segments[0].reps, 5);
-    }
-
-    #[wasm_bindgen_test]
-    fn copies_the_weight_for_weight_and_reps() {
-        let previous = previous_set(Some(70.0), 80.0);
-        let values = previous_values(&previous, RecordMode::WeightAndReps, Some(75.0))
-            .expect("the previous values");
-        assert_eq!(values.segments[0].weight_kg, 80.0);
-    }
-
-    #[wasm_bindgen_test]
-    fn copies_every_segment_of_a_previous_drop_set() {
-        let mut previous = previous_set(Some(70.0), 80.0);
-        previous.kind = SetKind::Drop;
-        previous.segments.push(SetSegment {
-            weight_kg: 60.0,
-            reps: 8,
-            momentum_reps: 0,
-            assisted_reps: 0,
-            left: None,
-            right: None,
-            duration_seconds: None,
-        });
-        let values = previous_values(&previous, RecordMode::WeightAndReps, Some(75.0))
-            .expect("the previous values");
-        assert_eq!(values.kind, SetKind::Drop);
-        assert_eq!(values.segments.len(), 2);
-        assert_eq!(values.segments[1].weight_kg, 60.0);
-        assert_eq!(values.segments[1].reps, 8);
-    }
-
-    #[wasm_bindgen_test]
-    fn drop_sets_do_not_take_a_set_number() {
-        let rows = vec![set_view("normal"), set_view("drop"), set_view("normal")];
-        assert_eq!(set_numbers(&rows), vec![Some(1), None, Some(2)]);
-    }
-
-    fn set_view(kind: &str) -> SetView {
-        SetView {
-            record: warrior_core::training_record::SetRecordRow {
-                id: "set".to_owned(),
-                training_exercise_id: "exercise".to_owned(),
-                position: 1,
-                kind: kind.to_owned(),
-                completed: 0,
-                rpe: None,
-                grip: None,
-                body_weight_kg: None,
-                recorded_at: None,
-                created_at: "2026-11-12T00:00:00Z".to_owned(),
-                updated_at: "2026-11-12T00:00:00Z".to_owned(),
-            },
-            segments: Vec::new(),
-            revision: 0,
-        }
-    }
-}
+mod tests;
