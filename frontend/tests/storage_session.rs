@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 //! IndexedDB の保存、送信待ちの列、編集権を失った記録、サーバーの記録での置き換え、
 //! 移行、アカウント削除のブラウザのテスト。
 //!
@@ -11,21 +9,14 @@
 //! セットと段は `put_record` で保存し、outbox の操作は作らない。セットの同期操作は
 //! まだ無い。
 
-use js_sys::Promise;
 use serde_json::json;
 use warrior_core::exercise::Laterality;
 use warrior_core::set_calc::RecordMode;
 use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionUpdatePayload,
 };
-use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{BestKind, PersonalBestItem};
-use warrior_frontend::storage::{
-    request_persistence, DiscardOutcome, ReplacePurpose, Storage, StorageError, Store,
-};
-use wasm_bindgen::closure::Closure;
-use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
+use warrior_frontend::storage::{DiscardOutcome, Storage, Store};
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -33,14 +24,9 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 mod support;
 
-use support::{
-    create_operation, create_operation_for, create_operation_with_memo, database_name, session,
-    session_with_id, TRAINING_ID,
-};
+use support::{create_operation, create_operation_with_memo, database_name, session, TRAINING_ID};
 
-const OTHER_TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4300";
 const CREATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4302";
-const OTHER_CREATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4306";
 const UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4303";
 const SECOND_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4304";
 const THIRD_UPDATE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4305";
@@ -65,77 +51,6 @@ async fn open(name: &str) -> Storage {
     Storage::open_with(name, 2)
         .await
         .expect("the database must open")
-}
-
-fn server_record(training_id: &str, memo: &str) -> TrainingRecord {
-    serde_json::from_value(json!({
-        "session": {
-            "id": training_id,
-            "date": "2026-11-12",
-            "started_at": "2026-11-12T03:00:00Z",
-            "memo": memo,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T04:00:00Z"
-        },
-        "exercises": [{
-            "id": "exercise-1",
-            "training_id": training_id,
-            "exercise_id": "bench-press",
-            "snapshot": "{}",
-            "position": 1,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }],
-        "sets": [{
-            "id": "set-1",
-            "training_exercise_id": "exercise-1",
-            "position": 1,
-            "kind": "normal",
-            "completed": 1,
-            "rpe": 8.0,
-            "grip": null,
-            "recorded_at": null,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }],
-        "segments": [{
-            "id": "segment-1",
-            "set_id": "set-1",
-            "position": 1,
-            "weight_kg": 100.0,
-            "reps": 5,
-            "momentum_reps": 0,
-            "assisted_reps": 0,
-            "duration_seconds": null,
-            "left_weight_kg": null,
-            "left_reps": null,
-            "left_duration_seconds": null,
-            "right_weight_kg": null,
-            "right_reps": null,
-            "right_duration_seconds": null,
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }],
-        "supersets": [{
-            "id": "superset-1",
-            "training_id": training_id,
-            "position": 1,
-            "members": [{
-                "superset_id": "superset-1",
-                "training_exercise_id": "exercise-1",
-                "position": 1
-            }],
-            "created_at": "2026-11-12T03:00:00Z",
-            "updated_at": "2026-11-12T03:00:00Z"
-        }]
-    }))
-    .expect("the server record must deserialize")
-}
-
-fn finished_server_record(training_id: &str, memo: &str) -> TrainingRecord {
-    let mut record = server_record(training_id, memo);
-    record.session.finished_at = Some("2026-11-12T04:00:00Z".to_owned());
-    record
 }
 
 /// メモをサーバーが受理した状態のトレーニングを作る。
