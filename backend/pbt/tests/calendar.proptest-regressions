@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7ac90230ec644c457e3ca9ba2222eeb8fa9b3ba26e209c7fae7667b8e8657645 # shrinks to (_month, days) = (JstMonth { start: JstDate { year: 1900, month: 1, day: 1 }, end: JstDate { year: 1900, month: 1, day: 31 } }, [TrainingDay { date: JstDate { year: 1900, month: 1, day: 1 }, body_parts: [Abs] }, TrainingDay { date: JstDate { year: 1900, month: 1, day: 10 }, body_parts: [Abs] }])

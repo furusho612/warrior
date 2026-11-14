@@ -19,9 +19,26 @@ pub enum BodyPart {
 }
 
 impl BodyPart {
+    /// 8 区分。表示と集計の並びを固定する。
+    pub const ALL: [Self; 8] = [
+        Self::Chest,
+        Self::Back,
+        Self::Shoulders,
+        Self::BicepsForearm,
+        Self::Triceps,
+        Self::Legs,
+        Self::Abs,
+        Self::Other,
+    ];
+
     /// その他か。
     pub fn is_other(self) -> bool {
         self == Self::Other
+    }
+
+    /// DB と API の文字列を部位区分に戻す。
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|part| part.as_str() == text)
     }
 
     /// DB と API の文字列。

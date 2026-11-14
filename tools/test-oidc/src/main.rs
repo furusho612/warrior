@@ -12,18 +12,22 @@ use serde_json::{json, Value};
 use warrior_core::base64url;
 
 const DEFAULT_PORT: u16 = 8788;
-const ISSUER: &str = "http://localhost:8788";
 
 fn main() {
-    let port = parse_port();
-    let listener = TcpListener::bind(("127.0.0.1", port)).expect("test OIDC provider must bind");
-    let mut state = State::default();
+    let (listener, mut state) = listen(parse_port()).expect("test OIDC provider must bind");
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
         };
         let _ = handle(stream, &mut state);
     }
+}
+
+/// 待ち受ける listener と、実際のポートから決めた発行元を持つ状態を返す。
+fn listen(port: u16) -> std::io::Result<(TcpListener, State)> {
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, State::new(port)))
 }
 
 fn parse_port() -> u16 {
@@ -39,11 +43,23 @@ fn parse_port() -> u16 {
     DEFAULT_PORT
 }
 
-#[derive(Default)]
 struct State {
     codes: HashMap<String, AuthorizationCode>,
     tokens: HashMap<String, User>,
     counter: u64,
+    issuer: String,
+}
+
+impl State {
+    /// 待ち受けるポートから、ID トークンに載せる発行元を決める。
+    fn new(port: u16) -> Self {
+        Self {
+            codes: HashMap::new(),
+            tokens: HashMap::new(),
+            counter: 0,
+            issuer: format!("http://localhost:{port}"),
+        }
+    }
 }
 
 struct AuthorizationCode {
@@ -148,6 +164,7 @@ fn token(state: &mut State, request: &Request) -> Vec<u8> {
         &authorization.sub,
         &authorization.nonce,
         &authorization.client_id,
+        &state.issuer,
     );
     json_response(
         200,
@@ -160,7 +177,7 @@ fn token(state: &mut State, request: &Request) -> Vec<u8> {
     )
 }
 
-fn id_token(sub: &str, nonce: &str, client_id: &str) -> String {
+fn id_token(sub: &str, nonce: &str, client_id: &str, issuer: &str) -> String {
     let header = json!({ "alg": "none", "typ": "JWT" });
     let expiry = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -168,7 +185,7 @@ fn id_token(sub: &str, nonce: &str, client_id: &str) -> String {
         .as_secs()
         + 3600;
     let payload = json!({
-        "iss": ISSUER,
+        "iss": issuer,
         "aud": client_id,
         "sub": sub,
         "email": format!("{sub}@example.test"),
@@ -331,4 +348,27 @@ fn response(status: u16, content_type: &str, headers: &[(&str, &str)], body: &st
     response.push_str("\r\n");
     response.push_str(body);
     response.into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{id_token, listen};
+
+    #[test]
+    fn the_id_token_issuer_uses_the_port_the_server_listens_on() {
+        let (listener, state) = listen(0).expect("the provider must bind a free port");
+        let port = listener
+            .local_addr()
+            .expect("the listener has a local address")
+            .port();
+        assert_ne!(port, 0, "port 0 must be replaced by the bound port");
+        let token = id_token("sub-a", "nonce-a", "client-a", &state.issuer);
+        let payload = token.split('.').nth(1).expect("the payload segment");
+        let payload = warrior_core::base64url::decode(payload).expect("the payload is base64url");
+        let payload: Value = serde_json::from_slice(&payload).expect("the payload is JSON");
+        assert_eq!(payload["iss"], format!("http://localhost:{port}"));
+        assert_eq!(payload["aud"], "client-a");
+    }
 }

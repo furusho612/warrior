@@ -7,6 +7,7 @@ use worker::{console_error, event, Context, Date, Env, Request, Response, Result
 
 pub mod account;
 pub mod auth;
+pub mod calendar;
 pub mod db;
 pub mod error;
 pub mod exercise;
@@ -16,6 +17,7 @@ pub mod rate_limit;
 pub mod router;
 pub mod scheduled;
 pub mod security;
+pub mod stored_sets;
 pub mod sync;
 pub mod training_session;
 

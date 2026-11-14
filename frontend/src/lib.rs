@@ -3,7 +3,10 @@
 //! テーマの属性の切り替えは `theme` が持つ。
 
 pub mod app;
+pub mod calendar;
+pub mod calendar_view;
 pub mod generated;
+pub mod http;
 pub mod layout;
 pub mod passkey;
 pub mod pwa;
