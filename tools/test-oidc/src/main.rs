@@ -14,16 +14,20 @@ use warrior_core::base64url;
 const DEFAULT_PORT: u16 = 8788;
 
 fn main() {
-    let port = parse_port();
-    let issuer = format!("http://localhost:{port}");
-    let listener = TcpListener::bind(("127.0.0.1", port)).expect("test OIDC provider must bind");
-    let mut state = State::default();
+    let (listener, mut state) = listen(parse_port()).expect("test OIDC provider must bind");
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
         };
-        let _ = handle(stream, &mut state, &issuer);
+        let _ = handle(stream, &mut state);
     }
+}
+
+/// 待ち受ける listener と、実際のポートから決めた発行元を持つ状態を返す。
+fn listen(port: u16) -> std::io::Result<(TcpListener, State)> {
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, State::new(port)))
 }
 
 fn parse_port() -> u16 {
@@ -39,11 +43,23 @@ fn parse_port() -> u16 {
     DEFAULT_PORT
 }
 
-#[derive(Default)]
 struct State {
     codes: HashMap<String, AuthorizationCode>,
     tokens: HashMap<String, User>,
     counter: u64,
+    issuer: String,
+}
+
+impl State {
+    /// 待ち受けるポートから、ID トークンに載せる発行元を決める。
+    fn new(port: u16) -> Self {
+        Self {
+            codes: HashMap::new(),
+            tokens: HashMap::new(),
+            counter: 0,
+            issuer: format!("http://localhost:{port}"),
+        }
+    }
 }
 
 struct AuthorizationCode {
@@ -66,7 +82,7 @@ struct Request {
     body: String,
 }
 
-fn handle(mut stream: TcpStream, state: &mut State, issuer: &str) -> std::io::Result<()> {
+fn handle(mut stream: TcpStream, state: &mut State) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let Some(request) = read_request(&mut stream)? else {
@@ -77,7 +93,7 @@ fn handle(mut stream: TcpStream, state: &mut State, issuer: &str) -> std::io::Re
         ("GET", "/health") => json_response(200, json!({ "status": "ok" })),
         ("GET", "/test/user") => test_user(state, &request),
         ("GET", "/authorize") => authorize(state, &request),
-        ("POST", "/token") => token(state, &request, issuer),
+        ("POST", "/token") => token(state, &request),
         ("GET", "/userinfo") => userinfo(state, &request),
         _ => json_response(404, json!({ "error": "not found" })),
     };
@@ -126,7 +142,7 @@ fn authorize(state: &mut State, request: &Request) -> Vec<u8> {
     response(302, "text/plain", &[("Location", &location)], "")
 }
 
-fn token(state: &mut State, request: &Request, issuer: &str) -> Vec<u8> {
+fn token(state: &mut State, request: &Request) -> Vec<u8> {
     let form = parse_query(&request.body);
     let Some(code) = form.get("code") else {
         return json_response(400, json!({ "error": "missing code" }));
@@ -145,10 +161,10 @@ fn token(state: &mut State, request: &Request, issuer: &str) -> Vec<u8> {
     state.tokens.insert(access_token.clone(), user);
 
     let id_token = id_token(
-        issuer,
         &authorization.sub,
         &authorization.nonce,
         &authorization.client_id,
+        &state.issuer,
     );
     json_response(
         200,
@@ -161,7 +177,7 @@ fn token(state: &mut State, request: &Request, issuer: &str) -> Vec<u8> {
     )
 }
 
-fn id_token(issuer: &str, sub: &str, nonce: &str, client_id: &str) -> String {
+fn id_token(sub: &str, nonce: &str, client_id: &str, issuer: &str) -> String {
     let header = json!({ "alg": "none", "typ": "JWT" });
     let expiry = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -332,4 +348,27 @@ fn response(status: u16, content_type: &str, headers: &[(&str, &str)], body: &st
     response.push_str("\r\n");
     response.push_str(body);
     response.into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{id_token, listen};
+
+    #[test]
+    fn the_id_token_issuer_uses_the_port_the_server_listens_on() {
+        let (listener, state) = listen(0).expect("the provider must bind a free port");
+        let port = listener
+            .local_addr()
+            .expect("the listener has a local address")
+            .port();
+        assert_ne!(port, 0, "port 0 must be replaced by the bound port");
+        let token = id_token("sub-a", "nonce-a", "client-a", &state.issuer);
+        let payload = token.split('.').nth(1).expect("the payload segment");
+        let payload = warrior_core::base64url::decode(payload).expect("the payload is base64url");
+        let payload: Value = serde_json::from_slice(&payload).expect("the payload is JSON");
+        assert_eq!(payload["iss"], format!("http://localhost:{port}"));
+        assert_eq!(payload["aud"], "client-a");
+    }
 }

@@ -150,6 +150,22 @@ impl DevServer {
             .map_err(|error| format!("the d1 output must be JSON but was {output}: {error}"))
     }
 
+    /// ローカルの D1 で SQL ファイルを実行する。
+    pub fn execute_d1_file(&self, path: &Path) -> Result<(), String> {
+        self.run_wrangler(&[
+            "d1",
+            "execute",
+            "DB",
+            "--local",
+            "--persist-to",
+            self.persist_dir_str(),
+            "--file",
+            path.to_str().expect("a UTF-8 path"),
+            "--json",
+        ])
+        .map(|_| ())
+    }
+
     /// ローカルの R2 にオブジェクトを置く。
     pub fn put_r2_object(&self, key: &str, bytes: &[u8]) -> Result<(), String> {
         let sequence = R2_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);

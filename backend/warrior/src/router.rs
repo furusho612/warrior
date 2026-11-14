@@ -7,6 +7,7 @@ use worker::{Request, Response, Result, RouteContext, Router};
 
 use crate::account;
 use crate::auth::{oauth, passkey, session};
+use crate::calendar;
 use crate::sync;
 use crate::training_record;
 use crate::training_session;
@@ -31,6 +32,10 @@ pub const TRAINING_SUMMARY_ROUTE_NAME: &str = "training_summary";
 pub const TRAINING_GET_ROUTE_NAME: &str = "training_get";
 /// トレーニングの編集権を引き継ぐ経路の名前。
 pub const TRAINING_TAKEOVER_ROUTE_NAME: &str = "training_takeover";
+/// カレンダーの月を返す経路の名前。
+pub const CALENDAR_MONTH_ROUTE_NAME: &str = "calendar_month";
+/// カレンダーの日を返す経路の名前。
+pub const CALENDAR_DAY_ROUTE_NAME: &str = "calendar_day";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -49,6 +54,8 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/trainings/:id/summary", training_session::summary)
         .get_async("/api/trainings/:id", training_record::get)
         .post_async("/api/trainings/:id/takeover", training_record::takeover)
+        .get_async("/api/calendar", calendar::month)
+        .get_async("/api/calendar/:date", calendar::day)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
         .get_async(
             "/api/auth/reauthenticate/google/start",
@@ -82,6 +89,9 @@ pub fn route_name(path: &str) -> &'static str {
     if path.starts_with("/api/trainings/") && path.ends_with("/summary") {
         return TRAINING_SUMMARY_ROUTE_NAME;
     }
+    if path.starts_with("/api/calendar/") {
+        return CALENDAR_DAY_ROUTE_NAME;
+    }
     if path.starts_with("/api/trainings/") && path.ends_with("/takeover") {
         return TRAINING_TAKEOVER_ROUTE_NAME;
     }
@@ -95,6 +105,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/auth/logout" => LOGOUT_ROUTE_NAME,
         "/api/me" => ME_ROUTE_NAME,
         "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
+        "/api/calendar" => CALENDAR_MONTH_ROUTE_NAME,
         "/api/me/passkeys" => "passkeys_list",
         "/api/me/passkeys/:id" => "passkeys_delete",
         "/api/account" => "account_delete",
@@ -130,6 +141,7 @@ mod tests {
         TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
         TRAINING_TAKEOVER_ROUTE_NAME,
     };
+    use super::{CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME};
 
     #[test]
     fn names_the_health_route() {
@@ -180,6 +192,15 @@ mod tests {
             route_name("/api/trainings/"),
             NOT_FOUND_ROUTE_NAME,
             "an empty training id is not a route"
+        );
+    }
+
+    #[test]
+    fn names_the_calendar_routes() {
+        assert_eq!(route_name("/api/calendar"), CALENDAR_MONTH_ROUTE_NAME);
+        assert_eq!(
+            route_name("/api/calendar/2026-11-12"),
+            CALENDAR_DAY_ROUTE_NAME
         );
     }
 

@@ -3,6 +3,7 @@
 - Requirements: REQ-CLD-001, REQ-CLD-002, REQ-CLD-003, REQ-CLD-004, REQ-CLD-005, REQ-CLD-006
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-calendar
 
@@ -76,3 +77,13 @@
 `frontend/src/text.rs` に部位区分と凡例の文言を追加する。
 `backend/warrior/tests/e2e_calendar.rs` に E2E を追加する。
 `backend/pbt/tests/calendar.rs` に性質テストを置く。
+
+## 結果
+
+月表示、前後の月の移動、部位の色、トレーニング日数と部位区分ごとの日数、日の詳細、部位の絞り込み、凡例を実装した。
+`GET /api/calendar?month=YYYY-MM&part=<部位>` は月の日ごとの部位と日数を、`GET /api/calendar/:date` はその日のトレーニング、種目、セット、総重量を返す。月の境界と日付は `training_sessions.date` の日本時間の値を使い、日の部位は記録時の `ExerciseSnapshot` の部位区分を使う。
+`backend/warrior/src/stored_sets.rs` に、種目、セット、段を `SetRecord` に組み立てる処理を移し、サマリーとカレンダーの日の詳細で共有した。`frontend/src/calendar_view.rs` に表示の組み立て、`frontend/src/http.rs` に API の取得を分けた。
+未完了のトレーニングもトレーニング日として数える。トレーニングを開始した日は記録の日であり、完了したセットだけを日の詳細に出す。
+部位の絞り込みは、強調をサーバーの `highlighted` で決め、部位を変えるたびに月を取り直す。強調の規則を `warrior_core::calendar` の 1 か所に保つためである。
+Safari の E2E を `mise run e2e-safari` と CI に入れた。ローカルの Safari は remote automation を有効にできず未実行で、CI で確認する。
+統合の確認で、0042 の種目マスターの seed が `wrangler_account_deletion` の種目 seed と衝突することと、`wrangler_training_session` の過去記録のポート 8805 が編集権の E2E と衝突することを見つけ、別のコミットで直した。

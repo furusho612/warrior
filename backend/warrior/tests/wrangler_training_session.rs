@@ -19,7 +19,7 @@ use warrior_core::training_session::{BestKind, PersonalBestItem, TrainingSession
 
 const ORIGIN: &str = "http://localhost:8787";
 const PORT: u16 = 8804;
-const PAST_PORT: u16 = 8805;
+const PAST_PORT: u16 = 8814;
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4501";
 const OTHER_USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4502";
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4510";

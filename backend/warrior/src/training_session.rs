@@ -8,15 +8,11 @@
 
 use serde::Deserialize;
 use warrior_core::datetime;
-use warrior_core::exercise::{ExerciseSnapshot, GripSelection, Laterality};
 use warrior_core::jst::JstDate;
 use warrior_core::ownership::{decide_write, WriteDecision};
-use warrior_core::set_calc::{
-    BestKey, SetKind, SetRecord, SetSegment, SetValidationError, SideValue,
-};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::training_session::{
-    summary_from_sets, updated_personal_bests, PersonalBestItem, SessionSet, TrainingSessionSummary,
+    summary_from_sets, updated_personal_bests, PersonalBestItem, TrainingSessionSummary,
 };
 use worker::{console_error, Date, Request, Response, Result, RouteContext};
 
@@ -24,6 +20,7 @@ use crate::auth::session;
 use crate::db::{changed_rows, Db};
 use crate::error::{response, ErrorCode};
 use crate::ownership;
+use crate::stored_sets;
 
 #[derive(Debug, Deserialize)]
 struct SessionSummaryRow {
@@ -43,42 +40,8 @@ struct PersonalBestsRow {
     personal_bests: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct SetSegmentRow {
-    training_exercise_id: String,
-    snapshot: String,
-    set_id: String,
-    kind: String,
-    set_rpe: Option<f64>,
-    grip: Option<String>,
-    segment_id: Option<String>,
-    weight_kg: Option<f64>,
-    reps: Option<i64>,
-    momentum_reps: Option<i64>,
-    assisted_reps: Option<i64>,
-    duration_seconds: Option<i64>,
-    left_weight_kg: Option<f64>,
-    left_reps: Option<i64>,
-    left_duration_seconds: Option<i64>,
-    right_weight_kg: Option<f64>,
-    right_reps: Option<i64>,
-    right_duration_seconds: Option<i64>,
-}
-
 const SESSION_SUMMARY_COLUMNS: &str = "date, started_at, finished_at, owner_terminal_id, \
      duration_seconds, total_weight_kg, exercise_count, set_count, personal_bests";
-
-const SET_SEGMENT_QUERY: &str = "SELECT te.id AS training_exercise_id, te.snapshot, \
-     s.id AS set_id, s.kind AS kind, s.rpe AS set_rpe, s.grip AS grip, \
-     sg.id AS segment_id, \
-     sg.weight_kg, sg.reps, sg.momentum_reps, sg.assisted_reps, sg.duration_seconds, \
-     sg.left_weight_kg, sg.left_reps, sg.left_duration_seconds, \
-     sg.right_weight_kg, sg.right_reps, sg.right_duration_seconds \
-     FROM training_exercises te \
-     JOIN sets s ON s.training_exercise_id = te.id AND s.completed = 1 \
-     LEFT JOIN set_segments sg ON sg.set_id = s.id AND sg.user_id = ? \
-     WHERE te.user_id = ? AND te.training_id = ? AND s.user_id = ? \
-     ORDER BY te.position, s.position, sg.position";
 
 /// `POST /api/trainings/:id/finish`
 pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Response> {
@@ -127,10 +90,10 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         console_error!("the stored date is invalid");
         return Ok(response(ErrorCode::Internal, "internal error"));
     };
-    let sets = match load_sets(&db, &training_id, &authenticated.id).await {
-        Ok(sets) => sets,
+    let sets = match stored_sets::load_training(&db, &authenticated.id, &training_id).await {
+        Ok(exercises) => stored_sets::session_sets(&exercises),
         Err(error) => {
-            console_error!("failed to build the sets: {error:?}");
+            console_error!("failed to build the sets: {error}");
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
@@ -372,208 +335,12 @@ async fn past_personal_bests(
     Ok(items)
 }
 
-async fn load_sets(db: &Db, training_id: &str, user_id: &str) -> Result<Vec<SessionSet>> {
-    let result = db
-        .all(&SqlStatement::new(
-            SET_SEGMENT_QUERY,
-            vec![
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(training_id.to_owned()),
-                SqlValue::Text(user_id.to_owned()),
-            ],
-        ))
-        .await?;
-    let rows = result.results::<SetSegmentRow>()?;
-    build_sets(rows).map_err(|error| {
-        worker::Error::RustError(format!("the stored sets are invalid: {error:?}"))
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BuildSetsError {
-    /// 種目のスナップショットを復元できない。
-    UnreadableSnapshot,
-    /// セット種別の文字列が既知の値でない。
-    UnknownSetKind,
-    /// グリップの JSON を復元できない。
-    InvalidGrip,
-    /// 完了したセットに段が無い。
-    MissingSegments,
-    /// セットが計算規則の検証を通らない。
-    InvalidSetRecord(SetValidationError),
-}
-
-struct ExerciseGroup {
-    training_exercise_id: String,
-    snapshot: ExerciseSnapshot,
-    sets: Vec<StoredSet>,
-}
-
-struct StoredSet {
-    id: String,
-    kind: String,
-    rpe: Option<f64>,
-    grip: Option<String>,
-    segments: Vec<SetSegment>,
-}
-
-fn build_sets(rows: Vec<SetSegmentRow>) -> Result<Vec<SessionSet>, BuildSetsError> {
-    let mut groups = Vec::<ExerciseGroup>::new();
-    for row in rows {
-        let index = match groups
-            .iter()
-            .position(|group| group.training_exercise_id == row.training_exercise_id)
-        {
-            Some(index) => index,
-            None => {
-                let snapshot = serde_json::from_str::<ExerciseSnapshot>(&row.snapshot)
-                    .map_err(|_| BuildSetsError::UnreadableSnapshot)?;
-                groups.push(ExerciseGroup {
-                    training_exercise_id: row.training_exercise_id.clone(),
-                    snapshot,
-                    sets: Vec::new(),
-                });
-                groups.len() - 1
-            }
-        };
-        let group = &mut groups[index];
-        let segment = row
-            .segment_id
-            .as_ref()
-            .map(|_| segment_from_row(&row, group.snapshot.laterality));
-        match group.sets.iter_mut().find(|set| set.id == row.set_id) {
-            Some(set) => {
-                if let Some(segment) = segment {
-                    set.segments.push(segment);
-                }
-            }
-            None => {
-                let mut segments = Vec::new();
-                if let Some(segment) = segment {
-                    segments.push(segment);
-                }
-                group.sets.push(StoredSet {
-                    id: row.set_id.clone(),
-                    kind: row.kind.clone(),
-                    rpe: row.set_rpe,
-                    grip: row.grip.clone(),
-                    segments,
-                });
-            }
-        }
-    }
-
-    let mut sets = Vec::new();
-    for group in groups {
-        for set in group.sets {
-            if set.segments.is_empty() {
-                return Err(BuildSetsError::MissingSegments);
-            }
-            let grip = parse_grip(set.grip.as_deref())?;
-            let (grip, attachment) = grip.comparison_key();
-            let key = BestKey {
-                exercise_id: group.snapshot.exercise_id.clone(),
-                grip,
-                attachment,
-            };
-            let kind = parse_set_kind(&set.kind).ok_or(BuildSetsError::UnknownSetKind)?;
-            let record = SetRecord::new(
-                key,
-                kind,
-                set.segments,
-                set.rpe,
-                None,
-                group.snapshot.record_mode,
-            )
-            .map_err(BuildSetsError::InvalidSetRecord)?;
-            sets.push(SessionSet {
-                record,
-                exercise_name: group.snapshot.name.clone(),
-                laterality: group.snapshot.laterality,
-            });
-        }
-    }
-    Ok(sets)
-}
-
-fn parse_grip(text: Option<&str>) -> Result<GripSelection, BuildSetsError> {
-    match text {
-        None => Ok(GripSelection::None),
-        Some(text) => serde_json::from_str(text).map_err(|_| BuildSetsError::InvalidGrip),
-    }
-}
-
-fn parse_set_kind(text: &str) -> Option<SetKind> {
-    match text {
-        "normal" => Some(SetKind::Normal),
-        "warmup" => Some(SetKind::Warmup),
-        "drop" => Some(SetKind::Drop),
-        _ => None,
-    }
-}
-
-fn segment_from_row(row: &SetSegmentRow, laterality: Laterality) -> SetSegment {
-    match laterality {
-        Laterality::Unilateral => SetSegment {
-            weight_kg: 0.0,
-            reps: 0,
-            momentum_reps: to_u32(row.momentum_reps),
-            assisted_reps: to_u32(row.assisted_reps),
-            left: Some(side_value(
-                row.left_weight_kg,
-                row.left_reps,
-                row.left_duration_seconds,
-            )),
-            right: Some(side_value(
-                row.right_weight_kg,
-                row.right_reps,
-                row.right_duration_seconds,
-            )),
-            duration_seconds: None,
-        },
-        Laterality::Bilateral => SetSegment {
-            weight_kg: row.weight_kg.unwrap_or(0.0),
-            reps: to_u32(row.reps),
-            momentum_reps: to_u32(row.momentum_reps),
-            assisted_reps: to_u32(row.assisted_reps),
-            left: None,
-            right: None,
-            duration_seconds: row
-                .duration_seconds
-                .and_then(|value| u32::try_from(value).ok()),
-        },
-    }
-}
-
-fn side_value(
-    weight_kg: Option<f64>,
-    reps: Option<i64>,
-    duration_seconds: Option<i64>,
-) -> SideValue {
-    SideValue {
-        weight_kg: weight_kg.unwrap_or(0.0),
-        reps: to_u32(reps),
-        duration_seconds: duration_seconds.and_then(|value| u32::try_from(value).ok()),
-    }
-}
-
-fn to_u32(value: Option<i64>) -> u32 {
-    value
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-    use warrior_core::exercise::Laterality;
-    use warrior_core::set_calc::{RecordMode, SetKind};
     use warrior_core::training_session::{BestKind, TrainingSessionSummary};
 
     use super::{
-        build_sets, finish_after_batch, finish_statement, stored_summary, BuildSetsError,
-        FinishAfterBatch, SessionSummaryRow, SetSegmentRow,
+        finish_after_batch, finish_statement, stored_summary, FinishAfterBatch, SessionSummaryRow,
     };
 
     #[test]
@@ -668,143 +435,5 @@ mod tests {
             personal_bests: None,
         };
         assert_eq!(stored_summary(&row), None);
-    }
-
-    #[test]
-    fn the_stored_rows_become_the_weight_and_time_sets() {
-        let rows = vec![
-            segment_row(
-                "exercise-weight",
-                "set-warmup",
-                "warmup",
-                Some(60.0),
-                Some(10),
-                None,
-            ),
-            segment_row(
-                "exercise-weight",
-                "set-normal",
-                "normal",
-                Some(100.0),
-                Some(5),
-                None,
-            ),
-            segment_row(
-                "exercise-weight",
-                "set-drop",
-                "drop",
-                Some(100.0),
-                Some(8),
-                None,
-            ),
-            segment_row(
-                "exercise-weight",
-                "set-drop",
-                "drop",
-                Some(80.0),
-                Some(6),
-                None,
-            ),
-            segment_row("exercise-time", "set-time", "normal", None, None, Some(90)),
-        ];
-        let sets = build_sets(rows).expect("the stored sets are valid");
-        assert_eq!(sets.len(), 4);
-        assert_eq!(sets[0].record.kind(), SetKind::Warmup);
-        assert_eq!(sets[0].record.total_weight_kg(), 0.0);
-        assert_eq!(sets[1].record.mode(), RecordMode::WeightAndReps);
-        assert_eq!(sets[1].record.total_weight_kg(), 500.0);
-        assert_eq!(sets[2].record.kind(), SetKind::Drop);
-        assert_eq!(sets[2].record.segments().len(), 2);
-        assert_eq!(sets[2].record.total_weight_kg(), 1_280.0);
-        assert_eq!(sets[3].record.mode(), RecordMode::Time);
-        assert_eq!(sets[3].record.longest_duration_seconds(), Some(90));
-        assert_eq!(sets[1].exercise_name, "exercise-weight");
-        assert_eq!(sets[1].laterality, Laterality::Bilateral);
-    }
-
-    #[test]
-    fn an_unknown_set_kind_is_rejected() {
-        let rows = vec![segment_row(
-            "exercise-weight",
-            "set-normal",
-            "unknown",
-            Some(100.0),
-            Some(5),
-            None,
-        )];
-        assert_eq!(build_sets(rows), Err(BuildSetsError::UnknownSetKind));
-    }
-
-    #[test]
-    fn a_completed_set_without_segments_is_rejected() {
-        let mut row = segment_row(
-            "exercise-weight",
-            "set-normal",
-            "normal",
-            Some(100.0),
-            Some(5),
-            None,
-        );
-        row.segment_id = None;
-        assert_eq!(build_sets(vec![row]), Err(BuildSetsError::MissingSegments));
-    }
-
-    #[test]
-    fn an_invalid_grip_json_is_rejected() {
-        let mut row = segment_row(
-            "exercise-weight",
-            "set-normal",
-            "normal",
-            Some(100.0),
-            Some(5),
-            None,
-        );
-        row.grip = Some("not-json".to_owned());
-        assert_eq!(build_sets(vec![row]), Err(BuildSetsError::InvalidGrip));
-    }
-
-    fn segment_row(
-        exercise_id: &str,
-        set_id: &str,
-        kind: &str,
-        weight_kg: Option<f64>,
-        reps: Option<i64>,
-        duration_seconds: Option<i64>,
-    ) -> SetSegmentRow {
-        let record_mode = if duration_seconds.is_some() {
-            "time"
-        } else {
-            "weight_and_reps"
-        };
-        let snapshot = json!({
-            "exercise_id": exercise_id,
-            "name": exercise_id,
-            "body_part": "chest",
-            "muscles": [],
-            "record_mode": record_mode,
-            "laterality": "bilateral",
-            "grip_mode": "none",
-            "grip_options": []
-        });
-        SetSegmentRow {
-            training_exercise_id: exercise_id.to_owned(),
-            snapshot: snapshot.to_string(),
-            set_id: set_id.to_owned(),
-            kind: kind.to_owned(),
-            set_rpe: None,
-            grip: None,
-            segment_id: Some(format!("{set_id}-segment")),
-            weight_kg,
-            reps,
-            momentum_reps: Some(0),
-            assisted_reps: Some(0),
-            duration_seconds,
-            left_weight_kg: None,
-            left_reps: None,
-            left_duration_seconds: None,
-            right_weight_kg: None,
-            right_reps: None,
-            right_duration_seconds: None,
-        }
     }
 }
