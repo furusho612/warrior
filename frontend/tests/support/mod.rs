@@ -29,7 +29,7 @@ pub fn database_name(test: &str) -> String {
 
 /// テスト用のデータベースを開く。
 pub async fn open(name: &str) -> Storage {
-    Storage::open_with(name, 2)
+    Storage::open_with(name, warrior_frontend::storage::SCHEMA_VERSION)
         .await
         .expect("the database must open")
 }

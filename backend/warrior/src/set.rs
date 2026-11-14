@@ -279,6 +279,20 @@ async fn precheck_update(
     if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
         return Ok(Some(rejection));
     }
+    if payload.completed {
+        let lateral = rules.is_lateral();
+        if payload.to_record("", rules.record_mode).is_err()
+            || !payload
+                .segments
+                .iter()
+                .all(|segment| segment.has_completion_values(rules.record_mode, lateral))
+        {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "the set has no values to complete",
+            )));
+        }
+    }
     if !drop_positions_allowed(
         db,
         user_id,

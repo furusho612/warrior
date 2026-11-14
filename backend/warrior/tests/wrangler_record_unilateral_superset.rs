@@ -3,8 +3,8 @@
 //! 対応する要求: `REQ-SET-004`、`REQ-SET-005`。
 //! 左右別のセットが左右の値を保存し、総重量が左右の合算になり、左右の片方または両方が
 //! 無いセットを作成・完了できないことを確かめる。スーパーセットの組が同じトレーニングの
-//! 種目だけを受け付け、既に組に属する種目を含む組を拒否し、種目の削除で 2 つ未満になった
-//! 組を解散することを確かめる。
+//! 種目だけを受け付け、既に組に属する種目を含む組を拒否し、並べ替えで組の種目を変えられず、
+//! 種目の削除で 2 つ未満になった組を解散することを確かめる。
 
 #[allow(dead_code)]
 #[path = "support/record_set.rs"]
@@ -23,8 +23,10 @@ const UNILATERAL_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5910";
 const UNILATERAL_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5911";
 const SECOND_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5912";
 const THIRD_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5913";
+const FOURTH_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5916";
 const SECOND_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5914";
 const THIRD_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5915";
+const FOURTH_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5917";
 
 const NORMAL_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5920";
 const NORMAL_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5921";
@@ -67,6 +69,12 @@ const ONE_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a1";
 const ONE_MEMBER_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a2";
 const DUPLICATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a3";
 const DUPLICATE_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a4";
+const SECOND_GROUP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a5";
+const SECOND_GROUP_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a6";
+const CHANGING_REORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a7";
+const DELETE_SECOND_GROUP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a8";
+const DUPLICATE_SECOND_GROUP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a9";
+const DUPLICATE_SECOND_GROUP_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59aa";
 const FOREIGN_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5978";
 const FOREIGN_MEMBER_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5979";
 const THREE_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5980";
@@ -110,6 +118,7 @@ fn supersets_keep_members_in_order_and_dissolve_when_one_remains() {
     seed_superset_exercises(&server);
 
     create_and_reorder_the_two_member_group(&server, &session_cookie);
+    reject_a_reorder_that_changes_the_group(&server, &session_cookie);
     reject_a_duplicate_group(&server, &session_cookie);
     delete_the_two_member_group(&server, &session_cookie);
     reject_the_empty_and_foreign_groups(&server, &session_cookie);
@@ -138,6 +147,7 @@ fn seed_superset_exercises(server: &DevServer) {
     for (row_id, exercise_id, name, position) in [
         (SECOND_ROW_ID, SECOND_EXERCISE_ID, "ダンベルプレス", 2),
         (THIRD_ROW_ID, THIRD_EXERCISE_ID, "ダンベルフライ", 3),
+        (FOURTH_ROW_ID, FOURTH_EXERCISE_ID, "ダンベルロウ", 4),
     ] {
         record_common::seed_exercise(
             server,
@@ -268,12 +278,15 @@ fn reject_the_partial_set(server: &DevServer, cookie: &str) {
     // 左右の片方だけを持つセットは保存できないため、直接用意して完了の検証だけを行う。
     record_common::seed_set(
         server,
-        PARTIAL_SET_ID,
-        USER_ID,
-        UNILATERAL_ROW_ID,
-        3,
-        "normal",
-        0,
+        record_common::SetSeed {
+            set_id: PARTIAL_SET_ID,
+            user_id: USER_ID,
+            training_exercise_id: UNILATERAL_ROW_ID,
+            position: 3,
+            kind: "normal",
+            completed: 0,
+            grip: None,
+        },
     );
     server
         .execute_d1_json(&format!(
@@ -379,7 +392,7 @@ fn reject_a_missing_side_weight(server: &DevServer, cookie: &str) {
         segments,
     );
     let response = post(server, cookie, &operation);
-    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(response.status, 400, "{}", response.body);
     assert_eq!(
         first_row(
             server,
@@ -388,7 +401,7 @@ fn reject_a_missing_side_weight(server: &DevServer, cookie: &str) {
         0,
         "an update must not complete a set whose weight is missing"
     );
-    assert_eq!(applied_count(server, NO_WEIGHT_UPDATE_OPERATION_ID), 1);
+    assert_eq!(applied_count(server, NO_WEIGHT_UPDATE_OPERATION_ID), 0);
 
     let response = post(
         server,
@@ -451,7 +464,7 @@ fn reject_a_completed_update_and_complete_without_reps(server: &DevServer, cooki
         segments,
     );
     let response = post(server, cookie, &operation);
-    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(response.status, 400, "{}", response.body);
     assert_eq!(
         first_row(
             server,
@@ -460,7 +473,7 @@ fn reject_a_completed_update_and_complete_without_reps(server: &DevServer, cooki
         0,
         "an update must not complete a set without reps"
     );
-    assert_eq!(applied_count(server, DRAFT_UPDATE_OPERATION_ID), 1);
+    assert_eq!(applied_count(server, DRAFT_UPDATE_OPERATION_ID), 0);
 
     let response = post(
         server,
@@ -520,7 +533,7 @@ fn create_and_reorder_the_two_member_group(server: &DevServer, cookie: &str) {
     let operation = exercise_reorder_operation(
         REORDER_EXERCISE_OPERATION_ID,
         FINISHED_TRAINING_ID,
-        &[SECOND_ROW_ID, FINISHED_ROW_ID, THIRD_ROW_ID],
+        &[SECOND_ROW_ID, FINISHED_ROW_ID, THIRD_ROW_ID, FOURTH_ROW_ID],
     );
     let response = post(server, cookie, &operation);
     assert_eq!(response.status, 200, "{}", response.body);
@@ -537,6 +550,61 @@ fn create_and_reorder_the_two_member_group(server: &DevServer, cookie: &str) {
         member_ids(server, TWO_MEMBER_SUPERSET_ID),
         vec![SECOND_ROW_ID.to_owned(), FINISHED_ROW_ID.to_owned()]
     );
+}
+
+fn reject_a_reorder_that_changes_the_group(server: &DevServer, cookie: &str) {
+    let operation = superset_create_operation(
+        SECOND_GROUP_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        SECOND_GROUP_SUPERSET_ID,
+        &[THIRD_ROW_ID, FOURTH_ROW_ID],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        member_ids(server, SECOND_GROUP_SUPERSET_ID),
+        vec![THIRD_ROW_ID.to_owned(), FOURTH_ROW_ID.to_owned()]
+    );
+
+    let operation = superset_reorder_operation(
+        CHANGING_REORDER_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        TWO_MEMBER_SUPERSET_ID,
+        &[SECOND_ROW_ID, THIRD_ROW_ID],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(server, CHANGING_REORDER_OPERATION_ID), 0);
+    assert_eq!(
+        member_ids(server, TWO_MEMBER_SUPERSET_ID),
+        vec![SECOND_ROW_ID.to_owned(), FINISHED_ROW_ID.to_owned()]
+    );
+    assert_eq!(
+        member_ids(server, SECOND_GROUP_SUPERSET_ID),
+        vec![THIRD_ROW_ID.to_owned(), FOURTH_ROW_ID.to_owned()]
+    );
+
+    let operation = superset_create_operation(
+        DUPLICATE_SECOND_GROUP_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        DUPLICATE_SECOND_GROUP_SUPERSET_ID,
+        &[THIRD_ROW_ID, FOURTH_ROW_ID],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(
+        count(server, "supersets", DUPLICATE_SECOND_GROUP_SUPERSET_ID),
+        0
+    );
+
+    let operation = superset_delete_operation(
+        DELETE_SECOND_GROUP_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        SECOND_GROUP_SUPERSET_ID,
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(count(server, "supersets", SECOND_GROUP_SUPERSET_ID), 0);
 }
 
 fn delete_the_two_member_group(server: &DevServer, cookie: &str) {
