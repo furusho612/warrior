@@ -5,7 +5,7 @@
 //! セットの追加、更新、削除、並べ替え、完了が送信待ちの列を通り、段がセットの更新で
 //! 全置換され、削除でセットと一緒に消えることを確かめる。
 
-use warrior_core::set_calc::{estimated_one_rep_max, RecordMode, SetKind, SideValue};
+use warrior_core::set_calc::{estimated_one_rep_max, RecordMode, SetKind, Side, SideValue};
 use warrior_core::sync::{
     Operation, OperationKind, SessionUpdatePayload, SetCreatePayload, SetUpdatePayload,
 };
@@ -123,8 +123,8 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
         segments: vec![SetSegmentValues {
             weight_kg: 0.0,
             reps: 0,
-            momentum_reps: 0,
-            assisted_reps: 0,
+            momentum_reps: 1,
+            assisted_reps: 1,
             duration_seconds: None,
             left: Some(SegmentSideValues {
                 weight_kg: 10.0,
@@ -155,6 +155,8 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
     assert_eq!(stored[0].segments[0].left_reps, Some(5));
     assert_eq!(stored[0].segments[0].right_weight_kg, Some(12.0));
     assert_eq!(stored[0].segments[0].right_reps, Some(4));
+    assert_eq!(stored[0].segments[0].momentum_reps, 1);
+    assert_eq!(stored[0].segments[0].assisted_reps, 1);
 
     let payload: SetCreatePayload =
         serde_json::from_value(operation.payload.clone()).expect("the create payload");
@@ -174,10 +176,20 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
             duration_seconds: None,
         })
     );
+    assert_eq!(payload.segments[0].momentum_reps, 1);
+    assert_eq!(payload.segments[0].assisted_reps, 1);
     let record = payload
         .to_record("unilateral", RecordMode::WeightAndReps)
         .expect("a record");
-    assert_eq!(record.total_weight_kg(), 50.0 + 48.0);
+    let segment = &record.segments()[0];
+    assert_eq!(segment.side(Side::Left).unwrap().strict_reps(1, 1), 3);
+    assert_eq!(segment.side(Side::Right).unwrap().strict_reps(1, 1), 2);
+    assert_eq!(record.total_weight_kg(), 76.0);
+    assert_eq!(record.strict_total_weight_kg(), 54.0);
+    assert_eq!(
+        record.estimated_one_rep_max(),
+        estimated_one_rep_max(12.0, 2)
+    );
 
     let mut partial = values.clone();
     partial.segments[0].right = Some(SegmentSideValues {

@@ -1,13 +1,14 @@
 //! セットの計算規則の性質テスト。
 //!
 //! 対応する要求: `REQ-SET-006`、`REQ-SET-008`、`REQ-SET-009`。
-//! 推定 1RM の単調性、総重量の規則、部位別のセット数、自己ベストの対象を確かめる。
+//! 推定 1RM の単調性、総重量の規則、部位別のセット数、自己ベストの対象、
+//! 左右別の段で反動と補助を左右それぞれに適用することを確かめる。
 
 use proptest::prelude::*;
 use warrior_core::jst::JstDate;
 use warrior_core::set_calc::{
     estimated_one_rep_max, BestKey, PartRole, PersonalBest, RecordMode, SetKind, SetRecord,
-    SetSegment, SideValue,
+    SetSegment, SetValidationError, Side, SideValue,
 };
 
 #[path = "support/set.rs"]
@@ -53,6 +54,19 @@ fn record() -> impl Strategy<Value = SetRecord> {
             _ => SetKind::Drop,
         };
         SetRecord::new(key(), kind, segments, None, None, RecordMode::WeightAndReps).unwrap()
+    })
+}
+
+fn unilateral_breakdown() -> impl Strategy<Value = (u32, u32, u32, u32)> {
+    (1u32..=30).prop_flat_map(|left_reps| {
+        (1u32..=30).prop_flat_map(move |right_reps| {
+            let fit = left_reps.min(right_reps);
+            (0..=fit).prop_flat_map(move |momentum_reps| {
+                (0..=(fit - momentum_reps)).prop_map(move |assisted_reps| {
+                    (left_reps, right_reps, momentum_reps, assisted_reps)
+                })
+            })
+        })
     })
 }
 
@@ -147,11 +161,10 @@ proptest! {
     }
 
     #[test]
-    fn unilateral_sides_are_summed(
+    fn unilateral_sides_are_summed_with_the_same_breakdown(
+        (left_reps, right_reps, momentum_reps, assisted_reps) in unilateral_breakdown(),
         left_weight in weight(),
         right_weight in weight(),
-        left_reps in 1u32..=30,
-        right_reps in 1u32..=30,
     ) {
         let record = SetRecord::new(
             key(),
@@ -159,8 +172,8 @@ proptest! {
             vec![SetSegment {
                 weight_kg: 0.0,
                 reps: 0,
-                momentum_reps: 0,
-                assisted_reps: 0,
+                momentum_reps,
+                assisted_reps,
                 left: Some(SideValue {
                     weight_kg: left_weight,
                     reps: left_reps,
@@ -178,7 +191,70 @@ proptest! {
             RecordMode::WeightAndReps,
         )
         .unwrap();
-        let expected = left_weight * f64::from(left_reps) + right_weight * f64::from(right_reps);
-        prop_assert!((record.total_weight_kg() - expected).abs() < 1e-9);
+        let left_strict = left_reps - momentum_reps - assisted_reps;
+        let right_strict = right_reps - momentum_reps - assisted_reps;
+        let expected_total = left_weight * f64::from(left_reps - assisted_reps)
+            + right_weight * f64::from(right_reps - assisted_reps);
+        let expected_strict_total =
+            left_weight * f64::from(left_strict) + right_weight * f64::from(right_strict);
+        let expected_one_rep_max = [
+            estimated_one_rep_max(left_weight, left_strict),
+            estimated_one_rep_max(right_weight, right_strict),
+        ]
+        .into_iter()
+        .flatten()
+        .max_by(|first, second| first.total_cmp(second));
+        let segment = &record.segments()[0];
+        prop_assert_eq!(
+            segment
+                .side(Side::Left)
+                .unwrap()
+                .strict_reps(momentum_reps, assisted_reps),
+            left_strict
+        );
+        prop_assert_eq!(
+            segment
+                .side(Side::Right)
+                .unwrap()
+                .strict_reps(momentum_reps, assisted_reps),
+            right_strict
+        );
+        prop_assert!((record.total_weight_kg() - expected_total).abs() < 1e-9);
+        prop_assert!((record.strict_total_weight_kg() - expected_strict_total).abs() < 1e-9);
+        prop_assert_eq!(record.estimated_one_rep_max(), expected_one_rep_max);
+    }
+
+    #[test]
+    fn req_set_006_unilateral_assistance_over_either_side_is_rejected(
+        left_reps in 1u32..=30,
+        right_reps in 1u32..=30,
+        assisted_reps in 1u32..=30,
+    ) {
+        prop_assume!(assisted_reps > left_reps || assisted_reps > right_reps);
+        let result = SetRecord::new(
+            key(),
+            SetKind::Normal,
+            vec![SetSegment {
+                weight_kg: 0.0,
+                reps: 0,
+                momentum_reps: 0,
+                assisted_reps,
+                left: Some(SideValue {
+                    weight_kg: 10.0,
+                    reps: left_reps,
+                    duration_seconds: None,
+                }),
+                right: Some(SideValue {
+                    weight_kg: 20.0,
+                    reps: right_reps,
+                    duration_seconds: None,
+                }),
+                duration_seconds: None,
+            }],
+            None,
+            None,
+            RecordMode::WeightAndReps,
+        );
+        prop_assert_eq!(result, Err(SetValidationError::TooManyAssistedReps));
     }
 }
