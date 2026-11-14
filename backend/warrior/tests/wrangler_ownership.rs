@@ -13,7 +13,6 @@ use serde_json::{json, Value};
 use support::ownership::*;
 use warrior_core::training_session::TrainingSessionSummary;
 
-
 #[test]
 fn only_the_owner_edits_a_recording_training_and_the_handover_moves_the_right() {
     let server = start_server();
