@@ -452,6 +452,10 @@ pub struct Exercise {
 
 impl Exercise {
     /// 種目の不変条件を検証する。
+    ///
+    /// 部位区分は、その部位の筋肉を主働筋に 1 つ以上持つことで表す。主働筋と補助筋は
+    /// 他の部位区分の筋肉を含む。PRD の「付録: 種目マスターの初期登録案」が部位をまたぐ
+    /// 割り当てを定め、ADR-006 がその割り当てをスナップショットとして保存するためである。
     pub fn validate(&self) -> Result<(), ExerciseError> {
         if self.name.trim().is_empty() {
             return Err(ExerciseError::EmptyName);
@@ -477,11 +481,10 @@ impl Exercise {
             {
                 return Err(ExerciseError::PrimaryMissing);
             }
-            if self
-                .muscles
-                .iter()
-                .any(|assignment| assignment.muscle.body_part() != self.body_part)
-            {
+            if !self.muscles.iter().any(|assignment| {
+                assignment.role == MuscleRole::Primary
+                    && assignment.muscle.body_part() == self.body_part
+            }) {
                 return Err(ExerciseError::MuscleBodyPartMismatch);
             }
         }
@@ -612,10 +615,30 @@ mod tests {
     }
 
     #[test]
-    fn muscle_body_parts_must_match() {
+    fn primary_muscles_must_include_the_body_part() {
         let mut value = exercise();
         value.muscles[0].muscle = MuscleUnit::Quadriceps;
         assert_eq!(value.validate(), Err(ExerciseError::MuscleBodyPartMismatch));
+    }
+
+    #[test]
+    fn secondary_muscles_may_belong_to_another_body_part() {
+        let mut value = exercise();
+        value.muscles.push(MuscleAssignment {
+            muscle: MuscleUnit::TricepsBrachii,
+            role: MuscleRole::Secondary,
+        });
+        value.validate().unwrap();
+    }
+
+    #[test]
+    fn primary_muscles_may_include_another_body_part_when_one_matches() {
+        let mut value = exercise();
+        value.muscles.push(MuscleAssignment {
+            muscle: MuscleUnit::TrapeziusUpper,
+            role: MuscleRole::Primary,
+        });
+        value.validate().unwrap();
     }
 
     #[test]
