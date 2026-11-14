@@ -5,8 +5,8 @@
 //! 一緒に消す。記録した時点の体重はセットの行が持ち、段の重量は自重種目では加重である。
 
 use warrior_core::sync::{
-    Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
-    SetReorderPayload, SetUpdatePayload,
+    Operation, OperationKind, OutboxEntry, OutboxState, SetCompletePayload, SetCreatePayload,
+    SetDeletePayload, SetReorderPayload, SetUpdatePayload,
 };
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use wasm_bindgen::JsValue;
@@ -306,19 +306,33 @@ impl Storage {
     }
 
     /// サーバーに保存済みの 1 つのセットと段を端末へ戻す。
+    ///
+    /// 破棄した操作より後の、同じセットの送信待ちの作成、更新、完了、削除があるときは、
+    /// 端末の値を上書きしない。
     pub async fn restore_set(
         &self,
         record: &TrainingRecord,
         set_id: &str,
+        after_sequence: u64,
     ) -> Result<(), StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::Sets.name(), Store::SetSegments.name()],
+            &[
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::Outbox.name(),
+            ],
             IdbTransactionMode::Readwrite,
         )?;
         let sets = transaction.store(Store::Sets.name())?;
         let segments = transaction.store(Store::SetSegments.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if has_pending_set_change(&entries, set_id, after_sequence) {
+            transaction.finish().await?;
+            return Ok(());
+        }
         if let Err(error) = delete_set_rows_in(&sets, &segments, set_id).await {
             return abort(transaction, error).await;
         }
@@ -403,6 +417,32 @@ pub(super) fn payload_set_id(operation: &Operation) -> Result<String, StorageErr
         .and_then(|value| value.as_str())
         .map(str::to_owned)
         .ok_or_else(|| StorageError::InvalidOperation("the operation has no set id".to_owned()))
+}
+
+/// 同じセットの、指定の順序より後の送信待ちの変更があるか。
+///
+/// 失敗した操作の破棄で、端末に残る未送信の値をサーバーの値で上書きしないために見る。
+fn has_pending_set_change(entries: &[OutboxEntry], set_id: &str, after_sequence: u64) -> bool {
+    entries.iter().any(|entry| {
+        entry.operation.sequence > after_sequence
+            && matches!(
+                entry.state,
+                OutboxState::Pending | OutboxState::Sending | OutboxState::Blocked
+            )
+            && matches!(
+                entry.operation.kind,
+                OperationKind::SetCreate
+                    | OperationKind::SetUpdate
+                    | OperationKind::SetComplete
+                    | OperationKind::SetDelete
+            )
+            && entry
+                .operation
+                .payload
+                .get("set_id")
+                .and_then(|value| value.as_str())
+                == Some(set_id)
+    })
 }
 
 fn create_payload(operation: &Operation) -> Result<SetCreatePayload, StorageError> {

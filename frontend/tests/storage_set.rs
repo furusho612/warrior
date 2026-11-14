@@ -229,7 +229,7 @@ async fn set_rows_and_segments_use_the_outbox_and_keep_the_order() {
 }
 
 #[wasm_bindgen_test]
-async fn caches_the_body_weight_in_the_meta_store() {
+async fn caches_the_body_weight_in_its_own_store() {
     let name = database_name("body-weight-cache");
     let storage = open(&name).await;
     assert_eq!(storage.cached_body_weight().await.expect("the cache"), None);
@@ -241,6 +241,13 @@ async fn caches_the_body_weight_in_the_meta_store() {
         storage.cached_body_weight().await.expect("the cache"),
         Some(70.0)
     );
+    let records = storage
+        .all_records(Store::BodyWeight)
+        .await
+        .expect("the cache store");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["key"], "profile_body_weight");
+    assert_eq!(records[0]["body_weight_kg"].as_f64(), Some(70.0));
     storage
         .cache_body_weight(None)
         .await
@@ -315,6 +322,7 @@ async fn discarding_a_set_update_restores_the_set_and_keeps_the_memo() {
         .restore_set(
             &server_set(&first.set.id, &first.segment.id, 1, 100.0, 5),
             &first.set.id,
+            0,
         )
         .await
         .expect("the set must be restored");
@@ -342,6 +350,96 @@ async fn discarding_a_set_update_restores_the_set_and_keeps_the_memo() {
     assert!(!entries
         .iter()
         .any(|entry| entry.operation.operation_id == update_op.operation_id));
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
+async fn restoring_a_set_keeps_a_pending_update() {
+    let name = database_name("set-restore-pending");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, CREATE_OPERATION_ID, "").await;
+
+    let (set, create_op) = training_set::create(
+        TRAINING_ID,
+        EXERCISE_ROW_ID,
+        1,
+        &values(SetKind::Normal, 100.0, 5),
+    )
+    .expect("the set");
+    storage
+        .save_set_create(&set.set, &set.segment, &create_op)
+        .await
+        .expect("the set must be saved");
+    storage
+        .mark_success(&create_op.operation_id)
+        .await
+        .expect("the set create must succeed");
+
+    let (failed_rows, failed_op) = training_set::update(
+        TRAINING_ID,
+        &set.set,
+        &set.segment,
+        &values(SetKind::Normal, 110.0, 6),
+    )
+    .expect("the failed update");
+    storage
+        .save_set_update(&failed_rows.set, &failed_rows.segment, &failed_op)
+        .await
+        .expect("the failed update must be saved");
+    storage
+        .mark_sending(&failed_op.operation_id)
+        .await
+        .expect("the failed update must be sending");
+    storage
+        .mark_permanent_failure(&failed_op.operation_id)
+        .await
+        .expect("the failed update must fail");
+    assert_eq!(
+        storage
+            .discard(&failed_op.operation_id)
+            .await
+            .expect("the discard"),
+        DiscardOutcome::OperationsRemoved
+    );
+
+    let (pending_rows, pending_op) = training_set::update(
+        TRAINING_ID,
+        &failed_rows.set,
+        &failed_rows.segment,
+        &values(SetKind::Normal, 120.0, 7),
+    )
+    .expect("the pending update");
+    storage
+        .save_set_update(&pending_rows.set, &pending_rows.segment, &pending_op)
+        .await
+        .expect("the pending update must be saved");
+
+    storage
+        .restore_set(
+            &server_set(&set.set.id, &set.segment.id, 1, 100.0, 5),
+            &set.set.id,
+            failed_op.sequence,
+        )
+        .await
+        .expect("the restore must not fail");
+
+    let stored = storage
+        .training_sets(EXERCISE_ROW_ID)
+        .await
+        .expect("the sets must be readable");
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].segments[0].weight_kg, Some(120.0));
+    assert_eq!(stored[0].segments[0].reps, Some(7));
+    assert!(storage
+        .outbox_entries()
+        .await
+        .expect("the outbox")
+        .iter()
+        .any(|entry| entry.operation.operation_id == pending_op.operation_id));
+
     storage
         .clear_account()
         .await
@@ -431,6 +529,23 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
         .save_set_create(&third.set, &third.segment, &third_op)
         .await
         .expect("the third set must be saved");
+    let (third_updated, third_update) = training_set::update(
+        TRAINING_ID,
+        &third.set,
+        &third.segment,
+        &values(SetKind::Drop, 70.0, 5),
+    )
+    .expect("the third update");
+    storage
+        .save_set_update(&third_updated.set, &third_updated.segment, &third_update)
+        .await
+        .expect("the third update must be saved");
+    let (third_completed, third_complete) =
+        training_set::complete(TRAINING_ID, &third.set, true).expect("the third completion");
+    storage
+        .save_set_complete(&third_completed, &third_complete)
+        .await
+        .expect("the third completion must be saved");
     assert_eq!(
         storage
             .discard(&third_op.operation_id)
@@ -438,6 +553,13 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
             .expect("the discard"),
         DiscardOutcome::SetDeleted
     );
+    let entries = storage.outbox_entries().await.expect("the outbox");
+    assert!(!entries
+        .iter()
+        .any(|entry| entry.operation.operation_id == third_update.operation_id));
+    assert!(!entries
+        .iter()
+        .any(|entry| entry.operation.operation_id == third_complete.operation_id));
     let stored = storage
         .training_sets(EXERCISE_ROW_ID)
         .await
@@ -447,10 +569,7 @@ async fn discarding_a_set_create_removes_only_that_set_and_restores_positions() 
     assert!(!record_ids(&storage, Store::SetSegments)
         .await
         .contains(&third.segment.id));
-    assert!(storage
-        .outbox_entries()
-        .await
-        .expect("the outbox")
+    assert!(entries
         .iter()
         .any(|entry| entry.operation.kind == OperationKind::TrainingSessionUpdate));
     storage

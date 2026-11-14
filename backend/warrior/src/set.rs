@@ -7,7 +7,8 @@
 //! 段の重量は、自重種目ではセットごとの加重を表す。記録した時点の体重は `sets` が持つ。
 
 use serde::Deserialize;
-use warrior_core::exercise::GripSelection;
+use warrior_core::exercise::{ExerciseSnapshot, GripSelection};
+use warrior_core::set_calc::RecordMode;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
     SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetSegmentPayload,
@@ -26,8 +27,8 @@ use crate::training_session_exercise::{ownership_condition, ExerciseOwnership};
 /// トレーニングに属するセットの状態。
 #[derive(Debug, Deserialize)]
 struct SetRow {
-    /// 完了したか。0 か 1 である。
-    completed: i64,
+    /// 記録した時点の種目の内容。
+    snapshot: String,
 }
 
 /// セットの ID の行。
@@ -142,11 +143,19 @@ async fn precheck(
             }
         }
         ValidatedPayload::SetUpdate(payload) => {
-            if set_row(db, user_id, training_id, &payload.set_id)
-                .await?
-                .is_none()
-            {
+            let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
                 return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+            };
+            if payload.completed {
+                let Some(mode) = record_mode(&row.snapshot) else {
+                    return Ok(Some(response(ErrorCode::Internal, "internal error")));
+                };
+                if payload.to_record("", mode).is_err() {
+                    return Ok(Some(response(
+                        ErrorCode::BadRequest,
+                        "the set has no values for the record mode",
+                    )));
+                }
             }
         }
         ValidatedPayload::SetDelete(payload) => {
@@ -175,14 +184,16 @@ async fn precheck(
             let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
                 return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
             };
-            if payload.completed
-                && row.completed == 0
-                && !completed_set_has_values(db, user_id, &payload.set_id).await?
-            {
-                return Ok(Some(response(
-                    ErrorCode::BadRequest,
-                    "the set has no values to complete",
-                )));
+            if payload.completed {
+                let Some(mode) = record_mode(&row.snapshot) else {
+                    return Ok(Some(response(ErrorCode::Internal, "internal error")));
+                };
+                if !completed_set_matches_mode(db, user_id, &payload.set_id, mode).await? {
+                    return Ok(Some(response(
+                        ErrorCode::BadRequest,
+                        "the set has no values for the record mode",
+                    )));
+                }
             }
         }
         ValidatedPayload::Create(_)
@@ -618,7 +629,7 @@ async fn set_row(
     set_id: &str,
 ) -> Result<Option<SetRow>> {
     db.first(&SqlStatement::new(
-        "SELECT s.completed FROM sets s \
+        "SELECT te.snapshot AS snapshot FROM sets s \
          JOIN training_exercises te ON te.id = s.training_exercise_id \
          WHERE s.id = ? AND s.user_id = ? AND te.training_id = ? AND te.user_id = ?",
         vec![
@@ -662,14 +673,26 @@ async fn set_ids(db: &Db, user_id: &str, training_exercise_id: &str) -> Result<V
         .collect())
 }
 
-async fn completed_set_has_values(db: &Db, user_id: &str, set_id: &str) -> Result<bool> {
+async fn completed_set_matches_mode(
+    db: &Db,
+    user_id: &str,
+    set_id: &str,
+    mode: RecordMode,
+) -> Result<bool> {
+    let condition = match mode {
+        RecordMode::Time => {
+            "duration_seconds > 0 OR left_duration_seconds > 0 OR right_duration_seconds > 0"
+        }
+        RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+            "reps > 0 OR left_reps > 0 OR right_reps > 0"
+        }
+    };
     let count = db
         .first::<CountRow>(&SqlStatement::new(
-            "SELECT COUNT(*) AS count FROM set_segments \
-             WHERE set_id = ? AND user_id = ? \
-             AND (reps > 0 OR duration_seconds > 0 \
-              OR left_reps > 0 OR right_reps > 0 \
-              OR left_duration_seconds > 0 OR right_duration_seconds > 0)",
+            format!(
+                "SELECT COUNT(*) AS count FROM set_segments \
+                 WHERE set_id = ? AND user_id = ? AND ({condition})"
+            ),
             vec![
                 SqlValue::Text(set_id.to_owned()),
                 SqlValue::Text(user_id.to_owned()),
@@ -678,6 +701,12 @@ async fn completed_set_has_values(db: &Db, user_id: &str, set_id: &str) -> Resul
         .await?
         .map_or(0, |row| row.count);
     Ok(count > 0)
+}
+
+fn record_mode(snapshot: &str) -> Option<RecordMode> {
+    serde_json::from_str::<ExerciseSnapshot>(snapshot)
+        .ok()
+        .map(|snapshot| snapshot.record_mode)
 }
 
 fn segments_have_values(segments: &[SetSegmentPayload]) -> bool {

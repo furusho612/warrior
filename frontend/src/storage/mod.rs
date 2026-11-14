@@ -24,6 +24,7 @@ use warrior_core::training_record::TrainingRecord;
 pub mod indexeddb;
 pub mod outbox;
 
+mod body_weight;
 mod exercise;
 mod set;
 
@@ -33,7 +34,7 @@ pub use set::StoredSet;
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
 /// スキーマの版。
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// 端末内の保存の誤り。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +114,8 @@ pub enum Store {
     Outbox,
     /// 同期のメタ。
     Meta,
+    /// 身体情報の体重のキャッシュ。
+    BodyWeight,
 }
 
 impl Store {
@@ -127,6 +130,7 @@ impl Store {
             Self::SupersetMembers => "superset_members",
             Self::Outbox => "outbox",
             Self::Meta => "meta",
+            Self::BodyWeight => "body_weight",
         }
     }
 }
@@ -586,11 +590,11 @@ impl Storage {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::Meta.name()],
+            &[Store::BodyWeight.name()],
             IdbTransactionMode::Readwrite,
         )?;
-        let meta = transaction.store(Store::Meta.name())?;
-        match outbox::save_body_weight(&meta, body_weight_kg).await {
+        let store = transaction.store(Store::BodyWeight.name())?;
+        match body_weight::save(&store, body_weight_kg).await {
             Ok(()) => transaction.finish().await,
             Err(error) => abort(transaction, error).await,
         }
@@ -601,11 +605,11 @@ impl Storage {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::Meta.name()],
+            &[Store::BodyWeight.name()],
             IdbTransactionMode::Readonly,
         )?;
-        let meta = transaction.store(Store::Meta.name())?;
-        let weight = outbox::cached_body_weight(&meta).await?;
+        let store = transaction.store(Store::BodyWeight.name())?;
+        let weight = body_weight::cached(&store).await?;
         transaction.finish().await?;
         Ok(weight)
     }
@@ -841,6 +845,76 @@ async fn retry_steps(
     Ok(())
 }
 
+/// 対象の作成より後の、従属する操作を列から消す。
+fn discard_following(
+    entries: &mut Vec<OutboxEntry>,
+    target: &Operation,
+    is_dependent: impl Fn(&Operation) -> bool,
+) -> Vec<String> {
+    let mut removed = Vec::new();
+    entries.retain(|entry| {
+        let operation = &entry.operation;
+        let dependent = operation.sequence > target.sequence && is_dependent(operation);
+        if dependent {
+            removed.push(operation.operation_id.clone());
+        }
+        !dependent
+    });
+    removed
+}
+
+/// セットの作成を破棄したとき、そのセットの後続の更新と完了を消す。
+fn discard_set_following(
+    entries: &mut Vec<OutboxEntry>,
+    target: &Operation,
+    set_id: &str,
+) -> Vec<String> {
+    discard_following(entries, target, |operation| {
+        matches!(
+            operation.kind,
+            OperationKind::SetUpdate | OperationKind::SetComplete
+        ) && payload_text(operation, "set_id") == Some(set_id)
+    })
+}
+
+/// 種目の作成を破棄したとき、その種目と種目に属するセットの後続の操作を消す。
+fn discard_exercise_following(
+    entries: &mut Vec<OutboxEntry>,
+    target: &Operation,
+    training_exercise_id: &str,
+) -> Vec<String> {
+    let set_ids = entries
+        .iter()
+        .map(|entry| &entry.operation)
+        .filter(|operation| operation.sequence > target.sequence)
+        .filter(|operation| operation.kind == OperationKind::SetCreate)
+        .filter(|operation| {
+            payload_text(operation, "training_exercise_id") == Some(training_exercise_id)
+        })
+        .filter_map(|operation| payload_text(operation, "set_id").map(str::to_owned))
+        .collect::<Vec<String>>();
+    discard_following(entries, target, |operation| {
+        let same_exercise =
+            payload_text(operation, "training_exercise_id") == Some(training_exercise_id);
+        let same_set = payload_text(operation, "set_id")
+            .is_some_and(|set_id| set_ids.iter().any(|id| id == set_id));
+        (matches!(
+            operation.kind,
+            OperationKind::SetCreate
+                | OperationKind::SetReorder
+                | OperationKind::TrainingExerciseDelete
+        ) && same_exercise)
+            || (matches!(
+                operation.kind,
+                OperationKind::SetUpdate | OperationKind::SetDelete | OperationKind::SetComplete
+            ) && same_set)
+    })
+}
+
+fn payload_text<'a>(operation: &'a Operation, key: &str) -> Option<&'a str> {
+    operation.payload.get(key).and_then(|value| value.as_str())
+}
+
 async fn discard_steps(
     transaction: &indexeddb::Transaction,
     operation_id: &str,
@@ -856,7 +930,23 @@ async fn discard_steps(
     };
 
     let mut updated = entries.clone();
-    let removed = discard_transition(&mut updated, operation_id);
+    let mut removed = discard_transition(&mut updated, operation_id);
+    if target.operation.kind == OperationKind::TrainingExerciseCreate {
+        let training_exercise_id = exercise::payload_training_exercise_id(&target.operation)?;
+        removed.extend(discard_exercise_following(
+            &mut updated,
+            &target.operation,
+            &training_exercise_id,
+        ));
+    }
+    if target.operation.kind == OperationKind::SetCreate {
+        let set_id = set::payload_set_id(&target.operation)?;
+        removed.extend(discard_set_following(
+            &mut updated,
+            &target.operation,
+            &set_id,
+        ));
+    }
     for removed_id in removed {
         indexeddb::delete_entry(&outbox_store, &JsValue::from_str(&removed_id)).await?;
     }

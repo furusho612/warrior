@@ -194,22 +194,35 @@ pub(crate) fn seed_exercise(server: &DevServer, seed: ExerciseSeed<'_>) {
         .expect("the exercise must be seeded");
 }
 
+/// セットを作るための指定。
+pub(crate) struct SetSeed<'a> {
+    pub(crate) set_id: &'a str,
+    pub(crate) user_id: &'a str,
+    pub(crate) training_exercise_id: &'a str,
+    pub(crate) position: i64,
+    pub(crate) kind: &'a str,
+    pub(crate) completed: i64,
+    pub(crate) grip: Option<&'a str>,
+}
+
 /// セットを作る。
-pub(crate) fn seed_set(
-    server: &DevServer,
-    set_id: &str,
-    user_id: &str,
-    row_id: &str,
-    position: i64,
-    kind: &str,
-    completed: i64,
-) {
+pub(crate) fn seed_set(server: &DevServer, seed: SetSeed<'_>) {
+    let SetSeed {
+        set_id,
+        user_id,
+        training_exercise_id,
+        position,
+        kind,
+        completed,
+        grip,
+    } = seed;
     server
         .execute_d1_json(&format!(
             "INSERT INTO sets \
-             (id, user_id, training_exercise_id, position, kind, completed, created_at, updated_at) \
-             VALUES ('{set_id}', '{user_id}', '{row_id}', {position}, '{kind}', {completed}, \
-              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+             (id, user_id, training_exercise_id, position, kind, completed, grip, created_at, updated_at) \
+             VALUES ('{set_id}', '{user_id}', '{training_exercise_id}', {position}, '{kind}', {completed}, {}, \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            sql_text(grip)
         ))
         .expect("the set must be seeded");
 }

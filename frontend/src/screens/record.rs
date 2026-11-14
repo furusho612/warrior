@@ -13,6 +13,7 @@ use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
     SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
+use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::ids::{new_uuid, now_iso};
@@ -543,13 +544,10 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
 }
 
 async fn restore_discarded_exercise(
-    training_id: &str,
+    record: &TrainingRecord,
     training_exercise_id: Option<&str>,
     kind: OperationKind,
 ) -> bool {
-    let Ok(record) = training_api::record(training_id).await else {
-        return false;
-    };
     let Ok(storage) = storage::current().await else {
         return false;
     };
@@ -559,12 +557,12 @@ async fn restore_discarded_exercise(
                 return false;
             };
             storage
-                .restore_training_exercise(&record, training_exercise_id)
+                .restore_training_exercise(record, training_exercise_id)
                 .await
                 .is_ok()
         }
         OperationKind::TrainingExerciseReorder => storage
-            .restore_training_exercise_positions(&record)
+            .restore_training_exercise_positions(record)
             .await
             .is_ok(),
         _ => false,
@@ -572,13 +570,11 @@ async fn restore_discarded_exercise(
 }
 
 async fn restore_discarded_set(
-    training_id: &str,
+    record: &TrainingRecord,
     set_id: Option<&str>,
     kind: OperationKind,
+    after_sequence: u64,
 ) -> bool {
-    let Ok(record) = training_api::record(training_id).await else {
-        return false;
-    };
     let Ok(storage) = storage::current().await else {
         return false;
     };
@@ -587,9 +583,12 @@ async fn restore_discarded_set(
             let Some(set_id) = set_id else {
                 return false;
             };
-            storage.restore_set(&record, set_id).await.is_ok()
+            storage
+                .restore_set(record, set_id, after_sequence)
+                .await
+                .is_ok()
         }
-        OperationKind::SetReorder => storage.restore_set_positions(&record).await.is_ok(),
+        OperationKind::SetReorder => storage.restore_set_positions(record).await.is_ok(),
         _ => false,
     }
 }
