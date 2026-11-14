@@ -8,8 +8,6 @@ use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
-use js_sys::Array;
-use serde::Deserialize;
 use wasm_bindgen::JsValue;
 use web_sys::{IdbDatabase, IdbObjectStore, IdbTransactionMode};
 
@@ -25,6 +23,8 @@ use warrior_core::training_record::TrainingRecord;
 
 pub mod indexeddb;
 pub mod outbox;
+
+mod exercise;
 
 pub use indexeddb::request_persistence;
 
@@ -84,6 +84,8 @@ pub enum DiscardOutcome {
     SessionDeleted,
     /// 更新の破棄で、メモをサーバーが受理した値に戻した。
     MemoReverted(Box<SessionRecord>),
+    /// 種目の作成の破棄で、端末の種目と配下の行を削除した。
+    ExerciseDeleted,
     /// 操作だけを削除した。
     OperationsRemoved,
 }
@@ -398,7 +400,7 @@ impl Storage {
 
     /// 任意の記録用ストアに 1 件を書く。
     ///
-    /// 0021 のブラウザテスト用であり、0025 はセット用の型付き API を使う。
+    /// ブラウザテストの準備に使う。型付きの API があるストアには型付きの API を使う。
     pub async fn put_record(
         &self,
         store_name: Store,
@@ -418,7 +420,7 @@ impl Storage {
 
     /// 任意の記録用ストアのすべての行を読む。
     ///
-    /// 0021 のブラウザテスト用であり、0025 はセット用の型付き API を使う。
+    /// ブラウザテストの準備に使う。型付きの API があるストアには型付きの API を使う。
     pub async fn all_records(
         &self,
         store_name: Store,
@@ -665,7 +667,7 @@ async fn abort<T>(
 
 /// 端末に保存するスーパーセットの行。組に含める種目は `superset_members` に置く。
 #[derive(serde::Serialize)]
-struct StoredSuperset<'a> {
+pub(super) struct StoredSuperset<'a> {
     id: &'a str,
     training_id: &'a str,
     position: i64,
@@ -692,7 +694,7 @@ async fn replace_session_tree_steps(
         .await?;
     }
 
-    delete_session_tree(transaction, training_id).await?;
+    exercise::delete_session_tree(transaction, training_id).await?;
     let sessions = transaction.store(Store::TrainingSessions.name())?;
     let mut session = record.session.clone();
     session.confirmed_memo = session.memo.clone();
@@ -728,7 +730,7 @@ async fn replace_session_tree_steps(
     Ok(())
 }
 
-async fn put_rows<T: serde::Serialize>(
+pub(super) async fn put_rows<T: serde::Serialize>(
     transaction: &indexeddb::Transaction,
     store: Store,
     rows: &[T],
@@ -761,6 +763,11 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
                 .map(|payload| payload.memo)
                 .map_err(|error| StorageError::Serialize(error.to_string()))
         }
+        OperationKind::TrainingExerciseCreate
+        | OperationKind::TrainingExerciseDelete
+        | OperationKind::TrainingExerciseReorder => Err(StorageError::InvalidOperation(
+            "the operation has no memo".to_owned(),
+        )),
     }
 }
 
@@ -778,11 +785,14 @@ async fn retry_steps(
     else {
         return Ok(());
     };
+    let target_is_update = target.operation.kind == OperationKind::TrainingSessionUpdate;
     let key = JsValue::from_str(&target.operation.training_id);
-    if let Some(value) = indexeddb::get(&sessions, &key).await? {
-        let session: SessionRecord = indexeddb::from_js(&value)?;
-        if target.operation.sequence <= session.confirmed_sequence {
-            return Ok(());
+    if target_is_update {
+        if let Some(value) = indexeddb::get(&sessions, &key).await? {
+            let session: SessionRecord = indexeddb::from_js(&value)?;
+            if target.operation.sequence <= session.confirmed_sequence {
+                return Ok(());
+            }
         }
     }
 
@@ -814,8 +824,16 @@ async fn discard_steps(
     }
 
     if target.operation.kind == OperationKind::TrainingSessionCreate {
-        delete_session_tree(transaction, &target.operation.training_id).await?;
+        exercise::delete_session_tree(transaction, &target.operation.training_id).await?;
         return Ok(DiscardOutcome::SessionDeleted);
+    }
+    if target.operation.kind == OperationKind::TrainingExerciseCreate {
+        let training_exercise_id = exercise::payload_training_exercise_id(&target.operation)?;
+        exercise::delete_training_exercise_rows(transaction, &training_exercise_id).await?;
+        return Ok(DiscardOutcome::ExerciseDeleted);
+    }
+    if target.operation.kind != OperationKind::TrainingSessionUpdate {
+        return Ok(DiscardOutcome::OperationsRemoved);
     }
 
     let has_newer_update = updated.iter().any(|entry| {
@@ -867,6 +885,12 @@ async fn mark_success_steps(
     }
     write_outbox_differences(&outbox_store, &entries, &updated).await?;
 
+    if !matches!(
+        target.operation.kind,
+        OperationKind::TrainingSessionCreate | OperationKind::TrainingSessionUpdate
+    ) {
+        return Ok(());
+    }
     let memo = payload_memo(&target.operation)?;
     let key = JsValue::from_str(&target.operation.training_id);
     if let Some(value) = indexeddb::get(&sessions, &key).await? {
@@ -899,110 +923,10 @@ async fn write_outbox_differences(
     Ok(())
 }
 
-#[derive(Deserialize)]
-struct ExerciseRow {
-    id: String,
-    training_id: String,
-}
-
-#[derive(Deserialize)]
-struct SetRow {
-    id: String,
-    training_exercise_id: String,
-}
-
-#[derive(Deserialize)]
-struct SegmentRow {
-    id: String,
-    set_id: String,
-}
-
-#[derive(Deserialize)]
-struct SupersetRow {
-    id: String,
-    training_id: String,
-}
-
-#[derive(Deserialize)]
-struct MemberRow {
-    superset_id: String,
-    training_exercise_id: String,
-}
-
-async fn read_rows<T: serde::de::DeserializeOwned>(
-    store: &IdbObjectStore,
-) -> Result<Vec<T>, StorageError> {
-    indexeddb::get_all(store)
-        .await?
-        .iter()
-        .map(indexeddb::from_js::<T>)
-        .collect()
-}
-
-async fn delete_session_tree(
-    transaction: &indexeddb::Transaction,
-    training_id: &str,
-) -> Result<(), StorageError> {
-    let sessions = transaction.store(Store::TrainingSessions.name())?;
-    indexeddb::delete_entry(&sessions, &JsValue::from_str(training_id)).await?;
-
-    let exercises_store = transaction.store(Store::TrainingExercises.name())?;
-    let exercises = read_rows::<ExerciseRow>(&exercises_store).await?;
-    let exercise_ids = exercises
-        .iter()
-        .filter(|row| row.training_id == training_id)
-        .map(|row| row.id.clone())
-        .collect::<Vec<_>>();
-    for id in &exercise_ids {
-        indexeddb::delete_entry(&exercises_store, &JsValue::from_str(id)).await?;
-    }
-
-    let sets_store = transaction.store(Store::Sets.name())?;
-    let sets = read_rows::<SetRow>(&sets_store).await?;
-    let set_ids = sets
-        .iter()
-        .filter(|row| exercise_ids.contains(&row.training_exercise_id))
-        .map(|row| row.id.clone())
-        .collect::<Vec<_>>();
-    for id in &set_ids {
-        indexeddb::delete_entry(&sets_store, &JsValue::from_str(id)).await?;
-    }
-
-    let segments_store = transaction.store(Store::SetSegments.name())?;
-    let segments = read_rows::<SegmentRow>(&segments_store).await?;
-    let segment_ids = segments
-        .iter()
-        .filter(|row| set_ids.contains(&row.set_id))
-        .map(|row| row.id.clone())
-        .collect::<Vec<_>>();
-    for id in &segment_ids {
-        indexeddb::delete_entry(&segments_store, &JsValue::from_str(id)).await?;
-    }
-
-    let supersets_store = transaction.store(Store::Supersets.name())?;
-    let supersets = read_rows::<SupersetRow>(&supersets_store).await?;
-    let superset_ids = supersets
-        .iter()
-        .filter(|row| row.training_id == training_id)
-        .map(|row| row.id.clone())
-        .collect::<Vec<_>>();
-    for id in &superset_ids {
-        indexeddb::delete_entry(&supersets_store, &JsValue::from_str(id)).await?;
-    }
-
-    let members_store = transaction.store(Store::SupersetMembers.name())?;
-    let members = read_rows::<MemberRow>(&members_store).await?;
-    for member in members.iter().filter(|row| {
-        superset_ids.contains(&row.superset_id) || exercise_ids.contains(&row.training_exercise_id)
-    }) {
-        let key = Array::new();
-        key.push(&JsValue::from_str(&member.superset_id));
-        key.push(&JsValue::from_str(&member.training_exercise_id));
-        indexeddb::delete_entry(&members_store, &key.into()).await?;
-    }
-    Ok(())
-}
-
+/// 新しい操作を送信待ちの列に加える。
+///
+/// 未解決の作成があれば、その作成を親にして Blocked で積む。親が成功して列から消えたら
+/// `mark_success` が Pending に戻す。
 async fn revert_session_memo(
     transaction: &indexeddb::Transaction,
     training_id: &str,

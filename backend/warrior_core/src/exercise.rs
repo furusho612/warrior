@@ -430,6 +430,14 @@ pub struct MuscleAssignment {
     pub role: MuscleRole,
 }
 
+/// 種目ライブラリの一覧の応答。
+///
+/// 記録への種目の選択が使う。絞り込みと続きのページも、この形に項目を足して表す。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExerciseList {
+    pub exercises: Vec<Exercise>,
+}
+
 /// 種目の検証の失敗。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExerciseError {
@@ -484,34 +492,10 @@ impl Exercise {
             if self.other_scope.is_none() {
                 return Err(ExerciseError::OtherScopeMissing);
             }
-            if !self.muscles.is_empty() {
-                return Err(ExerciseError::OtherHasMuscles);
-            }
-        } else {
-            if self.other_scope.is_some() {
-                return Err(ExerciseError::OtherScopeUnexpected);
-            }
-            if !self
-                .muscles
-                .iter()
-                .any(|assignment| assignment.role == MuscleRole::Primary)
-            {
-                return Err(ExerciseError::PrimaryMissing);
-            }
-            if !self.muscles.iter().any(|assignment| {
-                assignment.role == MuscleRole::Primary
-                    && assignment.muscle.body_part() == self.body_part
-            }) {
-                return Err(ExerciseError::MuscleBodyPartMismatch);
-            }
+        } else if self.other_scope.is_some() {
+            return Err(ExerciseError::OtherScopeUnexpected);
         }
-        let mut seen = Vec::new();
-        for assignment in &self.muscles {
-            if seen.contains(&assignment.muscle) {
-                return Err(ExerciseError::DuplicateMuscle);
-            }
-            seen.push(assignment.muscle);
-        }
+        validate_muscles(self.body_part, &self.muscles)?;
         if self.record_mode == RecordMode::Time
             && (self.grip_mode != GripMode::None || !self.grip_options.is_empty())
         {
@@ -522,6 +506,37 @@ impl Exercise {
         }
         Ok(())
     }
+}
+
+fn validate_muscles(
+    body_part: BodyPart,
+    muscles: &[MuscleAssignment],
+) -> Result<(), ExerciseError> {
+    if body_part.is_other() {
+        if !muscles.is_empty() {
+            return Err(ExerciseError::OtherHasMuscles);
+        }
+        return Ok(());
+    }
+    if !muscles
+        .iter()
+        .any(|assignment| assignment.role == MuscleRole::Primary)
+    {
+        return Err(ExerciseError::PrimaryMissing);
+    }
+    if !muscles.iter().any(|assignment| {
+        assignment.role == MuscleRole::Primary && assignment.muscle.body_part() == body_part
+    }) {
+        return Err(ExerciseError::MuscleBodyPartMismatch);
+    }
+    let mut seen = Vec::new();
+    for assignment in muscles {
+        if seen.contains(&assignment.muscle) {
+            return Err(ExerciseError::DuplicateMuscle);
+        }
+        seen.push(assignment.muscle);
+    }
+    Ok(())
 }
 
 /// 記録時点の種目の内容。マスターや独自種目を後から変えても過去の記録は変えない。
@@ -549,6 +564,29 @@ impl From<&Exercise> for ExerciseSnapshot {
             grip_mode: exercise.grip_mode,
             grip_options: exercise.grip_options.clone(),
         }
+    }
+}
+
+impl ExerciseSnapshot {
+    /// 記録時点の種目の不変条件を検証する。
+    ///
+    /// 端末が作ったスナップショットをサーバーが保存する前に使う。名前、部位区分と筋肉の
+    /// 対応、記録方式とグリップの組み合わせを `Exercise::validate` と同じ規則で確かめる。
+    /// スナップショットは種目マスターの読み仮名と器具を持たないため、それらの規則は使わない。
+    pub fn validate(&self) -> Result<(), ExerciseError> {
+        if self.name.trim().is_empty() {
+            return Err(ExerciseError::EmptyName);
+        }
+        validate_muscles(self.body_part, &self.muscles)?;
+        if self.record_mode == RecordMode::Time
+            && (self.grip_mode != GripMode::None || !self.grip_options.is_empty())
+        {
+            return Err(ExerciseError::TimeHasGrip);
+        }
+        for option in &self.grip_options {
+            option.validate_for(self.grip_mode)?;
+        }
+        Ok(())
     }
 }
 
@@ -728,5 +766,50 @@ mod tests {
             serde_json::from_str::<ExerciseSnapshot>(&json).unwrap(),
             snapshot
         );
+    }
+
+    #[test]
+    fn a_snapshot_created_from_a_valid_exercise_passes_validation() {
+        let snapshot = ExerciseSnapshot::from(&exercise());
+        snapshot.validate().unwrap();
+    }
+
+    #[test]
+    fn a_snapshot_rejects_an_empty_name_and_a_missing_primary_muscle() {
+        let mut snapshot = ExerciseSnapshot::from(&exercise());
+        snapshot.name = " ".to_owned();
+        assert_eq!(snapshot.validate(), Err(ExerciseError::EmptyName));
+
+        let mut snapshot = ExerciseSnapshot::from(&exercise());
+        snapshot.muscles.clear();
+        assert_eq!(snapshot.validate(), Err(ExerciseError::PrimaryMissing));
+    }
+
+    #[test]
+    fn a_snapshot_keeps_the_body_part_and_muscle_rule() {
+        let mut snapshot = ExerciseSnapshot::from(&exercise());
+        snapshot.muscles[0].muscle = MuscleUnit::Quadriceps;
+        assert_eq!(
+            snapshot.validate(),
+            Err(ExerciseError::MuscleBodyPartMismatch)
+        );
+
+        let mut other = ExerciseSnapshot::from(&exercise());
+        other.body_part = BodyPart::Other;
+        assert_eq!(other.validate(), Err(ExerciseError::OtherHasMuscles));
+        other.muscles.clear();
+        other.validate().unwrap();
+    }
+
+    #[test]
+    fn a_snapshot_rejects_a_time_exercise_with_grip_options() {
+        let mut snapshot = ExerciseSnapshot::from(&exercise());
+        snapshot.record_mode = RecordMode::Time;
+        snapshot.grip_mode = GripMode::Grip;
+        snapshot.grip_options = vec![GripSelection::Grip {
+            style: GripStyle::Pronated,
+            width: GripWidth::Medium,
+        }];
+        assert_eq!(snapshot.validate(), Err(ExerciseError::TimeHasGrip));
     }
 }

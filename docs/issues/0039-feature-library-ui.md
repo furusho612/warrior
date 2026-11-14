@@ -19,8 +19,8 @@
 
 ## 現状
 
-0019 で種目マスターの表と型、0024 で記録の種目の追加を実装する。
-しかし、ライブラリの一覧、詳細、検索、絞り込み、お気に入り、履歴とグラフへの入口がない。
+0019 で種目マスターの表と型、0024 で記録の種目の追加と `GET /api/exercises` の最小の一覧を実装する。0024 の一覧はマスターを全件返し、記録の選択が使う。
+しかし、ライブラリの一覧の並び、詳細、検索、絞り込み、お気に入り、履歴とグラフへの入口がない。
 
 ## 設計方針
 
@@ -45,6 +45,8 @@
 
 一覧はカーソル方式でページングする。
 1 ページの件数は環境ごとの vars に置く。
+0024 の `GET /api/exercises` は記録の選択のために全件を返す。この issue は既存の一覧を拡張し、ライブラリの一覧の絞り込み、並び、ページングを決める。記録の選択は全件を使い続け、ページングは 0039 の一覧だけで使う。
+独自種目とマスターの上書きは、0040 が一覧と詳細へ反映する。
 
 ## 完了条件
 
@@ -65,8 +67,8 @@
 ## 解決方法
 
 `migrations/` に `exercise_favorites` の表を追加する。種目の種別と種目 ID を持ち、利用者ごとに一意にする。
-`backend/warrior/src/library.rs` に、一覧、詳細、絞り込み、お気に入りの取得と更新を置く。
-`backend/warrior/src/router.rs` に `GET /api/exercises`、`GET /api/exercises/:id`、`PUT /api/exercises/:id/favorite`、`DELETE /api/exercises/:id/favorite` を追加する。
+`backend/warrior/src/library.rs` の既存の一覧を拡張し、詳細、絞り込み、お気に入りの取得と更新を置く。
+`backend/warrior/src/router.rs` の既存の `GET /api/exercises` に絞り込みとページングを足し、`GET /api/exercises/:id`、`PUT /api/exercises/:id/favorite`、`DELETE /api/exercises/:id/favorite` を追加する。
 `frontend/src/screens/library.rs` に一覧、検索、絞り込み、お気に入りを置く。
 `frontend/src/screens/exercise.rs` に詳細を置く。
 `frontend/src/text.rs` に部位区分、使用器具、お気に入りの文言を追加する。

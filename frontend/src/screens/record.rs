@@ -1,6 +1,6 @@
-//! 記録の開始、記録中のメモの端末内への保存、トレーニングの終了。
+//! 記録の開始、記録中のメモの端末内への保存、種目の追加と前回の記録、トレーニングの終了。
 //!
-//! セット表、種目レール、レストタイマー、セット詳細の枠を置く。セットの入力と
+//! 種目の一覧と前回の記録、セットの入力、レストタイマー、セット詳細の枠を置く。
 //! レストタイマーの中身は後続の画面が入れる。
 
 use std::cell::{Cell, RefCell};
@@ -9,22 +9,26 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 use dioxus_router::{navigator, Link};
 use warrior_core::datetime;
-use warrior_core::ids::uuid_v4_from_bytes;
 use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
     SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
 use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
+use crate::ids::{new_uuid, now_iso};
 use crate::routes::{navigate, Route};
-use crate::storage::{self, DiscardOutcome, ReplacePurpose, StorageError};
+use crate::storage::{self, ReplacePurpose, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
 use crate::training_session as training_api;
 use crate::training_session::TrainingApiError;
 
+mod exercises;
+mod failed_operations;
 mod ownership;
 
+use exercises::ExerciseSection;
+use failed_operations::FailedOperations;
 use ownership::RecordOwnership;
 
 #[component]
@@ -114,6 +118,8 @@ struct RecordSignals {
     memo: Signal<String>,
     persisted_memo: Signal<String>,
     memo_revision: Signal<u64>,
+    tree_revision: Signal<u64>,
+    exercise_revision: Signal<u64>,
     save_error: Signal<Option<String>>,
     view_only: Signal<bool>,
 }
@@ -138,6 +144,8 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let memo = use_signal(String::new);
     let persisted_memo = use_signal(String::new);
     let memo_revision = use_signal(|| 0u64);
+    let tree_revision = use_signal(|| 0u64);
+    let exercise_revision = use_signal(|| 0u64);
     let load_error = use_signal(|| Option::<String>::None);
     let save_error = use_signal(|| Option::<String>::None);
     let view_only = use_signal(|| false);
@@ -154,6 +162,8 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         memo,
         persisted_memo,
         memo_revision,
+        tree_revision,
+        exercise_revision,
         save_error,
         view_only,
     };
@@ -220,7 +230,10 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             if profile_prompt() {
                 ProfilePrompt {}
             }
-            SetTable {}
+            ExerciseSection {
+                training_id: training_id.clone(),
+                signals,
+            }
             SetDrawer {}
             RecordLoadError {
                 training_id: training_id.clone(),
@@ -248,28 +261,6 @@ fn ProfilePrompt() -> Element {
                 to: Route::MyPage {},
                 class: "flex min-h-11 items-center border border-line px-3 text-[13px] text-primary",
                 "{text(Key::ProfilePromptAction)}"
-            }
-        }
-    }
-}
-
-#[component]
-fn SetTable() -> Element {
-    rsx! {
-        div { class: "flex flex-col gap-1",
-            h2 { class: "text-sm font-bold", "{text(Key::RecordSets)}" }
-            div {
-                class: "h-[222px] overflow-y-auto border border-line bg-surface",
-                "data-set-table": "true",
-                "data-set-rows": "5",
-                "data-set-row-height": "44",
-                for index in 0..5 {
-                    div {
-                        class: "h-11 border-b border-line",
-                        "data-set-row": "true",
-                        "data-set-row-index": "{index}",
-                    }
-                }
             }
         }
     }
@@ -542,75 +533,32 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
     }
 }
 
-#[component]
-fn FailedOperations(
-    failed: Vec<OutboxEntry>,
-    signals: RecordSignals,
-    state_signals: StateSignals,
-) -> Element {
-    let mut signals = signals;
-
-    if failed.is_empty() {
-        return rsx! {};
-    }
-
-    rsx! {
-        div { class: "flex flex-col gap-2 border border-line bg-surface p-3",
-            h2 { class: "text-sm font-bold", "{text(Key::RecordFailedOperations)}" }
-            for entry in failed {
-                div {
-                    class: "flex min-h-11 flex-wrap items-center justify-between gap-2 border border-line px-3",
-                    span { class: "text-[13px]", "{operation_label(entry.operation.kind)}" }
-                    div { class: "flex gap-2",
-                        button {
-                            class: "min-h-11 border border-primary px-3 text-[13px] text-primary",
-                            onclick: {
-                                let operation_id = entry.operation.operation_id.clone();
-                                let training_id = entry.operation.training_id.clone();
-                                move |_| {
-                                    let operation_id = operation_id.clone();
-                                    let training_id = training_id.clone();
-                                    spawn(async move {
-                                        sync::retry_operation(&operation_id).await;
-                                        refresh_state(&training_id, state_signals).await;
-                                    });
-                                }
-                            },
-                            "{text(Key::RecordRetry)}"
-                        }
-                        button {
-                            class: "min-h-11 border border-line px-3 text-[13px]",
-                            onclick: {
-                                let operation_id = entry.operation.operation_id.clone();
-                                let training_id = entry.operation.training_id.clone();
-                                move |_| {
-                                    let operation_id = operation_id.clone();
-                                    let training_id = training_id.clone();
-                                    spawn(async move {
-                                        match sync::discard_operation(&operation_id).await {
-                                            Some(DiscardOutcome::SessionDeleted) => {
-                                                navigate("/record");
-                                            }
-                                            Some(DiscardOutcome::MemoReverted(updated)) => {
-                                                signals.memo.set(updated.memo.clone());
-                                                signals.persisted_memo.set(updated.memo.clone());
-                                                signals
-                                                    .memo_revision
-                                                    .set((signals.memo_revision)() + 1);
-                                                signals.session.set(Some(*updated));
-                                                refresh_state(&training_id, state_signals).await;
-                                            }
-                                            _ => {}
-                                        }
-                                    });
-                                }
-                            },
-                            "{text(Key::RecordDiscard)}"
-                        }
-                    }
-                }
-            }
+async fn restore_discarded_exercise(
+    training_id: &str,
+    training_exercise_id: Option<&str>,
+    kind: OperationKind,
+) -> bool {
+    let Ok(record) = training_api::record(training_id).await else {
+        return false;
+    };
+    let Ok(storage) = storage::current().await else {
+        return false;
+    };
+    match kind {
+        OperationKind::TrainingExerciseDelete => {
+            let Some(training_exercise_id) = training_exercise_id else {
+                return false;
+            };
+            storage
+                .restore_training_exercise(&record, training_exercise_id)
+                .await
+                .is_ok()
         }
+        OperationKind::TrainingExerciseReorder => storage
+            .restore_training_exercise_positions(&record)
+            .await
+            .is_ok(),
+        _ => false,
     }
 }
 
@@ -630,6 +578,7 @@ async fn load(
             signals.persisted_memo.set(record.memo.clone());
             signals.memo_revision.set((signals.memo_revision)() + 1);
             signals.session.set(Some(record));
+            signals.tree_revision.set((signals.tree_revision)() + 1);
             error.set(None);
         }
         Ok(None) => {
@@ -670,6 +619,7 @@ async fn load_from_server(
     signals.persisted_memo.set(record.session.memo.clone());
     signals.memo_revision.set((signals.memo_revision)() + 1);
     signals.session.set(Some(record.session));
+    signals.tree_revision.set((signals.tree_revision)() + 1);
     error.set(None);
     refresh_state(training_id, state_signals).await;
 }
@@ -915,25 +865,10 @@ fn operation_label(kind: OperationKind) -> &'static str {
     match kind {
         OperationKind::TrainingSessionCreate => text(Key::RecordOperationCreate),
         OperationKind::TrainingSessionUpdate => text(Key::RecordOperationUpdate),
+        OperationKind::TrainingExerciseCreate => text(Key::RecordOperationExerciseCreate),
+        OperationKind::TrainingExerciseDelete => text(Key::RecordOperationExerciseDelete),
+        OperationKind::TrainingExerciseReorder => text(Key::RecordOperationExerciseReorder),
     }
-}
-
-fn new_uuid() -> Result<String, StorageError> {
-    let window = web_sys::window()
-        .ok_or_else(|| StorageError::Unavailable("the window is missing".to_owned()))?;
-    let crypto = window
-        .crypto()
-        .map_err(|error| StorageError::Unavailable(format!("{error:?}")))?;
-    let mut bytes = [0u8; 16];
-    crypto
-        .get_random_values_with_u8_array(&mut bytes)
-        .map_err(|error| StorageError::Unavailable(format!("{error:?}")))?;
-    Ok(uuid_v4_from_bytes(bytes))
-}
-
-fn now_iso() -> String {
-    let seconds = (js_sys::Date::now() / 1000.0) as i64;
-    datetime::format_utc(seconds)
 }
 
 #[cfg(test)]

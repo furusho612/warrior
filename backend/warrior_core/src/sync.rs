@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::datetime;
+use crate::exercise::ExerciseSnapshot;
 use crate::ids::is_valid_uuid_v4;
 use crate::jst::JstDate;
 use crate::training_session::{PersonalBestItem, SessionSource};
@@ -22,6 +23,12 @@ pub enum OperationKind {
     TrainingSessionCreate,
     /// トレーニングの更新。
     TrainingSessionUpdate,
+    /// トレーニングへの種目の追加。
+    TrainingExerciseCreate,
+    /// トレーニングからの種目の削除。
+    TrainingExerciseDelete,
+    /// トレーニングの種目の並べ替え。
+    TrainingExerciseReorder,
 }
 
 impl OperationKind {
@@ -30,6 +37,9 @@ impl OperationKind {
         match self {
             Self::TrainingSessionCreate => "training_session_create",
             Self::TrainingSessionUpdate => "training_session_update",
+            Self::TrainingExerciseCreate => "training_exercise_create",
+            Self::TrainingExerciseDelete => "training_exercise_delete",
+            Self::TrainingExerciseReorder => "training_exercise_reorder",
         }
     }
 
@@ -38,6 +48,9 @@ impl OperationKind {
         match text {
             "training_session_create" => Some(Self::TrainingSessionCreate),
             "training_session_update" => Some(Self::TrainingSessionUpdate),
+            "training_exercise_create" => Some(Self::TrainingExerciseCreate),
+            "training_exercise_delete" => Some(Self::TrainingExerciseDelete),
+            "training_exercise_reorder" => Some(Self::TrainingExerciseReorder),
             _ => None,
         }
     }
@@ -96,6 +109,42 @@ pub struct SessionUpdatePayload {
     pub started_at: String,
     /// トレーニング全体のメモ。
     pub memo: String,
+}
+
+/// トレーニングへの種目の追加の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrainingExerciseCreatePayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// 追加する種目の行の UUID v4。
+    pub training_exercise_id: String,
+    /// 種目の ID。
+    pub exercise_id: String,
+    /// 記録した時点の種目の内容。
+    pub snapshot: ExerciseSnapshot,
+    /// トレーニングの中での並び順。1 以上。
+    pub position: i64,
+}
+
+/// トレーニングからの種目の削除の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrainingExerciseDeletePayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// 削除する種目の行の UUID v4。
+    pub training_exercise_id: String,
+}
+
+/// トレーニングの種目の並べ替えの本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrainingExerciseReorderPayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// 新しい順序の種目の行の UUID v4。先頭から 1、2 の位置になる。
+    pub ordered_ids: Vec<String>,
 }
 
 /// 端末とサーバーが持つトレーニングの行。
@@ -161,6 +210,12 @@ pub enum ValidatedPayload {
     Create(SessionCreatePayload),
     /// 更新の本文。
     Update(SessionUpdatePayload),
+    /// 種目の追加の本文。
+    ExerciseCreate(TrainingExerciseCreatePayload),
+    /// 種目の削除の本文。
+    ExerciseDelete(TrainingExerciseDeletePayload),
+    /// 種目の並べ替えの本文。
+    ExerciseReorder(TrainingExerciseReorderPayload),
 }
 
 /// 検証済みの操作。
@@ -197,6 +252,14 @@ pub enum SyncError {
     MemoTooLong,
     /// 空の開始元にルーティン ID またはプログラムの日 ID がある。
     SourceIdUnexpected,
+    /// 種目の行または種目の ID が UUID v4 でない。
+    InvalidExerciseId,
+    /// 種目のスナップショットが不正である、または種目の ID と一致しない。
+    InvalidSnapshot,
+    /// 種目の並び順が 1 未満である。
+    InvalidPosition,
+    /// 並べ替えの ID が空、重複、または UUID v4 でない。
+    InvalidOrderedIds,
 }
 
 impl SyncError {
@@ -214,6 +277,10 @@ impl SyncError {
             Self::DateMismatch => "date_mismatch",
             Self::MemoTooLong => "memo_too_long",
             Self::SourceIdUnexpected => "source_id_unexpected",
+            Self::InvalidExerciseId => "invalid_exercise_id",
+            Self::InvalidSnapshot => "invalid_snapshot",
+            Self::InvalidPosition => "invalid_position",
+            Self::InvalidOrderedIds => "invalid_ordered_ids",
         }
     }
 }
@@ -251,6 +318,24 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
                 .map_err(|_| SyncError::InvalidPayload)?;
             validate_session_fields(&payload.date, &payload.started_at, &payload.memo)?;
             ValidatedPayload::Update(payload)
+        }
+        OperationKind::TrainingExerciseCreate => {
+            let payload: TrainingExerciseCreatePayload =
+                serde_json::from_value(operation.payload.clone())
+                    .map_err(|_| SyncError::InvalidPayload)?;
+            crate::sync_exercise::validate_create(operation, payload)?
+        }
+        OperationKind::TrainingExerciseDelete => {
+            let payload: TrainingExerciseDeletePayload =
+                serde_json::from_value(operation.payload.clone())
+                    .map_err(|_| SyncError::InvalidPayload)?;
+            crate::sync_exercise::validate_delete(operation, payload)?
+        }
+        OperationKind::TrainingExerciseReorder => {
+            let payload: TrainingExerciseReorderPayload =
+                serde_json::from_value(operation.payload.clone())
+                    .map_err(|_| SyncError::InvalidPayload)?;
+            crate::sync_exercise::validate_reorder(operation, payload)?
         }
     };
 

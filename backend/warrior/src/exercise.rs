@@ -41,6 +41,53 @@ struct MuscleRow {
     role: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct MuscleAssignmentRow {
+    exercise_id: String,
+    muscle_id: String,
+    role: String,
+}
+
+/// マスターの種目を一覧の順に読む。
+///
+/// 記録への種目の選択と、種目ライブラリの一覧が使う。筋肉は 1 回のクエリで読み、
+/// 種目ごとにまとめる。
+pub async fn list_master(db: &Db) -> Result<Vec<Exercise>> {
+    let rows = db
+        .all(&SqlStatement::new(
+            "SELECT id, name, name_kana, body_part, equipment, record_mode, laterality, \
+             grip_mode, other_scope, instructions, cautions, tips, sort_order, grip_options \
+             FROM master_exercises ORDER BY sort_order, id",
+            Vec::new(),
+        ))
+        .await?
+        .results::<ExerciseRow>()?;
+    let muscles = db
+        .all(&SqlStatement::new(
+            "SELECT exercise_id, muscle_id, role FROM master_exercise_muscles \
+             ORDER BY exercise_id, role, muscle_id",
+            Vec::new(),
+        ))
+        .await?
+        .results::<MuscleAssignmentRow>()?;
+    rows.into_iter()
+        .map(|row| {
+            let id = row.id.clone();
+            let assignments = muscles
+                .iter()
+                .filter(|muscle| muscle.exercise_id == id)
+                .map(|muscle| {
+                    Ok(MuscleAssignment {
+                        muscle: parse(&muscle.muscle_id)?,
+                        role: parse(&muscle.role)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            to_exercise(row, assignments)
+        })
+        .collect()
+}
+
 /// マスターの種目を読む。
 pub async fn load_master(db: &Db, id: &str) -> Result<Option<Exercise>> {
     let statement = SqlStatement::new(

@@ -20,6 +20,8 @@ use crate::db::{changed_rows, Db};
 use crate::error::{response, ErrorCode};
 use crate::ownership;
 
+mod exercise;
+
 #[derive(Debug, Deserialize)]
 struct AppliedRow {
     user_id: String,
@@ -32,7 +34,6 @@ struct SessionOwnerRow {
     owner_terminal_id: Option<String>,
     finished_at: Option<String>,
 }
-
 /// 更新の SQL が所有者に課す条件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OwnerCondition<'a> {
@@ -92,6 +93,18 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         }
         OperationKind::TrainingSessionUpdate => {
             update_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
+        OperationKind::TrainingExerciseCreate
+        | OperationKind::TrainingExerciseDelete
+        | OperationKind::TrainingExerciseReorder => {
+            exercise::exercise_batch(
                 &db,
                 &authenticated.id,
                 terminal.as_deref(),
@@ -168,6 +181,12 @@ fn zero_change_outcome(
             Some(session) if session.user_id == user_id && session.finished_at.is_some() => {
                 ZeroChangeOutcome::ReapplyFinished
             }
+            Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
+            _ => ZeroChangeOutcome::NotFound,
+        },
+        OperationKind::TrainingExerciseCreate
+        | OperationKind::TrainingExerciseDelete
+        | OperationKind::TrainingExerciseReorder => match session {
             Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
             _ => ZeroChangeOutcome::NotFound,
         },
@@ -520,6 +539,8 @@ mod tests {
     use warrior_core::sync::{Operation, OperationKind};
     use warrior_core::training_session::SessionSource;
 
+    use super::exercise::ownership_guard_statement;
+
     use super::{
         create_statements, owner_condition, update_statements, write_decision, zero_change_outcome,
         OwnerCondition, SessionOwnerRow, ZeroChangeOutcome,
@@ -768,5 +789,72 @@ mod tests {
             None
         );
         assert_eq!(owner_condition(WriteDecision::Claim, None), None);
+    }
+
+    #[test]
+    fn the_ownership_guard_uses_the_same_conditions_as_an_update() {
+        let claim = ownership_guard_statement(
+            USER_ID,
+            OwnerCondition::Claim(TERMINAL_ID),
+            TRAINING_ID,
+            "2026-11-12T00:00:00Z",
+        );
+        assert!(claim.sql().contains("owner_terminal_id = ?"));
+        assert!(claim
+            .sql()
+            .contains("finished_at IS NULL AND owner_terminal_id IS NULL"));
+        assert_eq!(claim.bindings()[0], SqlValue::Text(TERMINAL_ID.to_owned()));
+
+        let owned = ownership_guard_statement(
+            USER_ID,
+            OwnerCondition::Owned(TERMINAL_ID),
+            TRAINING_ID,
+            "2026-11-12T00:00:00Z",
+        );
+        assert!(owned
+            .sql()
+            .contains("(finished_at IS NOT NULL OR owner_terminal_id = ?)"));
+        assert_eq!(owned.bindings().len(), 4);
+
+        let finished = ownership_guard_statement(
+            USER_ID,
+            OwnerCondition::Finished,
+            TRAINING_ID,
+            "2026-11-12T00:00:00Z",
+        );
+        assert!(finished.sql().contains("finished_at IS NOT NULL"));
+        assert_eq!(finished.bindings().len(), 3);
+    }
+
+    #[test]
+    fn a_zero_change_exercise_operation_is_rejected_by_the_session_state() {
+        let recording = SessionOwnerRow {
+            user_id: USER_ID.to_owned(),
+            owner_terminal_id: Some("another-terminal".to_owned()),
+            finished_at: None,
+        };
+        let foreign = SessionOwnerRow {
+            user_id: "another-user".to_owned(),
+            owner_terminal_id: None,
+            finished_at: None,
+        };
+        for kind in [
+            OperationKind::TrainingExerciseCreate,
+            OperationKind::TrainingExerciseDelete,
+            OperationKind::TrainingExerciseReorder,
+        ] {
+            assert_eq!(
+                zero_change_outcome(kind, Some(&recording), USER_ID),
+                ZeroChangeOutcome::Forbidden
+            );
+            assert_eq!(
+                zero_change_outcome(kind, Some(&foreign), USER_ID),
+                ZeroChangeOutcome::NotFound
+            );
+            assert_eq!(
+                zero_change_outcome(kind, None, USER_ID),
+                ZeroChangeOutcome::NotFound
+            );
+        }
     }
 }
