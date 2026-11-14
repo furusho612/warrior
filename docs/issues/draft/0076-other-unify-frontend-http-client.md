@@ -25,12 +25,14 @@
 `HttpError` に `Forbidden`、`NotFound`、`Conflict` を追加し、`http::status_error` で HTTP のステータスを分類する。
 `TrainingApiError` は `HttpError` からの変換を持ち、画面の分岐は今の識別子を保つ。
 `frontend/src/training_session.rs` の要求の組み立てを削除し、`http::request_json` を使う。
+403 の応答の本文にあるエラーコードを読み、トレーニングの状態変更と Origin の拒否を区別する。状態変更は「記録の状態が変わりました。読み直してください。」、Origin の拒否は通信の失敗として扱う。
 カレンダーの失敗の分岐は、新しい `HttpError` の値で今と同じ表示になることを保つ。
 
 ## 完了条件
 
 - [ ] フロントエンドの HTTP 要求の組み立てが `frontend/src/http.rs` の 1 か所だけになる。これは受入基準に対応しない内部のリファクタである。
 - [ ] 403、404、409 の分類が、記録画面の引き継ぎとサマリーの表示で今と同じになる。
+- [ ] 403 の状態変更と Origin の拒否を、応答のエラーコードで区別する。
 - [ ] カレンダーの失敗の表示が今と同じになる。
 - [ ] `HttpError` の分類と `TrainingApiError` への変換の単体テストを追加する。
 - [ ] 既存のブラウザテスト、E2E、結合テストが通過する。
