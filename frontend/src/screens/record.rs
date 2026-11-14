@@ -29,7 +29,10 @@ mod exercises;
 mod failed_operations;
 mod ownership;
 mod set_events;
+mod set_inputs;
+mod set_table;
 mod sets;
+mod superset_panel;
 
 use exercises::ExerciseSection;
 use failed_operations::FailedOperations;
@@ -220,6 +223,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let persisted = (signals.persisted_memo)();
     let failed_entries = (state_signals.failed)();
     let completed_event_count = completed_event_signal.count();
+    let rest_timer_event_count = completed_event_signal.rest_timer_count();
 
     rsx! {
         section {
@@ -228,6 +232,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-session-id": training_id,
             "data-persisted-memo": "{persisted}",
             "data-set-events": "{completed_event_count}",
+            "data-rest-timer-events": "{rest_timer_event_count}",
             "data-profile-checked": if profile_checked() { "true" } else { "false" },
             RecordHeader { signals, state_signals }
             RecordOwnership {
@@ -909,6 +914,9 @@ fn operation_label(kind: OperationKind) -> &'static str {
         OperationKind::SetDelete => text(Key::RecordOperationSetDelete),
         OperationKind::SetReorder => text(Key::RecordOperationSetReorder),
         OperationKind::SetComplete => text(Key::RecordOperationSetComplete),
+        OperationKind::SupersetCreate => text(Key::RecordOperationSupersetCreate),
+        OperationKind::SupersetDelete => text(Key::RecordOperationSupersetDelete),
+        OperationKind::SupersetReorder => text(Key::RecordOperationSupersetReorder),
     }
 }
 

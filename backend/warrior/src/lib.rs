@@ -22,6 +22,7 @@ pub mod scheduled;
 pub mod security;
 pub mod set;
 pub mod stored_sets;
+pub mod superset;
 pub mod sync;
 pub mod training_record;
 pub mod training_session;

@@ -7,7 +7,7 @@
 //! 段の重量は、自重種目ではセットごとの加重を表す。記録した時点の体重は `sets` が持つ。
 
 use serde::Deserialize;
-use warrior_core::exercise::{ExerciseSnapshot, GripSelection};
+use warrior_core::exercise::{is_lateral, ExerciseSnapshot, Laterality, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::sql::{SqlStatement, SqlValue};
@@ -25,9 +25,30 @@ use crate::sync::{
 };
 use crate::training_session_exercise::{ownership_condition, ExerciseOwnership};
 
+mod bindings;
 mod validation;
 
+use bindings::{
+    applied_exists, grip_json, optional_real, ownership_condition_placeholder, segment_bindings,
+    AppliedCondition,
+};
 use validation::{completed_set_has_values, completed_set_is_valid};
+
+/// 種目の記録方式と左右の指定。
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct ExerciseRules {
+    /// 左右別に行うか。
+    laterality: Laterality,
+    /// 記録方式。
+    record_mode: RecordMode,
+}
+
+impl ExerciseRules {
+    /// 左右の列を使う種目か。時間で記録する種目は左右の列を使わない。
+    fn lateral(self) -> bool {
+        is_lateral(self.laterality, self.record_mode)
+    }
+}
 
 /// トレーニングに属するセットの状態。
 #[derive(Debug, Deserialize)]
@@ -60,11 +81,18 @@ struct SetOwnerRow {
     training_id: String,
 }
 
-/// 段のある値の件数。
+/// 段の件数。
 #[derive(Debug, Deserialize)]
 struct CountRow {
     /// 件数。
     count: i64,
+}
+
+/// 種目のスナップショット。
+#[derive(Debug, Deserialize)]
+struct SnapshotRow {
+    /// 記録した時点の種目の JSON。
+    snapshot: String,
 }
 
 /// セットの操作の batch を組み立てる。
@@ -98,7 +126,28 @@ pub(crate) async fn set_batch(
             "the training is being edited on another terminal",
         )));
     };
-    if let Some(rejection) = precheck(db, user_id, validated).await? {
+
+    let rules = payload_rules(
+        db,
+        user_id,
+        &validated.operation.training_id,
+        &validated.payload,
+    )
+    .await?;
+    if matches!(
+        validated.payload,
+        ValidatedPayload::SetCreate(_)
+            | ValidatedPayload::SetUpdate(_)
+            | ValidatedPayload::SetComplete(_)
+    ) && rules.is_none()
+    {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    }
+
+    if let Some(rejection) = precheck(db, user_id, validated, rules).await? {
         return Ok(BatchOutcome::Reject(rejection));
     }
     let ownership = match owner {
@@ -135,14 +184,21 @@ async fn precheck(
     db: &Db,
     user_id: &str,
     validated: &ValidatedOperation,
+    rules: Option<ExerciseRules>,
 ) -> Result<Option<Response>> {
     let training_id = &validated.operation.training_id;
     match &validated.payload {
         ValidatedPayload::SetCreate(payload) => {
-            precheck_create(db, user_id, training_id, payload).await
+            let Some(rules) = rules else {
+                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+            };
+            precheck_create(db, user_id, training_id, payload, rules).await
         }
         ValidatedPayload::SetUpdate(payload) => {
-            precheck_update(db, user_id, training_id, payload).await
+            let Some(rules) = rules else {
+                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+            };
+            precheck_update(db, user_id, training_id, payload, rules).await
         }
         ValidatedPayload::SetDelete(payload) => {
             precheck_delete(db, user_id, training_id, payload).await
@@ -151,13 +207,19 @@ async fn precheck(
             precheck_reorder(db, user_id, training_id, payload).await
         }
         ValidatedPayload::SetComplete(payload) => {
-            precheck_complete(db, user_id, training_id, payload).await
+            let Some(rules) = rules else {
+                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+            };
+            precheck_complete(db, user_id, training_id, payload, rules).await
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_) => Ok(None),
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => Ok(None),
     }
 }
 
@@ -166,9 +228,13 @@ async fn precheck_create(
     user_id: &str,
     training_id: &str,
     payload: &SetCreatePayload,
+    rules: ExerciseRules,
 ) -> Result<Option<Response>> {
     if !exercise_in_training(db, user_id, training_id, &payload.training_exercise_id).await? {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    }
+    if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
+        return Ok(Some(rejection));
     }
     if let Some(existing) = set_owner_row(db, user_id, &payload.set_id).await? {
         if existing.training_id != training_id
@@ -202,10 +268,14 @@ async fn precheck_update(
     user_id: &str,
     training_id: &str,
     payload: &SetUpdatePayload,
+    rules: ExerciseRules,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
+    if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
+        return Ok(Some(rejection));
+    }
     if !drop_positions_allowed(
         db,
         user_id,
@@ -225,6 +295,10 @@ async fn precheck_update(
         if payload
             .to_record(&snapshot.exercise_id, snapshot.record_mode)
             .is_err()
+            || !payload
+                .segments
+                .iter()
+                .all(|segment| segment.has_completion_values(rules.record_mode, rules.lateral()))
         {
             return Ok(Some(invalid_completion()));
         }
@@ -275,12 +349,13 @@ async fn precheck_complete(
     user_id: &str,
     training_id: &str,
     payload: &SetCompletePayload,
+    _rules: ExerciseRules,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
     if payload.completed && row.completed == 0 {
-        if !completed_set_has_values(db, user_id, &payload.set_id).await? {
+        if !completed_set_has_values(db, user_id, training_id, &payload.set_id).await? {
             return Ok(Some(response(
                 ErrorCode::BadRequest,
                 "the set has an incomplete segment",
@@ -351,7 +426,10 @@ fn set_statements(
         | ValidatedPayload::Update(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_) => None,
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => None,
     }
 }
 
@@ -407,7 +485,7 @@ fn update_set_statement(
     now: &str,
 ) -> SqlStatement {
     let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
-    let completed = payload.completed && segments_have_values(&payload.segments);
+    let completed = payload.completed;
     let mut bindings = vec![
         SqlValue::Integer(payload.position),
         SqlValue::Text(payload.kind.as_str().to_owned()),
@@ -615,83 +693,6 @@ fn segment_insert_statement(
     )
 }
 
-fn segment_bindings(
-    user_id: &str,
-    set_id: &str,
-    segment: &SetSegmentPayload,
-    now: &str,
-) -> Vec<SqlValue> {
-    let mut bindings = vec![
-        SqlValue::Text(segment.segment_id.clone()),
-        SqlValue::Text(user_id.to_owned()),
-        SqlValue::Text(set_id.to_owned()),
-        SqlValue::Integer(segment.position),
-        SqlValue::Real(segment.weight_kg),
-        SqlValue::Integer(i64::from(segment.reps)),
-        SqlValue::Integer(i64::from(segment.momentum_reps)),
-        SqlValue::Integer(i64::from(segment.assisted_reps)),
-        optional_integer(segment.duration_seconds.map(i64::from)),
-    ];
-    for side in [segment.left.as_ref(), segment.right.as_ref()] {
-        bindings.push(SqlValue::Real(side.map_or(0.0, |side| side.weight_kg)));
-        bindings.push(SqlValue::Integer(
-            side.map_or(0, |side| i64::from(side.reps)),
-        ));
-        bindings.push(optional_integer(
-            side.and_then(|side| side.duration_seconds).map(i64::from),
-        ));
-    }
-    bindings.push(SqlValue::Text(now.to_owned()));
-    bindings.push(SqlValue::Text(now.to_owned()));
-    bindings
-}
-
-/// 操作 ID を保存したことを表す条件。
-struct AppliedCondition {
-    /// `EXISTS` の SQL。
-    sql: String,
-    /// `EXISTS` に渡すバインド値。
-    bindings: Vec<SqlValue>,
-}
-
-fn applied_exists(user_id: &str, operation_id: &str) -> AppliedCondition {
-    AppliedCondition {
-        sql: "EXISTS (SELECT 1 FROM applied_operations WHERE operation_id = ? AND user_id = ?)"
-            .to_owned(),
-        bindings: vec![
-            SqlValue::Text(operation_id.to_owned()),
-            SqlValue::Text(user_id.to_owned()),
-        ],
-    }
-}
-
-/// 段の文に付ける、トレーニングの行の条件。
-///
-/// 段の文はセットの行を結合しないため、トレーニングの ID を直接は確かめられない。
-/// 編集権の条件だけを付け、操作 ID の保存でセットの適用の成功を確かめる。
-fn ownership_condition_placeholder(
-    user_id: &str,
-    ownership: ExerciseOwnership<'_>,
-) -> (String, Vec<SqlValue>) {
-    match ownership {
-        ExerciseOwnership::Terminal(terminal_id) => (
-            "EXISTS (SELECT 1 FROM training_sessions ts WHERE ts.user_id = ? \
-             AND (ts.finished_at IS NOT NULL OR ts.owner_terminal_id = ?))"
-                .to_owned(),
-            vec![
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(terminal_id.to_owned()),
-            ],
-        ),
-        ExerciseOwnership::Finished => (
-            "EXISTS (SELECT 1 FROM training_sessions ts WHERE ts.user_id = ? \
-             AND ts.finished_at IS NOT NULL)"
-                .to_owned(),
-            vec![SqlValue::Text(user_id.to_owned())],
-        ),
-    }
-}
-
 async fn exercise_in_training(
     db: &Db,
     user_id: &str,
@@ -852,6 +853,108 @@ fn parse_snapshot(snapshot: &str) -> Result<ExerciseSnapshot> {
     })
 }
 
+fn parse_rules(snapshot: &str) -> Result<ExerciseRules> {
+    serde_json::from_str(snapshot).map_err(|error| {
+        worker::Error::RustError(format!("the stored exercise snapshot is invalid: {error}"))
+    })
+}
+
+/// 操作の対象の種目の記録方式と左右の指定を返す。
+async fn payload_rules(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    payload: &ValidatedPayload,
+) -> Result<Option<ExerciseRules>> {
+    match payload {
+        ValidatedPayload::SetCreate(payload) => {
+            exercise_rules(db, user_id, training_id, &payload.training_exercise_id).await
+        }
+        ValidatedPayload::SetUpdate(payload) => {
+            set_rules_for_set(db, user_id, training_id, &payload.set_id).await
+        }
+        ValidatedPayload::SetComplete(payload) => {
+            set_rules_for_set(db, user_id, training_id, &payload.set_id).await
+        }
+        ValidatedPayload::Create(_)
+        | ValidatedPayload::Update(_)
+        | ValidatedPayload::ExerciseCreate(_)
+        | ValidatedPayload::ExerciseDelete(_)
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SetDelete(_)
+        | ValidatedPayload::SetReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => Ok(None),
+    }
+}
+
+async fn exercise_rules(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    training_exercise_id: &str,
+) -> Result<Option<ExerciseRules>> {
+    let row = db
+        .first::<SnapshotRow>(&SqlStatement::new(
+            "SELECT snapshot FROM training_exercises \
+             WHERE id = ? AND user_id = ? AND training_id = ?",
+            vec![
+                SqlValue::Text(training_exercise_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+            ],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    parse_rules(&row.snapshot).map(Some)
+}
+
+async fn set_rules_for_set(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    set_id: &str,
+) -> Result<Option<ExerciseRules>> {
+    let row = db
+        .first::<SnapshotRow>(&SqlStatement::new(
+            "SELECT te.snapshot FROM sets s \
+             JOIN training_exercises te ON te.id = s.training_exercise_id \
+             WHERE s.id = ? AND s.user_id = ? AND te.training_id = ? AND te.user_id = ?",
+            vec![
+                SqlValue::Text(set_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+            ],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    parse_rules(&row.snapshot).map(Some)
+}
+
+/// 段の形が種目の左右の指定と一致するか。
+fn segments_shape_rejection(
+    segments: &[SetSegmentPayload],
+    rules: ExerciseRules,
+) -> Option<Response> {
+    let lateral = rules.lateral();
+    if segments
+        .iter()
+        .all(|segment| segment.has_matching_sides(lateral))
+    {
+        return None;
+    }
+    Some(response(
+        ErrorCode::BadRequest,
+        "the set does not match the exercise laterality",
+    ))
+}
+
 fn drop_position_rejection() -> Response {
     response(
         ErrorCode::BadRequest,
@@ -870,31 +973,12 @@ fn invalid_completion() -> Response {
     response(ErrorCode::BadRequest, "the set is not valid for completion")
 }
 
-fn segments_have_values(segments: &[SetSegmentPayload]) -> bool {
-    !segments.is_empty() && segments.iter().all(SetSegmentPayload::has_values)
-}
-
 fn same_set_ids(current: &[String], ordered: &[String]) -> bool {
     let mut current = current.to_vec();
     let mut ordered = ordered.to_vec();
     current.sort_unstable();
     ordered.sort_unstable();
     current == ordered
-}
-
-fn grip_json(grip: Option<GripSelection>) -> Option<SqlValue> {
-    match grip {
-        None => Some(SqlValue::Null),
-        Some(grip) => serde_json::to_string(&grip).ok().map(SqlValue::Text),
-    }
-}
-
-fn optional_real(value: Option<f64>) -> SqlValue {
-    value.map_or(SqlValue::Null, SqlValue::Real)
-}
-
-fn optional_integer(value: Option<i64>) -> SqlValue {
-    value.map_or(SqlValue::Null, SqlValue::Integer)
 }
 
 #[cfg(test)]

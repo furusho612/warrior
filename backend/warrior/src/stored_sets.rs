@@ -6,7 +6,7 @@
 //! スナップショットは記録した時点の種目の内容を持つ (ADR-006)。
 
 use serde::Deserialize;
-use warrior_core::exercise::{ExerciseSnapshot, GripSelection, Laterality};
+use warrior_core::exercise::{is_lateral, ExerciseSnapshot, GripSelection, Laterality};
 use warrior_core::profile::BodyWeightAtRecord;
 use warrior_core::set_calc::{
     BestKey, RecordMode, SetKind, SetRecord, SetSegment, SetValidationError, SideValue,
@@ -292,8 +292,12 @@ pub(crate) fn segment_from_row(
     laterality: Laterality,
     record_mode: RecordMode,
 ) -> SetSegment {
-    match laterality {
-        Laterality::Unilateral => SetSegment {
+    let lateral = is_lateral(laterality, record_mode);
+    let has_side_durations = record_mode == RecordMode::Time
+        && row.left_duration_seconds.is_some()
+        && row.right_duration_seconds.is_some();
+    if lateral || has_side_durations {
+        return SetSegment {
             weight_kg: 0.0,
             reps: 0,
             momentum_reps: to_u32(row.momentum_reps),
@@ -313,22 +317,22 @@ pub(crate) fn segment_from_row(
                 row.body_weight_kg,
             )),
             duration_seconds: None,
-        },
-        Laterality::Bilateral => SetSegment {
-            weight_kg: segment_weight(
-                row.weight_kg.unwrap_or(0.0),
-                record_mode,
-                row.body_weight_kg,
-            ),
-            reps: to_u32(row.reps),
-            momentum_reps: to_u32(row.momentum_reps),
-            assisted_reps: to_u32(row.assisted_reps),
-            left: None,
-            right: None,
-            duration_seconds: row
-                .duration_seconds
-                .and_then(|value| u32::try_from(value).ok()),
-        },
+        };
+    }
+    SetSegment {
+        weight_kg: segment_weight(
+            row.weight_kg.unwrap_or(0.0),
+            record_mode,
+            row.body_weight_kg,
+        ),
+        reps: to_u32(row.reps),
+        momentum_reps: to_u32(row.momentum_reps),
+        assisted_reps: to_u32(row.assisted_reps),
+        left: None,
+        right: None,
+        duration_seconds: row
+            .duration_seconds
+            .and_then(|value| u32::try_from(value).ok()),
     }
 }
 
@@ -445,6 +449,17 @@ mod tests {
         assert_eq!(sets[3].record.longest_duration_seconds(), Some(90));
         assert_eq!(sets[1].exercise_name, "exercise-weight");
         assert_eq!(sets[1].laterality, Laterality::Bilateral);
+    }
+
+    #[test]
+    fn a_unilateral_time_row_keeps_the_top_level_duration() {
+        let exercises =
+            build_exercises(vec![unilateral_time_row()]).expect("the unilateral time set is valid");
+        let sets = session_sets(&exercises);
+        assert_eq!(sets[0].laterality, Laterality::Unilateral);
+        assert_eq!(sets[0].record.mode(), RecordMode::Time);
+        assert_eq!(sets[0].record.longest_duration_seconds(), Some(60));
+        assert_eq!(sets[0].record.total_duration_seconds(), 60);
     }
 
     #[test]
@@ -602,6 +617,20 @@ mod tests {
             build_exercises(vec![row]),
             Err(BuildSetsError::UnreadableSnapshot)
         );
+    }
+
+    fn unilateral_time_row() -> SetSegmentRow {
+        let mut row = segment_row(
+            "training-time",
+            "exercise-side-plank",
+            "set-side-plank",
+            "normal",
+            None,
+            None,
+            Some(60),
+        );
+        row.snapshot = snapshot_json("exercise-side-plank", "time", "unilateral");
+        row
     }
 
     fn segment_row(

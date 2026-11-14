@@ -28,6 +28,7 @@ mod body_weight;
 mod discard;
 mod exercise;
 mod set;
+mod superset;
 
 pub use indexeddb::request_persistence;
 pub use set::StoredSet;
@@ -817,7 +818,10 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
         | OperationKind::SetUpdate
         | OperationKind::SetDelete
         | OperationKind::SetReorder
-        | OperationKind::SetComplete => Err(StorageError::InvalidOperation(
+        | OperationKind::SetComplete
+        | OperationKind::SupersetCreate
+        | OperationKind::SupersetDelete
+        | OperationKind::SupersetReorder => Err(StorageError::InvalidOperation(
             "the operation has no memo".to_owned(),
         )),
     }

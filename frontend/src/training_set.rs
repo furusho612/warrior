@@ -16,6 +16,15 @@ use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 use crate::ids::{new_uuid, now_iso};
 use crate::storage::StorageError;
 
+/// セットの 1 つの段の左右の値。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SegmentSideValues {
+    /// 重量 (kg)。自重種目は加重である。重量欄が空のときは None。
+    pub weight_kg: Option<f64>,
+    /// 回数。
+    pub reps: u32,
+}
+
 /// セットの 1 つの段の入力の値。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetSegmentValues {
@@ -25,12 +34,29 @@ pub struct SetSegmentValues {
     pub reps: u32,
     /// 時間で記録する場合の秒数。
     pub duration_seconds: Option<u32>,
+    /// 左の値。左右別の種目だけが持つ。
+    pub left: Option<SegmentSideValues>,
+    /// 右の値。左右別の種目だけが持つ。
+    pub right: Option<SegmentSideValues>,
 }
 
 impl SetSegmentValues {
-    /// 段に記録する値があるか。
-    pub fn has_values(&self) -> bool {
-        self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
+    /// 段が完了に必要な値を持つか。
+    ///
+    /// 左右別の段は左右の両方に重量と回数があることを求める。
+    pub fn is_complete(&self) -> bool {
+        match (self.left.as_ref(), self.right.as_ref()) {
+            (Some(left), Some(right)) => {
+                left.weight_kg.is_some()
+                    && left.reps > 0
+                    && right.weight_kg.is_some()
+                    && right.reps > 0
+            }
+            (None, None) => {
+                self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
+            }
+            (Some(_), None) | (None, Some(_)) => false,
+        }
     }
 }
 
@@ -52,14 +78,14 @@ pub struct SetValues {
 }
 
 impl SetValues {
-    /// すべての段に記録する値があるか。
-    pub fn has_values(&self) -> bool {
-        !self.segments.is_empty() && self.segments.iter().all(SetSegmentValues::has_values)
+    /// セットが完了に必要な値を持つか。すべての段が完了していることを求める。
+    pub fn is_complete(&self) -> bool {
+        !self.segments.is_empty() && self.segments.iter().all(SetSegmentValues::is_complete)
     }
 
     /// 値を保ったまま完了できるか。
     pub fn completed_with_values(&self) -> bool {
-        self.completed && self.has_values()
+        self.completed && self.is_complete()
     }
 }
 
@@ -267,11 +293,11 @@ fn segment_record(
         momentum_reps: 0,
         assisted_reps: 0,
         duration_seconds: values.duration_seconds.map(i64::from),
-        left_weight_kg: None,
-        left_reps: None,
+        left_weight_kg: values.left.and_then(|side| side.weight_kg),
+        left_reps: values.left.map(|side| i64::from(side.reps)),
         left_duration_seconds: None,
-        right_weight_kg: None,
-        right_reps: None,
+        right_weight_kg: values.right.and_then(|side| side.weight_kg),
+        right_reps: values.right.map(|side| i64::from(side.reps)),
         right_duration_seconds: None,
         created_at: now.to_owned(),
         updated_at: now.to_owned(),
@@ -291,11 +317,11 @@ fn updated_segment_record(
         momentum_reps: 0,
         assisted_reps: 0,
         duration_seconds: values.duration_seconds.map(i64::from),
-        left_weight_kg: None,
-        left_reps: None,
+        left_weight_kg: values.left.and_then(|side| side.weight_kg),
+        left_reps: values.left.map(|side| i64::from(side.reps)),
         left_duration_seconds: None,
-        right_weight_kg: None,
-        right_reps: None,
+        right_weight_kg: values.right.and_then(|side| side.weight_kg),
+        right_reps: values.right.map(|side| i64::from(side.reps)),
         right_duration_seconds: None,
         updated_at: now.to_owned(),
         ..segment.clone()
@@ -315,10 +341,18 @@ fn payload_segments(segment_ids: &[String], values: &[SetSegmentValues]) -> Vec<
             momentum_reps: 0,
             assisted_reps: 0,
             duration_seconds: values.duration_seconds,
-            left: None,
-            right: None,
+            left: values.left.map(side_payload),
+            right: values.right.map(side_payload),
         })
         .collect()
+}
+
+fn side_payload(values: SegmentSideValues) -> warrior_core::sync::SetSidePayload {
+    warrior_core::sync::SetSidePayload {
+        weight_kg: values.weight_kg,
+        reps: values.reps,
+        duration_seconds: None,
+    }
 }
 
 fn position_of(index: usize) -> i64 {

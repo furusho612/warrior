@@ -39,6 +39,12 @@ pub enum OperationKind {
     SetReorder,
     /// セットの完了の状態の変更。
     SetComplete,
+    /// スーパーセットの組の作成。
+    SupersetCreate,
+    /// スーパーセットの組の削除。
+    SupersetDelete,
+    /// スーパーセットの組の種目の並べ替え。
+    SupersetReorder,
 }
 
 impl OperationKind {
@@ -55,6 +61,9 @@ impl OperationKind {
             Self::SetDelete => "set_delete",
             Self::SetReorder => "set_reorder",
             Self::SetComplete => "set_complete",
+            Self::SupersetCreate => "superset_create",
+            Self::SupersetDelete => "superset_delete",
+            Self::SupersetReorder => "superset_reorder",
         }
     }
 
@@ -71,6 +80,9 @@ impl OperationKind {
             "set_delete" => Some(Self::SetDelete),
             "set_reorder" => Some(Self::SetReorder),
             "set_complete" => Some(Self::SetComplete),
+            "superset_create" => Some(Self::SupersetCreate),
+            "superset_delete" => Some(Self::SupersetDelete),
+            "superset_reorder" => Some(Self::SupersetReorder),
             _ => None,
         }
     }
@@ -167,6 +179,18 @@ pub struct TrainingExerciseReorderPayload {
     pub ordered_ids: Vec<String>,
 }
 
+/// 左右別の段の、片側の本文。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetSidePayload {
+    /// 重量 (kg)。自重種目は加重である。重量欄が空のときは None。
+    pub weight_kg: Option<f64>,
+    /// 回数。入力が空のときは 0 である。
+    pub reps: u32,
+    /// 時間で記録する場合の秒数。
+    pub duration_seconds: Option<u32>,
+}
+
 /// セットの 1 つの段の本文。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -186,9 +210,9 @@ pub struct SetSegmentPayload {
     /// 時間で記録する場合の秒数。
     pub duration_seconds: Option<u32>,
     /// 左の値。左右別の種目だけが持つ。
-    pub left: Option<crate::set_calc::SideValue>,
+    pub left: Option<SetSidePayload>,
     /// 右の値。左右別の種目だけが持つ。
-    pub right: Option<crate::set_calc::SideValue>,
+    pub right: Option<SetSidePayload>,
 }
 
 /// セットの追加の本文。
@@ -273,6 +297,40 @@ pub struct SetCompletePayload {
     pub completed: bool,
 }
 
+/// スーパーセットの組の作成の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupersetCreatePayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// 組の UUID v4。
+    pub superset_id: String,
+    /// 組に含める種目の行の UUID v4。並び順である。
+    pub member_ids: Vec<String>,
+}
+
+/// スーパーセットの組の削除の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupersetDeletePayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// 削除する組の UUID v4。
+    pub superset_id: String,
+}
+
+/// スーパーセットの組の種目の並べ替えの本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupersetReorderPayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// 並べ替える組の UUID v4。
+    pub superset_id: String,
+    /// 組に含める種目の行の UUID v4。新しい並び順である。
+    pub member_ids: Vec<String>,
+}
+
 /// 端末とサーバーが持つトレーニングの行。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionRecord {
@@ -352,6 +410,12 @@ pub enum ValidatedPayload {
     SetReorder(SetReorderPayload),
     /// セットの完了の状態の変更の本文。
     SetComplete(SetCompletePayload),
+    /// スーパーセットの組の作成の本文。
+    SupersetCreate(SupersetCreatePayload),
+    /// スーパーセットの組の削除の本文。
+    SupersetDelete(SupersetDeletePayload),
+    /// スーパーセットの組の種目の並べ替えの本文。
+    SupersetReorder(SupersetReorderPayload),
 }
 
 /// 検証済みの操作。
@@ -414,6 +478,12 @@ pub enum SyncError {
     EmptySegments,
     /// 通常とウォームアップのセットが 1 つでない段を持つ。
     InvalidSegmentCount,
+    /// 組の ID が UUID v4 でない。
+    InvalidSupersetId,
+    /// 組の種目が 2 つ未満である。
+    EmptySuperset,
+    /// 組の種目の ID が重複している、または UUID v4 でない。
+    InvalidSupersetMembers,
 }
 
 impl SyncError {
@@ -444,6 +514,9 @@ impl SyncError {
             Self::InvalidBodyWeight => "invalid_body_weight",
             Self::EmptySegments => "empty_segments",
             Self::InvalidSegmentCount => "invalid_segment_count",
+            Self::InvalidSupersetId => "invalid_superset_id",
+            Self::EmptySuperset => "empty_superset",
+            Self::InvalidSupersetMembers => "invalid_superset_members",
         }
     }
 }
@@ -524,6 +597,21 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
             let payload: SetCompletePayload = serde_json::from_value(operation.payload.clone())
                 .map_err(|_| SyncError::InvalidPayload)?;
             crate::sync_set::validate_complete(operation, payload)?
+        }
+        OperationKind::SupersetCreate => {
+            let payload: SupersetCreatePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            crate::sync_superset::validate_create(operation, payload)?
+        }
+        OperationKind::SupersetDelete => {
+            let payload: SupersetDeletePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            crate::sync_superset::validate_delete(operation, payload)?
+        }
+        OperationKind::SupersetReorder => {
+            let payload: SupersetReorderPayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            crate::sync_superset::validate_reorder(operation, payload)?
         }
     };
 

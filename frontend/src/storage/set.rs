@@ -4,7 +4,6 @@
 //! 操作を送信待ちの列へ積む (ADR-002)。段はセットの更新で全置換し、削除ではセットと
 //! 一緒に消す。記録した時点の体重はセットの行が持ち、段の重量は自重種目では加重である。
 
-use warrior_core::set_calc::SideValue;
 use warrior_core::sync::{
     Operation, OperationKind, OutboxEntry, SetCompletePayload, SetCreatePayload, SetDeletePayload,
     SetReorderPayload, SetSegmentPayload, SetUpdatePayload,
@@ -559,10 +558,13 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
             payload.segment_id == segment.id
                 && payload.position == segment.position
                 && payload.weight_kg == segment.weight_kg.unwrap_or(0.0)
-                && i64::from(payload.reps) == segment.reps.unwrap_or(0)
+                && payload.reps == u32::try_from(segment.reps.unwrap_or(0)).unwrap_or(0)
                 && i64::from(payload.momentum_reps) == segment.momentum_reps
                 && i64::from(payload.assisted_reps) == segment.assisted_reps
-                && payload.duration_seconds.map(i64::from) == segment.duration_seconds
+                && payload.duration_seconds
+                    == segment
+                        .duration_seconds
+                        .and_then(|duration| u32::try_from(duration).ok())
                 && same_side(
                     payload.left.as_ref(),
                     segment.left_weight_kg,
@@ -579,7 +581,7 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
 }
 
 fn same_side(
-    side: Option<&SideValue>,
+    side: Option<&warrior_core::sync::SetSidePayload>,
     weight_kg: Option<f64>,
     reps: Option<i64>,
     duration_seconds: Option<i64>,
@@ -587,7 +589,7 @@ fn same_side(
     match side {
         None => weight_kg.is_none() && reps.is_none() && duration_seconds.is_none(),
         Some(side) => {
-            weight_kg == Some(side.weight_kg)
+            weight_kg == side.weight_kg
                 && reps == Some(i64::from(side.reps))
                 && duration_seconds == side.duration_seconds.map(i64::from)
         }

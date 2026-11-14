@@ -129,6 +129,18 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
             )
             .await?
         }
+        OperationKind::SupersetCreate
+        | OperationKind::SupersetDelete
+        | OperationKind::SupersetReorder => {
+            crate::superset::superset_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
     };
     let statements = match statements {
         BatchOutcome::Apply(statements) => statements,
@@ -147,6 +159,12 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
                     return status_response("already_applied");
                 }
             }
+            if is_superset_member_conflict(&error) {
+                return Ok(response(
+                    ErrorCode::Conflict,
+                    "a superset member already belongs to a group",
+                ));
+            }
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
@@ -162,6 +180,12 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
     }
 
     status_response("applied")
+}
+
+/// スーパーセットの種目の一意制約に違反したか。
+fn is_superset_member_conflict(error: &worker::Error) -> bool {
+    let message = error.to_string();
+    message.contains("UNIQUE constraint failed") && message.contains("superset_members")
 }
 
 /// batch の最初の文が変更した行数を返す。
@@ -210,7 +234,10 @@ fn zero_change_outcome(
         | OperationKind::SetUpdate
         | OperationKind::SetDelete
         | OperationKind::SetReorder
-        | OperationKind::SetComplete => match session {
+        | OperationKind::SetComplete
+        | OperationKind::SupersetCreate
+        | OperationKind::SupersetDelete
+        | OperationKind::SupersetReorder => match session {
             Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
             _ => ZeroChangeOutcome::NotFound,
         },
@@ -871,6 +898,9 @@ mod tests {
             OperationKind::SetDelete,
             OperationKind::SetReorder,
             OperationKind::SetComplete,
+            OperationKind::SupersetCreate,
+            OperationKind::SupersetDelete,
+            OperationKind::SupersetReorder,
         ] {
             assert_eq!(
                 zero_change_outcome(kind, Some(&recording), USER_ID),

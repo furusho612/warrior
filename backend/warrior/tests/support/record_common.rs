@@ -162,6 +162,15 @@ pub(crate) struct ExerciseSeed<'a> {
 
 /// 種目を作る。
 pub(crate) fn seed_exercise(server: &DevServer, seed: ExerciseSeed<'_>) {
+    seed_exercise_with_laterality(server, seed, "bilateral");
+}
+
+/// 左右別の指定を付けて種目を作る。
+pub(crate) fn seed_exercise_with_laterality(
+    server: &DevServer,
+    seed: ExerciseSeed<'_>,
+    laterality: &str,
+) {
     let ExerciseSeed {
         row_id,
         user_id,
@@ -179,7 +188,7 @@ pub(crate) fn seed_exercise(server: &DevServer, seed: ExerciseSeed<'_>) {
         "body_part": body_part,
         "muscles": [{"muscle": muscle, "role": "primary"}],
         "record_mode": record_mode,
-        "laterality": "bilateral",
+        "laterality": laterality,
         "grip_mode": "none",
         "grip_options": []
     });

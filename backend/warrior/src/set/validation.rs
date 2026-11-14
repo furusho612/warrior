@@ -4,27 +4,51 @@
 //! 空の段を含む完了済みのセットで、終了のサマリーが 500 になるのを防ぐ。
 
 use warrior_core::exercise::{ExerciseSnapshot, GripSelection};
-use warrior_core::set_calc::{BestKey, SetKind, SetRecord};
+use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use worker::Result;
 
-use super::CountRow;
+use super::{parse_rules, set_row, CountRow, ExerciseRules};
 use crate::db::Db;
 use crate::stored_sets::{segment_from_row, SetSegmentRow, SET_SEGMENT_COLUMNS};
 
 /// 完了したセットのすべての段に値があるか返す。
-pub(super) async fn completed_set_has_values(db: &Db, user_id: &str, set_id: &str) -> Result<bool> {
+pub(super) async fn completed_set_has_values(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    set_id: &str,
+) -> Result<bool> {
+    let Some(row) = set_row(db, user_id, training_id, set_id).await? else {
+        return Ok(false);
+    };
+    let rules = parse_rules(&row.snapshot)?;
+    let condition = completed_segment_condition(rules);
     let total = count_segments(db, user_id, set_id, "").await?;
-    let with_values = count_segments(
-        db,
-        user_id,
-        set_id,
-        "AND (reps > 0 OR duration_seconds > 0 \
-         OR left_reps > 0 OR right_reps > 0 \
-         OR left_duration_seconds > 0 OR right_duration_seconds > 0)",
-    )
-    .await?;
+    let with_values = count_segments(db, user_id, set_id, &format!("AND ({condition})")).await?;
     Ok(total > 0 && total == with_values)
+}
+
+/// 段が完了に必要な値を持つ条件。
+fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
+    if rules.lateral() {
+        return match rules.record_mode {
+            RecordMode::Time => "left_duration_seconds > 0 AND right_duration_seconds > 0",
+            RecordMode::WeightAndReps => {
+                "left_weight_kg IS NOT NULL AND left_reps > 0 \
+                 AND right_weight_kg IS NOT NULL AND right_reps > 0"
+            }
+            RecordMode::BodyweightAndReps => "left_reps > 0 AND right_reps > 0",
+        };
+    }
+    match rules.record_mode {
+        RecordMode::Time => "duration_seconds > 0",
+        RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+            "left_weight_kg IS NULL AND left_reps IS NULL \
+             AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
+             AND right_reps IS NULL AND right_duration_seconds IS NULL AND reps > 0"
+        }
+    }
 }
 
 /// 保存済みのセットが SetRecord の検証を通るか返す。

@@ -1,11 +1,13 @@
-//! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`。
+//! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-004`。
 
+use warrior_core::exercise::Laterality;
 use warrior_core::previous::PreviousSet;
-use warrior_core::set_calc::{RecordMode, SetKind, SetSegment};
+use warrior_core::set_calc::{RecordMode, SetKind, SetSegment, SideValue};
+use warrior_core::training_record::SetSegmentRecord;
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
-use super::{needs_segment_confirmation, previous_values, set_numbers, SetView};
+use super::{needs_segment_confirmation, previous_values, set_numbers, SegmentView, SetView};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -30,8 +32,13 @@ fn previous_set(body_weight_kg: Option<f64>, weight_kg: f64) -> PreviousSet {
 #[wasm_bindgen_test]
 fn copies_the_added_weight_from_the_previous_body_weight() {
     let previous = previous_set(Some(70.0), 80.0);
-    let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
-        .expect("the previous values");
+    let values = previous_values(
+        &previous,
+        RecordMode::BodyweightAndReps,
+        Some(75.0),
+        Laterality::Bilateral,
+    )
+    .expect("the previous values");
     assert_eq!(values.segments[0].weight_kg, 10.0);
     assert_eq!(values.body_weight_kg, Some(75.0));
     assert_eq!(values.segments[0].reps, 5);
@@ -40,8 +47,13 @@ fn copies_the_added_weight_from_the_previous_body_weight() {
 #[wasm_bindgen_test]
 fn copies_no_added_weight_without_the_previous_body_weight() {
     let previous = previous_set(None, 0.0);
-    let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
-        .expect("the previous values");
+    let values = previous_values(
+        &previous,
+        RecordMode::BodyweightAndReps,
+        Some(75.0),
+        Laterality::Bilateral,
+    )
+    .expect("the previous values");
     assert_eq!(values.segments[0].weight_kg, 0.0);
     assert_eq!(values.segments[0].reps, 5);
 }
@@ -49,8 +61,13 @@ fn copies_no_added_weight_without_the_previous_body_weight() {
 #[wasm_bindgen_test]
 fn copies_the_weight_for_weight_and_reps() {
     let previous = previous_set(Some(70.0), 80.0);
-    let values = previous_values(&previous, RecordMode::WeightAndReps, Some(75.0))
-        .expect("the previous values");
+    let values = previous_values(
+        &previous,
+        RecordMode::WeightAndReps,
+        Some(75.0),
+        Laterality::Bilateral,
+    )
+    .expect("the previous values");
     assert_eq!(values.segments[0].weight_kg, 80.0);
 }
 
@@ -67,8 +84,13 @@ fn copies_every_segment_of_a_previous_drop_set() {
         right: None,
         duration_seconds: None,
     });
-    let values = previous_values(&previous, RecordMode::WeightAndReps, Some(75.0))
-        .expect("the previous values");
+    let values = previous_values(
+        &previous,
+        RecordMode::WeightAndReps,
+        Some(75.0),
+        Laterality::Bilateral,
+    )
+    .expect("the previous values");
     assert_eq!(values.kind, SetKind::Drop);
     assert_eq!(values.segments.len(), 2);
     assert_eq!(values.segments[1].weight_kg, 60.0);
@@ -104,6 +126,82 @@ fn a_drop_set_with_two_segments_asks_before_changing_the_kind() {
         SetKind::Warmup,
         2
     ));
+}
+
+#[wasm_bindgen_test]
+fn copies_both_sides_of_a_unilateral_set() {
+    let mut previous = previous_set(Some(70.0), 0.0);
+    previous.segments[0].left = Some(SideValue {
+        weight_kg: 80.0,
+        reps: 5,
+        duration_seconds: None,
+    });
+    previous.segments[0].right = Some(SideValue {
+        weight_kg: 75.0,
+        reps: 4,
+        duration_seconds: None,
+    });
+    let values = previous_values(
+        &previous,
+        RecordMode::BodyweightAndReps,
+        Some(70.0),
+        Laterality::Unilateral,
+    )
+    .expect("the previous values");
+    assert_eq!(values.segments[0].left.unwrap().weight_kg, Some(10.0));
+    assert_eq!(values.segments[0].left.unwrap().reps, 5);
+    assert_eq!(values.segments[0].right.unwrap().weight_kg, Some(5.0));
+    assert_eq!(values.segments[0].right.unwrap().reps, 4);
+}
+
+#[wasm_bindgen_test]
+fn a_unilateral_weight_needs_an_explicit_weight_to_complete() {
+    let mut view = set_view("normal");
+    view.segments.push(segment_view("", "5", "", "4"));
+    assert!(!view.can_complete(RecordMode::WeightAndReps, true));
+
+    view.segments[0].left_weight = "0".to_owned();
+    view.segments[0].right_weight = "0".to_owned();
+    assert!(view.can_complete(RecordMode::WeightAndReps, true));
+
+    let mut bodyweight = set_view("normal");
+    bodyweight.segments.push(segment_view("", "5", "", "4"));
+    assert!(bodyweight.can_complete(RecordMode::BodyweightAndReps, true));
+}
+
+fn segment_view(
+    left_weight: &str,
+    left_reps: &str,
+    right_weight: &str,
+    right_reps: &str,
+) -> SegmentView {
+    SegmentView {
+        record: SetSegmentRecord {
+            id: "segment".to_owned(),
+            set_id: "set".to_owned(),
+            position: 1,
+            weight_kg: Some(0.0),
+            reps: Some(0),
+            momentum_reps: 0,
+            assisted_reps: 0,
+            duration_seconds: None,
+            left_weight_kg: None,
+            left_reps: Some(0),
+            left_duration_seconds: None,
+            right_weight_kg: None,
+            right_reps: Some(0),
+            right_duration_seconds: None,
+            created_at: "2026-11-12T00:00:00Z".to_owned(),
+            updated_at: "2026-11-12T00:00:00Z".to_owned(),
+        },
+        weight: String::new(),
+        reps: String::new(),
+        duration: String::new(),
+        left_weight: left_weight.to_owned(),
+        left_reps: left_reps.to_owned(),
+        right_weight: right_weight.to_owned(),
+        right_reps: right_reps.to_owned(),
+    }
 }
 
 fn set_view(kind: &str) -> SetView {

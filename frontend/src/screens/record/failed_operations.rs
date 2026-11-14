@@ -1,7 +1,8 @@
 //! 失敗した送信待ちの操作の表示と破棄。
 //!
-//! 破棄は操作の種類ごとに関数へ分ける。種目の削除と並べ替えは、対象の種目だけを
-//! サーバーの記録から戻し、ほかの送信待ちの操作と入力には触れない。
+//! 破棄は操作の種類ごとに関数へ分ける。種目の削除と並べ替えは、対象の種目と
+//! その種目を含む組をサーバーの記録から戻し、ほかの送信待ちの操作と入力には触れない。
+//! 組の作成、削除、並べ替えは、対象の組だけをサーバーの記録から戻す。
 
 use dioxus::prelude::*;
 use warrior_core::sync::{OperationKind, OutboxEntry, SessionRecord};
@@ -12,7 +13,7 @@ use super::{
     RecordSignals, StateSignals,
 };
 use crate::routes::navigate;
-use crate::storage::{DiscardOutcome, RestoreOutcome};
+use crate::storage::{self, DiscardOutcome, RestoreOutcome};
 use crate::sync;
 use crate::text::{text, Key};
 use crate::training_session as training_api;
@@ -25,6 +26,7 @@ struct DiscardRequest {
     operation_kind: OperationKind,
     training_exercise_id: Option<String>,
     set_id: Option<String>,
+    superset_id: Option<String>,
     sequence: u64,
 }
 
@@ -82,6 +84,12 @@ pub(super) fn FailedOperations(
                                         .operation
                                         .payload
                                         .get("set_id")
+                                        .and_then(|value| value.as_str())
+                                        .map(str::to_owned),
+                                    superset_id: entry
+                                        .operation
+                                        .payload
+                                        .get("superset_id")
                                         .and_then(|value| value.as_str())
                                         .map(str::to_owned),
                                     sequence: entry.operation.sequence,
@@ -147,6 +155,23 @@ async fn discard(request: DiscardRequest, mut signals: RecordSignals, state_sign
                 &request.training_id,
                 record.as_ref(),
                 &request,
+                &mut signals,
+                state_signals,
+            )
+            .await;
+        }
+        Some(DiscardOutcome::OperationsRemoved)
+            if matches!(
+                request.operation_kind,
+                OperationKind::SupersetCreate
+                    | OperationKind::SupersetDelete
+                    | OperationKind::SupersetReorder
+            ) =>
+        {
+            discard_superset_operation(
+                &request.training_id,
+                record.as_ref(),
+                request.superset_id.as_deref(),
                 &mut signals,
                 state_signals,
             )
@@ -233,6 +258,31 @@ async fn discard_set_operation(
     refresh_state(training_id, state_signals).await;
 }
 
+async fn discard_superset_operation(
+    training_id: &str,
+    record: Option<&TrainingRecord>,
+    superset_id: Option<&str>,
+    signals: &mut RecordSignals,
+    state_signals: StateSignals,
+) {
+    let restored = match (record, superset_id, storage::current().await) {
+        (Some(record), Some(superset_id), Ok(storage)) => {
+            storage.restore_superset(record, superset_id).await.is_ok()
+        }
+        _ => false,
+    };
+    if restored {
+        signals
+            .exercise_revision
+            .set((signals.exercise_revision)() + 1);
+    } else {
+        signals
+            .save_error
+            .set(Some(text(Key::RecordSupersetRestoreFailed).to_owned()));
+    }
+    refresh_state(training_id, state_signals).await;
+}
+
 async fn discard_exercise_operation(
     training_id: &str,
     record: Option<&TrainingRecord>,
@@ -297,6 +347,9 @@ fn needs_server_record(operation_kind: OperationKind) -> bool {
             | OperationKind::SetDelete
             | OperationKind::SetReorder
             | OperationKind::SetComplete
+            | OperationKind::SupersetCreate
+            | OperationKind::SupersetDelete
+            | OperationKind::SupersetReorder
     )
 }
 
@@ -305,6 +358,9 @@ fn restore_error_key(operation_kind: OperationKind) -> Key {
         OperationKind::TrainingExerciseDelete | OperationKind::TrainingExerciseReorder => {
             Key::RecordExerciseRestoreFailed
         }
+        OperationKind::SupersetCreate
+        | OperationKind::SupersetDelete
+        | OperationKind::SupersetReorder => Key::RecordSupersetRestoreFailed,
         _ => Key::RecordSetRestoreFailed,
     }
 }
