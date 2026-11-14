@@ -21,8 +21,8 @@ use crate::storage::StorageError;
 /// セットの 1 つの段の左右の値。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SegmentSideValues {
-    /// 重量 (kg)。自重種目は加重である。
-    pub weight_kg: f64,
+    /// 重量 (kg)。自重種目は加重である。重量欄が空のときは None。
+    pub weight_kg: Option<f64>,
     /// 回数。
     pub reps: u32,
 }
@@ -49,10 +49,15 @@ pub struct SetSegmentValues {
 impl SetSegmentValues {
     /// 段が完了に必要な値を持つか。
     ///
-    /// 左右別の段は左右の両方に回数があることを求める。
+    /// 左右別の段は左右の両方に重量と回数があることを求める。
     pub fn is_complete(&self) -> bool {
         match (self.left.as_ref(), self.right.as_ref()) {
-            (Some(left), Some(right)) => left.reps > 0 && right.reps > 0,
+            (Some(left), Some(right)) => {
+                left.weight_kg.is_some()
+                    && left.reps > 0
+                    && right.weight_kg.is_some()
+                    && right.reps > 0
+            }
             (None, None) => {
                 self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
             }
@@ -296,10 +301,10 @@ fn segment_record(
         momentum_reps: i64::from(values.momentum_reps),
         assisted_reps: i64::from(values.assisted_reps),
         duration_seconds: values.duration_seconds.map(i64::from),
-        left_weight_kg: values.left.map(|side| side.weight_kg),
+        left_weight_kg: values.left.and_then(|side| side.weight_kg),
         left_reps: values.left.map(|side| i64::from(side.reps)),
         left_duration_seconds: None,
-        right_weight_kg: values.right.map(|side| side.weight_kg),
+        right_weight_kg: values.right.and_then(|side| side.weight_kg),
         right_reps: values.right.map(|side| i64::from(side.reps)),
         right_duration_seconds: None,
         created_at: now.to_owned(),
@@ -320,10 +325,10 @@ fn updated_segment_record(
         momentum_reps: i64::from(values.momentum_reps),
         assisted_reps: i64::from(values.assisted_reps),
         duration_seconds: values.duration_seconds.map(i64::from),
-        left_weight_kg: values.left.map(|side| side.weight_kg),
+        left_weight_kg: values.left.and_then(|side| side.weight_kg),
         left_reps: values.left.map(|side| i64::from(side.reps)),
         left_duration_seconds: None,
-        right_weight_kg: values.right.map(|side| side.weight_kg),
+        right_weight_kg: values.right.and_then(|side| side.weight_kg),
         right_reps: values.right.map(|side| i64::from(side.reps)),
         right_duration_seconds: None,
         updated_at: now.to_owned(),
@@ -350,8 +355,8 @@ fn payload_segments(segment_ids: &[String], values: &[SetSegmentValues]) -> Vec<
         .collect()
 }
 
-fn side_payload(values: SegmentSideValues) -> warrior_core::set_calc::SideValue {
-    warrior_core::set_calc::SideValue {
+fn side_payload(values: SegmentSideValues) -> warrior_core::sync::SetSidePayload {
+    warrior_core::sync::SetSidePayload {
         weight_kg: values.weight_kg,
         reps: values.reps,
         duration_seconds: None,

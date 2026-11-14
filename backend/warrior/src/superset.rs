@@ -4,8 +4,9 @@
 //! 操作は端末の送信待ちの列から届き、`backend/warrior/src/sync.rs` が編集権を検査する。
 //! このモジュールは、同じ編集権の `EXISTS` 条件を各データ文に付け、組の適用と操作 ID の
 //! 保存を同じ `batch()` に入れる (ADR-002、ADR-003)。組の種目は同じトレーニングの
-//! 種目だけを許し、空の組を拒否する。削除は、種目の削除で解散した組の後始末のため、
-//! 既に無い組でも成功として扱う。
+//! 種目だけを許し、2 つ未満の組と、既にほかの組に属する種目を含む組を拒否する。
+//! 並べ替えは組の種目の順序だけを変え、種目の追加、削除、移動を拒否する。
+//! 削除は、種目の削除で解散した組の後始末のため、既に無い組でも成功として扱う。
 
 use serde::Deserialize;
 use warrior_core::sql::{SqlStatement, SqlValue};
@@ -28,6 +29,13 @@ use crate::training_session_exercise::{ownership_condition, ExerciseOwnership};
 struct CountRow {
     /// 件数。
     count: i64,
+}
+
+/// 組の種目の行。
+#[derive(Debug, Deserialize)]
+struct SupersetMemberRow {
+    /// 種目の行の ID。
+    training_exercise_id: String,
 }
 
 /// スーパーセットの操作の batch を組み立てる。
@@ -113,6 +121,28 @@ async fn precheck(
             "a superset member is not in the training",
         )));
     }
+    if let ValidatedPayload::SupersetReorder(payload) = &validated.payload {
+        let current = current_member_ids(db, user_id, training_id, &payload.superset_id).await?;
+        if current.is_empty() {
+            return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+        }
+        if !same_member_ids(&current, member_ids) {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "a reorder cannot change the superset members",
+            )));
+        }
+    }
+    if let ValidatedPayload::SupersetCreate(payload) = &validated.payload {
+        if !members_without_group(db, user_id, training_id, &payload.superset_id, member_ids)
+            .await?
+        {
+            return Ok(Some(response(
+                ErrorCode::Conflict,
+                "a superset member already belongs to a group",
+            )));
+        }
+    }
     Ok(None)
 }
 
@@ -142,6 +172,77 @@ async fn members_in_training(
         .await?
         .map_or(0, |row| row.count);
     Ok(count == i64::try_from(member_ids.len()).unwrap_or(i64::MAX))
+}
+
+/// 組の種目が、同じトレーニングのほかの組に属していないか。
+///
+/// 同じ操作の再送は、作った組自身を除くことで通す。
+async fn members_without_group(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    superset_id: &str,
+    member_ids: &[String],
+) -> Result<bool> {
+    if member_ids.is_empty() {
+        return Ok(true);
+    }
+    let placeholders = vec!["?"; member_ids.len()].join(", ");
+    let mut bindings = vec![
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(training_id.to_owned()),
+        SqlValue::Text(superset_id.to_owned()),
+    ];
+    bindings.extend(member_ids.iter().map(|id| SqlValue::Text(id.clone())));
+    let count = db
+        .first::<CountRow>(&SqlStatement::new(
+            format!(
+                "SELECT COUNT(*) AS count FROM superset_members sm \
+                 JOIN supersets ss ON ss.id = sm.superset_id \
+                 WHERE sm.user_id = ? AND ss.training_id = ? AND ss.id != ? \
+                 AND sm.training_exercise_id IN ({placeholders})"
+            ),
+            bindings,
+        ))
+        .await?
+        .map_or(0, |row| row.count);
+    Ok(count == 0)
+}
+
+/// 組が持つ種目の行の ID を、組の中の順序で返す。
+async fn current_member_ids(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    superset_id: &str,
+) -> Result<Vec<String>> {
+    let result = db
+        .all(&SqlStatement::new(
+            "SELECT sm.training_exercise_id FROM superset_members sm \
+             JOIN supersets ss ON ss.id = sm.superset_id \
+             WHERE sm.user_id = ? AND ss.training_id = ? AND ss.id = ? \
+             ORDER BY sm.position, sm.training_exercise_id",
+            vec![
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+                SqlValue::Text(superset_id.to_owned()),
+            ],
+        ))
+        .await?;
+    Ok(result
+        .results::<SupersetMemberRow>()?
+        .into_iter()
+        .map(|row| row.training_exercise_id)
+        .collect())
+}
+
+/// 2 つの種目の並びが同じ集合か。
+fn same_member_ids(left: &[String], right: &[String]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_unstable();
+    right.sort_unstable();
+    left == right
 }
 
 fn superset_statements(
@@ -404,6 +505,8 @@ fn member_insert_statement(
 
 #[cfg(test)]
 mod tests {
+    //! 対応する要求: `REQ-SET-005`。
+
     use serde_json::json;
     use warrior_core::sql::SqlValue;
     use warrior_core::sync::{

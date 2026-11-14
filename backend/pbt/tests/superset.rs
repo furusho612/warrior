@@ -1,56 +1,11 @@
-//! 左右別のセットとスーパーセットの組の性質テスト。
+//! スーパーセットの組の性質テスト。
 //!
-//! 対応する要求: `REQ-SET-004`、`REQ-SET-005`。
-//! 左右別のセットの総重量が左右の合算であり、レストタイマーが組の最後の種目の
-//! 完了のときだけ起動し、種目の削除と並べ替えの後も組の種目が同じトレーニングに
-//! 属し、空にならないことを確かめる。
+//! 対応する要求: `REQ-SET-005`。
+//! レストタイマーが組の最後の種目の完了のときだけ起動し、種目の削除と並べ替えの
+//! 後も組の種目が同じトレーニングに属し、2 つ未満にならないことを確かめる。
 
 use proptest::prelude::*;
-use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord, SetSegment, SideValue};
 use warrior_core::superset::{rest_timer_starts, SupersetMembers};
-
-fn key() -> BestKey {
-    BestKey {
-        exercise_id: "unilateral".to_owned(),
-        grip: None,
-        attachment: None,
-    }
-}
-
-fn side(weight_kg: f64, reps: u32) -> SideValue {
-    SideValue {
-        weight_kg,
-        reps,
-        duration_seconds: None,
-    }
-}
-
-fn side_segments() -> impl Strategy<Value = (Vec<SetSegment>, f64)> {
-    prop::collection::vec(
-        (0.5f64..=300.0, 1u32..=20, 0.5f64..=300.0, 1u32..=20),
-        1..=4,
-    )
-    .prop_map(|rows| {
-        let mut expected = 0.0;
-        let segments = rows
-            .into_iter()
-            .map(|(left_weight, left_reps, right_weight, right_reps)| {
-                expected += left_weight * f64::from(left_reps);
-                expected += right_weight * f64::from(right_reps);
-                SetSegment {
-                    weight_kg: 0.0,
-                    reps: 0,
-                    momentum_reps: 0,
-                    assisted_reps: 0,
-                    left: Some(side(left_weight, left_reps)),
-                    right: Some(side(right_weight, right_reps)),
-                    duration_seconds: None,
-                }
-            })
-            .collect();
-        (segments, expected)
-    })
-}
 
 fn unique_members() -> impl Strategy<Value = Vec<String>> {
     prop::sample::subsequence(
@@ -63,23 +18,6 @@ fn unique_members() -> impl Strategy<Value = Vec<String>> {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
-
-    #[test]
-    fn the_total_of_a_unilateral_set_is_the_sum_of_both_sides(
-        (segments, expected) in side_segments(),
-        kind in prop_oneof![Just(SetKind::Normal), Just(SetKind::Drop)],
-    ) {
-        let record = SetRecord::new(
-            key(),
-            kind,
-            segments,
-            None,
-            None,
-            RecordMode::WeightAndReps,
-        )
-        .expect("a valid unilateral set");
-        prop_assert!((record.total_weight_kg() - expected).abs() < 1e-9);
-    }
 
     #[test]
     fn the_rest_timer_starts_only_for_the_last_member(
@@ -123,12 +61,11 @@ proptest! {
             for member in updated.as_slice() {
                 prop_assert!(order.contains(member));
             }
-            let mut expected = order
+            let expected = order
                 .iter()
                 .filter(|id| members.as_slice().contains(id))
                 .cloned()
                 .collect::<Vec<_>>();
-            expected.dedup();
             prop_assert_eq!(updated.as_slice(), expected.as_slice());
         } else {
             let remaining = order
@@ -153,6 +90,12 @@ proptest! {
             for member in updated.as_slice() {
                 prop_assert!(remaining.contains(member));
             }
+        } else {
+            let remaining_count = remaining
+                .iter()
+                .filter(|id| members.as_slice().contains(id))
+                .count();
+            prop_assert!(remaining_count < 2);
         }
     }
 }

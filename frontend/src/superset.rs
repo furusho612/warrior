@@ -2,7 +2,7 @@
 //!
 //! 対応する要求: `REQ-SET-005`。
 //! 組は種目の行の ID を順序付きで持ち、端末で作った UUID v4 を ID にする (ADR-002)。
-//! 操作の ID と順序は保存のときに `frontend/src/storage` が決める。
+//! 操作の順序は保存のときに `frontend/src/storage` が決める。
 
 use warrior_core::superset::SupersetMembers;
 use warrior_core::sync::{

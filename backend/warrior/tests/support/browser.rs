@@ -472,6 +472,52 @@ pub async fn eval_string(
         .to_owned()
 }
 
+/// 画面のセットの行の ID を並べる。
+pub async fn set_ids(driver: &WebDriver) -> Vec<String> {
+    let value = eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         done(JSON.stringify(Array.from(document.querySelectorAll('[data-set-row]')) \
+           .map((element) => element.getAttribute('data-set-id'))));",
+        Vec::new(),
+    )
+    .await;
+    value
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 要素が有効になるまで待つ。
+pub async fn wait_for_enabled(driver: &WebDriver, selector: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let enabled = eval_json(
+            driver,
+            "const done = arguments[arguments.length - 1]; \
+             const element = document.querySelector(arguments[0]); \
+             done(JSON.stringify(element ? !element.disabled : false));",
+            vec![serde_json::json!(selector)],
+        )
+        .await
+        .as_bool()
+        .unwrap_or(false);
+        if enabled {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the element {selector} did not become enabled"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 /// OS に空きポートを選ばせる。
 pub fn free_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a free port must be available");

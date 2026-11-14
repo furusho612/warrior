@@ -131,28 +131,40 @@ fn seed_unfinished_session(server: &DevServer) {
         ))
         .expect("the unfinished session must be seeded");
     let snapshot = bench_snapshot();
-    for sql in [
-        format!(
+    server
+        .execute_d1_json(&format!(
             "INSERT INTO training_exercises \
              (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
              VALUES ('{UNFINISHED_ROW_ID}', '{USER_ID}', '{UNFINISHED_TRAINING_ID}', \
               '{BENCH_EXERCISE_ID}', '{}', 1, '2026-11-13T03:00:00Z', \
               '2026-11-13T03:00:00Z')",
             json_literal(&snapshot)
-        ),
-        seed_set_sql(UNFINISHED_ROW_ID, UNFINISHED_SET_ID, 1, "normal", None),
-        seed_segment_sql(
-            UNFINISHED_SET_ID,
-            UNFINISHED_SEGMENT_ID,
-            Some(999.0),
-            Some(5),
-            None,
-        ),
-    ] {
-        server
-            .execute_d1_json(&sql)
-            .expect("the unfinished set must be seeded");
-    }
+        ))
+        .expect("the unfinished exercise must be seeded");
+    record_common::seed_set(
+        server,
+        record_common::SetSeed {
+            set_id: UNFINISHED_SET_ID,
+            user_id: USER_ID,
+            training_exercise_id: UNFINISHED_ROW_ID,
+            position: 1,
+            kind: "normal",
+            completed: 1,
+            grip: None,
+        },
+    );
+    record_common::seed_segment(
+        server,
+        record_common::SegmentSeed {
+            segment_id: UNFINISHED_SEGMENT_ID,
+            user_id: USER_ID,
+            set_id: UNFINISHED_SET_ID,
+            position: 1,
+            weight_kg: Some(999.0),
+            reps: Some(5),
+            duration_seconds: None,
+        },
+    );
 }
 
 enum PastSets {
@@ -546,68 +558,40 @@ pub(crate) fn position(server: &DevServer, training_exercise_id: &str) -> i64 {
 
 pub(crate) fn seed_other_training_exercise(server: &DevServer) {
     let snapshot = bench_snapshot();
-    for sql in [
-        format!(
+    server
+        .execute_d1_json(&format!(
             "INSERT INTO training_exercises \
              (id, user_id, training_id, exercise_id, snapshot, position, created_at, updated_at) \
              VALUES ('{OTHER_TRAINING_ROW_ID}', '{USER_ID}', '{FINISHED_TRAINING_ID}', \
               '{BENCH_EXERCISE_ID}', '{}', 1, '2026-01-01T00:00:00Z', \
               '2026-01-01T00:00:00Z')",
             json_literal(&snapshot)
-        ),
-        seed_set_sql(
-            OTHER_TRAINING_ROW_ID,
-            OTHER_TRAINING_SET_ID,
-            1,
-            "normal",
-            None,
-        ),
-        seed_segment_sql(
-            OTHER_TRAINING_SET_ID,
-            OTHER_TRAINING_SEGMENT_ID,
-            Some(60.0),
-            Some(10),
-            None,
-        ),
-    ] {
-        server
-            .execute_d1_json(&sql)
-            .expect("the other training exercise must be seeded");
-    }
-}
-
-pub(crate) fn seed_set_sql(
-    training_exercise_id: &str,
-    set_id: &str,
-    position: i64,
-    kind: &str,
-    grip: Option<&str>,
-) -> String {
-    format!(
-        "INSERT INTO sets (id, user_id, training_exercise_id, position, kind, completed, grip, created_at, updated_at) \
-         VALUES ('{set_id}', '{USER_ID}', '{training_exercise_id}', {position}, '{kind}', 1, {}, \
-          '2026-11-12T03:00:00Z', '2026-11-12T03:00:00Z')",
-        sql_text(grip)
-    )
-}
-
-pub(crate) fn seed_segment_sql(
-    set_id: &str,
-    segment_id: &str,
-    weight_kg: Option<f64>,
-    reps: Option<i64>,
-    duration_seconds: Option<i64>,
-) -> String {
-    format!(
-        "INSERT INTO set_segments \
-         (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, \
-          duration_seconds, created_at, updated_at) \
-         VALUES ('{segment_id}', '{USER_ID}', '{set_id}', 1, {}, {}, 0, 0, {}, \
-          '2026-11-12T03:00:00Z', '2026-11-12T03:00:00Z')",
-        sql_number(weight_kg),
-        sql_number(reps),
-        sql_number(duration_seconds)
-    )
+        ))
+        .expect("the other training exercise must be seeded");
+    record_common::seed_set(
+        server,
+        record_common::SetSeed {
+            set_id: OTHER_TRAINING_SET_ID,
+            user_id: USER_ID,
+            training_exercise_id: OTHER_TRAINING_ROW_ID,
+            position: 1,
+            kind: "normal",
+            completed: 1,
+            grip: None,
+        },
+    );
+    record_common::seed_segment(
+        server,
+        record_common::SegmentSeed {
+            segment_id: OTHER_TRAINING_SEGMENT_ID,
+            user_id: USER_ID,
+            set_id: OTHER_TRAINING_SET_ID,
+            position: 1,
+            weight_kg: Some(60.0),
+            reps: Some(10),
+            duration_seconds: None,
+        },
+    );
 }
 
 fn bench_snapshot() -> Value {

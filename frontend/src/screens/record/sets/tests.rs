@@ -1,6 +1,7 @@
 //! セットの入力と表のブラウザテスト。
 //!
-//! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-006`、`REQ-SET-007`。
+//! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-004`、`REQ-SET-006`、
+//! `REQ-SET-007`。
 
 use warrior_core::exercise::Laterality;
 use warrior_core::previous::PreviousSet;
@@ -10,7 +11,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
 use super::{
-    detail_open_label, parse_count_or_zero, previous_values, set_numbers, SegmentView, SetView,
+    detail_open_label, needs_segment_confirmation, parse_count_or_zero, previous_values,
+    set_numbers, SegmentView, SetView,
 };
 use crate::text::Key;
 
@@ -103,6 +105,37 @@ fn copies_every_segment_of_a_previous_drop_set() {
 }
 
 #[wasm_bindgen_test]
+fn drop_sets_do_not_take_a_set_number() {
+    let rows = vec![set_view("normal"), set_view("drop"), set_view("normal")];
+    assert_eq!(set_numbers(&rows), vec![Some(1), None, Some(2)]);
+}
+
+#[wasm_bindgen_test]
+fn a_drop_set_with_two_segments_asks_before_changing_the_kind() {
+    assert!(needs_segment_confirmation(
+        SetKind::Drop,
+        SetKind::Normal,
+        2
+    ));
+    assert!(needs_segment_confirmation(
+        SetKind::Drop,
+        SetKind::Warmup,
+        3
+    ));
+    assert!(!needs_segment_confirmation(
+        SetKind::Drop,
+        SetKind::Normal,
+        1
+    ));
+    assert!(!needs_segment_confirmation(SetKind::Drop, SetKind::Drop, 2));
+    assert!(!needs_segment_confirmation(
+        SetKind::Normal,
+        SetKind::Warmup,
+        2
+    ));
+}
+
+#[wasm_bindgen_test]
 fn copies_both_sides_of_a_unilateral_set() {
     let mut previous = previous_set(Some(70.0), 0.0);
     previous.segments[0].left = Some(SideValue {
@@ -122,16 +155,25 @@ fn copies_both_sides_of_a_unilateral_set() {
         Laterality::Unilateral,
     )
     .expect("the previous values");
-    assert_eq!(values.segments[0].left.unwrap().weight_kg, 10.0);
+    assert_eq!(values.segments[0].left.unwrap().weight_kg, Some(10.0));
     assert_eq!(values.segments[0].left.unwrap().reps, 5);
-    assert_eq!(values.segments[0].right.unwrap().weight_kg, 5.0);
+    assert_eq!(values.segments[0].right.unwrap().weight_kg, Some(5.0));
     assert_eq!(values.segments[0].right.unwrap().reps, 4);
 }
 
 #[wasm_bindgen_test]
-fn drop_sets_do_not_take_a_set_number() {
-    let rows = vec![set_view("normal"), set_view("drop"), set_view("normal")];
-    assert_eq!(set_numbers(&rows), vec![Some(1), None, Some(2)]);
+fn a_unilateral_weight_needs_an_explicit_weight_to_complete() {
+    let mut view = set_view("normal");
+    view.segments.push(segment_view("", "5", "", "4"));
+    assert!(!view.can_complete(RecordMode::WeightAndReps, true));
+
+    view.segments[0].left_weight = "0".to_owned();
+    view.segments[0].right_weight = "0".to_owned();
+    assert!(view.can_complete(RecordMode::WeightAndReps, true));
+
+    let mut bodyweight = set_view("normal");
+    bodyweight.segments.push(segment_view("", "5", "", "4"));
+    assert!(bodyweight.can_complete(RecordMode::BodyweightAndReps, true));
 }
 
 #[wasm_bindgen_test]
@@ -178,7 +220,7 @@ fn req_set_006_the_drawer_rejects_a_breakdown_of_invalid_counts() {
         ("x", "0"),
         ("0", "-1"),
     ] {
-        let mut segment = segment_view();
+        let mut segment = breakdown_segment();
         segment.momentum = momentum.to_owned();
         segment.assisted = assisted.to_owned();
         assert!(
@@ -186,48 +228,57 @@ fn req_set_006_the_drawer_rejects_a_breakdown_of_invalid_counts() {
             "the invalid counts {momentum} and {assisted} must be rejected"
         );
     }
-    let mut equal = segment_view();
+    let mut equal = breakdown_segment();
     equal.momentum = "3".to_owned();
     equal.assisted = "2".to_owned();
     assert!(!equal.breakdown_invalid(false));
-    let mut empty = segment_view();
-    empty.momentum = String::new();
-    empty.assisted = String::new();
+    let empty = breakdown_segment();
     assert!(!empty.breakdown_invalid(false));
     let mut over = equal.clone();
     over.assisted = "3".to_owned();
     assert!(over.breakdown_invalid(false));
 }
 
-fn segment_view() -> SegmentView {
+fn breakdown_segment() -> SegmentView {
+    let mut segment = segment_view("", "5", "", "4");
+    segment.reps = "5".to_owned();
+    segment
+}
+
+fn segment_view(
+    left_weight: &str,
+    left_reps: &str,
+    right_weight: &str,
+    right_reps: &str,
+) -> SegmentView {
     SegmentView {
         record: SetSegmentRecord {
             id: "segment".to_owned(),
             set_id: "set".to_owned(),
             position: 1,
-            weight_kg: Some(100.0),
-            reps: Some(5),
+            weight_kg: Some(0.0),
+            reps: Some(0),
             momentum_reps: 0,
             assisted_reps: 0,
             duration_seconds: None,
             left_weight_kg: None,
-            left_reps: None,
+            left_reps: Some(0),
             left_duration_seconds: None,
             right_weight_kg: None,
-            right_reps: None,
+            right_reps: Some(0),
             right_duration_seconds: None,
             created_at: "2026-11-12T00:00:00Z".to_owned(),
             updated_at: "2026-11-12T00:00:00Z".to_owned(),
         },
-        weight: "100".to_owned(),
-        reps: "5".to_owned(),
+        weight: String::new(),
+        reps: String::new(),
         momentum: String::new(),
         assisted: String::new(),
         duration: String::new(),
-        left_weight: String::new(),
-        left_reps: String::new(),
-        right_weight: String::new(),
-        right_reps: String::new(),
+        left_weight: left_weight.to_owned(),
+        left_reps: left_reps.to_owned(),
+        right_weight: right_weight.to_owned(),
+        right_reps: right_reps.to_owned(),
     }
 }
 
