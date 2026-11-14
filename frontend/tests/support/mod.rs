@@ -10,6 +10,8 @@ use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 use warrior_core::training_session::SessionSource;
 use warrior_frontend::storage::{Storage, Store};
 
+pub mod exercise_tree;
+
 thread_local! {
     static SEQUENCE: Cell<u32> = const { Cell::new(0) };
 }

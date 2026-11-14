@@ -18,6 +18,7 @@ pub mod browser;
 pub mod ownership;
 pub mod record_browser;
 pub mod record_common;
+pub mod record_unilateral_superset;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
