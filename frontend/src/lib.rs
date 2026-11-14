@@ -18,6 +18,7 @@ pub mod record_rail;
 pub mod routes;
 pub mod screens;
 pub mod storage;
+pub mod superset;
 pub mod sync;
 pub mod text;
 pub mod theme;

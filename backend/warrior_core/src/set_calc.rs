@@ -445,6 +445,8 @@ pub enum SetValidationError {
     MissingDuration,
     /// 時間を記録するセットの親と段の両方に時間がある。
     ConflictingDuration,
+    /// 左右別の段で、左右の片方だけに値がある。
+    MissingSide,
 }
 
 /// ストリクト回数。回数から反動と補助を引き、0 を下回らない。
@@ -608,7 +610,10 @@ pub(crate) fn validate_rpe(rpe: Option<f64>) -> Result<(), SetValidationError> {
 }
 
 fn validate_weight_segment(segment: &SetSegment) -> Result<(), SetValidationError> {
-    let has_sides = segment.left.is_some() || segment.right.is_some();
+    if segment.left.is_some() != segment.right.is_some() {
+        return Err(SetValidationError::MissingSide);
+    }
+    let has_sides = segment.left.is_some();
     if !has_sides {
         if !segment.weight_kg.is_finite() || segment.weight_kg < 0.0 {
             return Err(SetValidationError::InvalidWeight);
@@ -838,6 +843,68 @@ mod tests {
             estimated_one_rep_max(100.0, 10)
         );
         assert_eq!(record.counted_sets(), 1.0);
+    }
+
+    #[test]
+    fn a_unilateral_segment_needs_both_sides() {
+        let segment = SetSegment {
+            weight_kg: 0.0,
+            reps: 0,
+            momentum_reps: 0,
+            assisted_reps: 0,
+            left: Some(SideValue {
+                weight_kg: 10.0,
+                reps: 5,
+                duration_seconds: None,
+            }),
+            right: None,
+            duration_seconds: None,
+        };
+        assert_eq!(
+            SetRecord::new(
+                key(),
+                SetKind::Normal,
+                vec![segment],
+                None,
+                None,
+                RecordMode::WeightAndReps,
+            ),
+            Err(SetValidationError::MissingSide)
+        );
+    }
+
+    #[test]
+    fn a_unilateral_drop_set_sums_both_sides_of_every_segment() {
+        let side_segment = |left: (f64, u32), right: (f64, u32)| SetSegment {
+            weight_kg: 0.0,
+            reps: 0,
+            momentum_reps: 0,
+            assisted_reps: 0,
+            left: Some(SideValue {
+                weight_kg: left.0,
+                reps: left.1,
+                duration_seconds: None,
+            }),
+            right: Some(SideValue {
+                weight_kg: right.0,
+                reps: right.1,
+                duration_seconds: None,
+            }),
+            duration_seconds: None,
+        };
+        let record = record(
+            SetKind::Drop,
+            vec![
+                side_segment((10.0, 5), (12.0, 4)),
+                side_segment((8.0, 6), (9.0, 5)),
+            ],
+        );
+        assert_eq!(record.total_weight_kg(), 50.0 + 48.0 + 48.0 + 45.0);
+        assert_eq!(record.max_weight_kg(), Some(12.0));
+        assert_eq!(
+            record.estimated_one_rep_max(),
+            estimated_one_rep_max(12.0, 4)
+        );
     }
 
     #[test]

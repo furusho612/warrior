@@ -212,16 +212,21 @@ impl SetSegmentPayload {
         }
     }
 
-    /// 段に記録する値があるか。
-    pub fn has_values(&self) -> bool {
-        self.reps > 0
-            || self.duration_seconds.is_some_and(|duration| duration > 0)
-            || [self.left.as_ref(), self.right.as_ref()]
-                .into_iter()
-                .flatten()
-                .any(|side| {
-                    side.reps > 0 || side.duration_seconds.is_some_and(|duration| duration > 0)
-                })
+    /// 段が完了に必要な値を持つか。
+    ///
+    /// 左右別の段は左右の両方に回数または時間があることを求める。
+    pub fn is_complete(&self) -> bool {
+        match (self.left.as_ref(), self.right.as_ref()) {
+            (Some(left), Some(right)) => {
+                (left.reps > 0 && right.reps > 0)
+                    || (left.duration_seconds.is_some_and(|duration| duration > 0)
+                        && right.duration_seconds.is_some_and(|duration| duration > 0))
+            }
+            (None, None) => {
+                self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
+            }
+            (Some(_), None) | (None, Some(_)) => false,
+        }
     }
 }
 
@@ -735,11 +740,35 @@ mod tests {
     }
 
     #[test]
-    fn segments_report_whether_they_have_values() {
+    fn segments_report_whether_they_are_complete() {
         let mut empty = segment();
         empty.reps = 0;
         empty.weight_kg = 0.0;
-        assert!(!empty.has_values());
-        assert!(segment().has_values());
+        assert!(!empty.is_complete());
+        assert!(segment().is_complete());
+
+        let mut one_side = segment();
+        one_side.reps = 0;
+        one_side.left = Some(crate::set_calc::SideValue {
+            weight_kg: 10.0,
+            reps: 5,
+            duration_seconds: None,
+        });
+        assert!(!one_side.is_complete());
+
+        one_side.right = Some(crate::set_calc::SideValue {
+            weight_kg: 10.0,
+            reps: 4,
+            duration_seconds: None,
+        });
+        assert!(one_side.is_complete());
+
+        let mut empty_side = one_side.clone();
+        empty_side.right = Some(crate::set_calc::SideValue {
+            weight_kg: 10.0,
+            reps: 0,
+            duration_seconds: None,
+        });
+        assert!(!empty_side.is_complete());
     }
 }

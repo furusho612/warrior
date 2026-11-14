@@ -83,7 +83,11 @@ async fn an_exercise_creation_and_deletion_use_the_outbox_and_remove_the_tree() 
         ),
         (
             Store::SupersetMembers,
-            json!({"superset_id": EXERCISE_SUPERSET_ID, "training_exercise_id": EXERCISE_ROW_ID}),
+            json!({
+                "superset_id": EXERCISE_SUPERSET_ID,
+                "training_exercise_id": EXERCISE_ROW_ID,
+                "position": 1
+            }),
         ),
     ] {
         storage
@@ -113,10 +117,13 @@ async fn an_exercise_creation_and_deletion_use_the_outbox_and_remove_the_tree() 
         .expect("the members must be readable")
         .is_empty());
     let entries = storage.outbox_entries().await.expect("the outbox");
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 3);
     assert!(entries
         .iter()
         .any(|entry| entry.operation.kind == OperationKind::TrainingExerciseDelete));
+    assert!(entries
+        .iter()
+        .any(|entry| entry.operation.kind == OperationKind::SupersetDelete));
 
     storage
         .clear_account()

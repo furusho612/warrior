@@ -56,6 +56,15 @@ struct SetOwnerRow {
 
 /// 段のある値の件数。
 #[derive(Debug, Deserialize)]
+struct SetValueRow {
+    /// 段の件数。
+    segments: i64,
+    /// 完了に必要な値を持つ段の件数。
+    ready: i64,
+}
+
+/// 行の件数。
+#[derive(Debug, Deserialize)]
 struct CountRow {
     /// 件数。
     count: i64,
@@ -151,7 +160,10 @@ async fn precheck(
         | ValidatedPayload::Update(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_) => Ok(None),
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => Ok(None),
     }
 }
 
@@ -331,7 +343,10 @@ fn set_statements(
         | ValidatedPayload::Update(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_) => None,
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => None,
     }
 }
 
@@ -387,7 +402,7 @@ fn update_set_statement(
     now: &str,
 ) -> SqlStatement {
     let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
-    let completed = payload.completed && segments_have_values(&payload.segments);
+    let completed = payload.completed && segments_are_complete(&payload.segments);
     let mut bindings = vec![
         SqlValue::Integer(payload.position),
         SqlValue::Text(payload.kind.as_str().to_owned()),
@@ -613,10 +628,10 @@ fn segment_bindings(
         optional_integer(segment.duration_seconds.map(i64::from)),
     ];
     for side in [segment.left.as_ref(), segment.right.as_ref()] {
-        bindings.push(SqlValue::Real(side.map_or(0.0, |side| side.weight_kg)));
-        bindings.push(SqlValue::Integer(
-            side.map_or(0, |side| i64::from(side.reps)),
-        ));
+        bindings.push(side.map_or(SqlValue::Null, |side| SqlValue::Real(side.weight_kg)));
+        bindings.push(side.map_or(SqlValue::Null, |side| {
+            SqlValue::Integer(i64::from(side.reps))
+        }));
         bindings.push(optional_integer(
             side.and_then(|side| side.duration_seconds).map(i64::from),
         ));
@@ -816,25 +831,29 @@ fn drop_position_rejection() -> Response {
 }
 
 async fn completed_set_has_values(db: &Db, user_id: &str, set_id: &str) -> Result<bool> {
-    let count = db
-        .first::<CountRow>(&SqlStatement::new(
-            "SELECT COUNT(*) AS count FROM set_segments \
-             WHERE set_id = ? AND user_id = ? \
-             AND (reps > 0 OR duration_seconds > 0 \
-              OR left_reps > 0 OR right_reps > 0 \
-              OR left_duration_seconds > 0 OR right_duration_seconds > 0)",
+    let row = db
+        .first::<SetValueRow>(&SqlStatement::new(
+            "SELECT COUNT(*) AS segments, \
+             COALESCE(SUM(CASE WHEN \
+              (left_weight_kg IS NULL AND left_reps IS NULL \
+               AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
+               AND right_reps IS NULL AND right_duration_seconds IS NULL) \
+              AND (reps > 0 OR duration_seconds > 0) THEN 1 \
+              WHEN left_reps > 0 AND right_reps > 0 THEN 1 \
+              WHEN left_duration_seconds > 0 AND right_duration_seconds > 0 THEN 1 \
+              ELSE 0 END), 0) AS ready \
+             FROM set_segments WHERE set_id = ? AND user_id = ?",
             vec![
                 SqlValue::Text(set_id.to_owned()),
                 SqlValue::Text(user_id.to_owned()),
             ],
         ))
-        .await?
-        .map_or(0, |row| row.count);
-    Ok(count > 0)
+        .await?;
+    Ok(row.is_some_and(|row| row.segments > 0 && row.ready == row.segments))
 }
 
-fn segments_have_values(segments: &[SetSegmentPayload]) -> bool {
-    segments.iter().any(SetSegmentPayload::has_values)
+fn segments_are_complete(segments: &[SetSegmentPayload]) -> bool {
+    !segments.is_empty() && segments.iter().all(SetSegmentPayload::is_complete)
 }
 
 fn same_set_ids(current: &[String], ordered: &[String]) -> bool {

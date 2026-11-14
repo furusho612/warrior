@@ -286,8 +286,8 @@ fn segment_bindings_keep_the_sides_and_the_durations() {
     assert_eq!(bindings[9], SqlValue::Real(10.0));
     assert_eq!(bindings[10], SqlValue::Integer(4));
     assert_eq!(bindings[11], SqlValue::Integer(20));
-    assert_eq!(bindings[12], SqlValue::Real(0.0));
-    assert_eq!(bindings[13], SqlValue::Integer(0));
+    assert_eq!(bindings[12], SqlValue::Null);
+    assert_eq!(bindings[13], SqlValue::Null);
     assert_eq!(bindings[14], SqlValue::Null);
     assert_eq!(bindings[15], SqlValue::Text(NOW.to_owned()));
 }

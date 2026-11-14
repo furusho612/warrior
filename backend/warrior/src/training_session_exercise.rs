@@ -468,6 +468,11 @@ pub fn delete_statements(
         SqlValue::Text(user_id.to_owned()),
     ];
     members.extend(condition_bindings.iter().cloned());
+    let mut supersets = vec![
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(training_id.to_owned()),
+    ];
+    supersets.extend(condition_bindings.iter().cloned());
     let mut exercise = vec![
         SqlValue::Text(payload.training_exercise_id.clone()),
         SqlValue::Text(user_id.to_owned()),
@@ -500,6 +505,15 @@ pub fn delete_statements(
                   AND user_id = ?) AND {condition}"
             ),
             members,
+        ),
+        SqlStatement::new(
+            format!(
+                "DELETE FROM supersets WHERE user_id = ? AND training_id = ? \
+                 AND (SELECT COUNT(*) FROM superset_members sm \
+                  WHERE sm.superset_id = supersets.id AND sm.user_id = supersets.user_id) < 2 \
+                 AND {condition}"
+            ),
+            supersets,
         ),
         SqlStatement::new(
             format!(
@@ -643,7 +657,7 @@ mod tests {
             },
             ExerciseOwnership::Finished,
         );
-        assert_eq!(statements.len(), 4);
+        assert_eq!(statements.len(), 5);
         for statement in &statements {
             assert!(statement
                 .sql()
@@ -655,12 +669,17 @@ mod tests {
         assert!(statements[1].sql().contains("training_id = ?"));
         assert!(statements[2].sql().contains("superset_members"));
         assert!(statements[2].sql().contains("training_id = ?"));
+        assert!(statements[3].sql().contains("DELETE FROM supersets"));
         assert!(statements[3]
             .sql()
+            .contains("sm.superset_id = supersets.id"));
+        assert!(statements[3].sql().contains(") < 2"));
+        assert!(statements[4]
+            .sql()
             .contains("DELETE FROM training_exercises"));
-        assert!(statements[3].sql().contains("training_id = ?"));
+        assert!(statements[4].sql().contains("training_id = ?"));
         assert_eq!(
-            statements[3].bindings()[2],
+            statements[4].bindings()[2],
             SqlValue::Text(TRAINING_ID.to_owned())
         );
     }

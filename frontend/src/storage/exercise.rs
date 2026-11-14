@@ -2,11 +2,13 @@
 
 use js_sys::Array;
 use serde::Deserialize;
+use warrior_core::superset::SupersetMembers;
 use warrior_core::sync::{unresolved_create, Operation, OperationKind, OutboxEntry, OutboxState};
-use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
+use warrior_core::training_record::{SupersetMemberRecord, TrainingExerciseRecord, TrainingRecord};
 use wasm_bindgen::JsValue;
 use web_sys::{IdbObjectStore, IdbTransactionMode};
 
+use super::superset::{delete_members, read_superset_rows};
 use super::{abort, indexeddb, outbox, put_rows, Storage, StorageError, Store, StoredSuperset};
 
 impl Storage {
@@ -92,6 +94,7 @@ impl Storage {
                 Store::TrainingExercises.name(),
                 Store::Sets.name(),
                 Store::SetSegments.name(),
+                Store::Supersets.name(),
                 Store::SupersetMembers.name(),
                 Store::Outbox.name(),
                 Store::Meta.name(),
@@ -108,11 +111,30 @@ impl Storage {
                 "the exercise does not exist in the training".to_owned(),
             ));
         };
+        let affected = superset_ids_for_exercise(&transaction, &stored.id).await?;
         if let Err(error) = delete_training_exercise_rows(&transaction, &stored.id).await {
             return abort(transaction, error).await;
         }
+        let order = exercise_order(&transaction, training_id).await?;
+        let group_operations =
+            match sync_supersets_after_change(&transaction, training_id, &affected, &order).await {
+                Ok(operations) => operations,
+                Err(error) => return abort(transaction, error).await,
+            };
         if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
             return abort(transaction, error).await;
+        }
+        for group_operation in &group_operations {
+            if let Err(error) = enqueue_child_operation(
+                &outbox_store,
+                &meta,
+                group_operation,
+                &operation.operation_id,
+            )
+            .await
+            {
+                return abort(transaction, error).await;
+            }
         }
         transaction.finish().await
     }
@@ -136,12 +158,15 @@ impl Storage {
             &database,
             &[
                 Store::TrainingExercises.name(),
+                Store::Supersets.name(),
+                Store::SupersetMembers.name(),
                 Store::Outbox.name(),
                 Store::Meta.name(),
             ],
             IdbTransactionMode::Readwrite,
         )?;
         let exercises = transaction.store(Store::TrainingExercises.name())?;
+        let supersets = transaction.store(Store::Supersets.name())?;
         let stored = read_rows::<TrainingExerciseRecord>(&exercises).await?;
         let outbox_store = transaction.store(Store::Outbox.name())?;
         let meta = transaction.store(Store::Meta.name())?;
@@ -163,6 +188,35 @@ impl Storage {
         }
         if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
             return abort(transaction, error).await;
+        }
+        let superset_ids = read_superset_rows(&supersets)
+            .await?
+            .into_iter()
+            .filter(|superset| superset.training_id == training_id)
+            .map(|superset| superset.id)
+            .collect::<Vec<_>>();
+        let group_operations = match sync_supersets_after_change(
+            &transaction,
+            training_id,
+            &superset_ids,
+            ordered_ids,
+        )
+        .await
+        {
+            Ok(operations) => operations,
+            Err(error) => return abort(transaction, error).await,
+        };
+        for group_operation in &group_operations {
+            if let Err(error) = enqueue_child_operation(
+                &outbox_store,
+                &meta,
+                group_operation,
+                &operation.operation_id,
+            )
+            .await
+            {
+                return abort(transaction, error).await;
+            }
         }
         transaction.finish().await
     }
@@ -258,6 +312,7 @@ async fn restore_training_exercise_steps(
                 .any(|member| member.training_exercise_id == training_exercise_id)
         })
         .collect::<Vec<_>>();
+    let members_store = transaction.store(Store::SupersetMembers.name())?;
     let stored_supersets = supersets
         .iter()
         .map(|superset| StoredSuperset {
@@ -268,12 +323,14 @@ async fn restore_training_exercise_steps(
             updated_at: &superset.updated_at,
         })
         .collect::<Vec<_>>();
+    for superset in &supersets {
+        delete_members(&members_store, &superset.id).await?;
+    }
+    put_rows(transaction, Store::Supersets, &stored_supersets).await?;
     let members = supersets
         .iter()
         .flat_map(|superset| superset.members.iter())
-        .filter(|member| member.training_exercise_id == training_exercise_id)
         .collect::<Vec<_>>();
-    put_rows(transaction, Store::Supersets, &stored_supersets).await?;
     put_rows(transaction, Store::SupersetMembers, &members).await?;
     Ok(())
 }
@@ -298,6 +355,137 @@ async fn restore_training_exercise_positions_steps(
         indexeddb::put(&store, &indexeddb::to_js(&updated)?).await?;
     }
     Ok(())
+}
+
+async fn superset_ids_for_exercise(
+    transaction: &indexeddb::Transaction,
+    training_exercise_id: &str,
+) -> Result<Vec<String>, StorageError> {
+    let store = transaction.store(Store::SupersetMembers.name())?;
+    let members = read_rows::<SupersetMemberRecord>(&store).await?;
+    let mut ids = Vec::new();
+    for member in members
+        .iter()
+        .filter(|member| member.training_exercise_id == training_exercise_id)
+    {
+        if !ids.contains(&member.superset_id) {
+            ids.push(member.superset_id.clone());
+        }
+    }
+    Ok(ids)
+}
+
+async fn exercise_order(
+    transaction: &indexeddb::Transaction,
+    training_id: &str,
+) -> Result<Vec<String>, StorageError> {
+    let store = transaction.store(Store::TrainingExercises.name())?;
+    let mut rows = read_rows::<TrainingExerciseRecord>(&store)
+        .await?
+        .into_iter()
+        .filter(|row| row.training_id == training_id)
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        left.position
+            .cmp(&right.position)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(rows.into_iter().map(|row| row.id).collect())
+}
+
+/// 種目の削除と並べ替えの後に、組の種目を種目の順序へ合わせる。
+///
+/// 組の種目が 2 つ未満になったときは組を解散し、送信待ちの列に積む操作を返す。
+async fn sync_supersets_after_change(
+    transaction: &indexeddb::Transaction,
+    training_id: &str,
+    superset_ids: &[String],
+    exercise_order: &[String],
+) -> Result<Vec<Operation>, StorageError> {
+    let supersets_store = transaction.store(Store::Supersets.name())?;
+    let members_store = transaction.store(Store::SupersetMembers.name())?;
+    let stored_supersets = read_superset_rows(&supersets_store).await?;
+    let members = read_rows::<SupersetMemberRecord>(&members_store).await?;
+    let mut operations = Vec::new();
+    for superset_id in superset_ids {
+        let mut current = members
+            .iter()
+            .filter(|member| member.superset_id == *superset_id)
+            .collect::<Vec<_>>();
+        current.sort_by(|left, right| {
+            left.position
+                .cmp(&right.position)
+                .then_with(|| left.training_exercise_id.cmp(&right.training_exercise_id))
+        });
+        let current_ids = current
+            .iter()
+            .map(|member| member.training_exercise_id.clone())
+            .collect::<Vec<_>>();
+        let updated = SupersetMembers::new(current_ids.clone())
+            .ok()
+            .and_then(|members| members.after_exercise_change(exercise_order));
+        match updated {
+            Some(updated) if updated.as_slice() != current_ids.as_slice() => {
+                let operation = crate::superset::reorder(training_id, superset_id, &updated)
+                    .map_err(|error| StorageError::Serialize(error.to_string()))?;
+                for member in &current {
+                    delete_member(
+                        &members_store,
+                        &member.superset_id,
+                        &member.training_exercise_id,
+                    )
+                    .await?;
+                }
+                for (index, id) in updated.as_slice().iter().enumerate() {
+                    let member = SupersetMemberRecord {
+                        superset_id: superset_id.clone(),
+                        training_exercise_id: id.clone(),
+                        position: i64::try_from(index).unwrap_or(i64::MAX).saturating_add(1),
+                    };
+                    indexeddb::put(&members_store, &indexeddb::to_js(&member)?).await?;
+                }
+                operations.push(operation);
+            }
+            Some(_) => {}
+            None => {
+                for member in &current {
+                    delete_member(
+                        &members_store,
+                        &member.superset_id,
+                        &member.training_exercise_id,
+                    )
+                    .await?;
+                }
+                if stored_supersets.iter().any(|row| row.id == *superset_id) {
+                    indexeddb::delete_entry(&supersets_store, &JsValue::from_str(superset_id))
+                        .await?;
+                }
+                operations.push(
+                    crate::superset::delete(training_id, superset_id)
+                        .map_err(|error| StorageError::Serialize(error.to_string()))?,
+                );
+            }
+        }
+    }
+    Ok(operations)
+}
+
+pub(super) async fn enqueue_child_operation(
+    outbox_store: &IdbObjectStore,
+    meta: &IdbObjectStore,
+    operation: &Operation,
+    parent_operation_id: &str,
+) -> Result<(), StorageError> {
+    let mut stored = operation.clone();
+    stored.sequence = outbox::next_sequence(meta, &operation.training_id).await?;
+    stored.parent_operation_id = Some(parent_operation_id.to_owned());
+    let entry = OutboxEntry {
+        operation: stored,
+        state: OutboxState::Blocked,
+        attempts: 0,
+        attempted: false,
+    };
+    indexeddb::add(outbox_store, &indexeddb::to_js(&entry)?).await
 }
 
 pub(super) async fn enqueue_operation(
@@ -428,7 +616,7 @@ pub(super) async fn delete_training_exercise_rows(
     Ok(())
 }
 
-async fn delete_member(
+pub(super) async fn delete_member(
     store: &IdbObjectStore,
     superset_id: &str,
     training_exercise_id: &str,

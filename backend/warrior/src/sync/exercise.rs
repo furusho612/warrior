@@ -75,7 +75,10 @@ pub(super) async fn exercise_batch(
         | ValidatedPayload::SetUpdate(_)
         | ValidatedPayload::SetDelete(_)
         | ValidatedPayload::SetReorder(_)
-        | ValidatedPayload::SetComplete(_) => {}
+        | ValidatedPayload::SetComplete(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => {}
     }
     let ownership = match owner {
         OwnerCondition::Claim(terminal_id) | OwnerCondition::Owned(terminal_id) => {
@@ -139,7 +142,10 @@ fn exercise_statements(
         | ValidatedPayload::SetUpdate(_)
         | ValidatedPayload::SetDelete(_)
         | ValidatedPayload::SetReorder(_)
-        | ValidatedPayload::SetComplete(_) => None,
+        | ValidatedPayload::SetComplete(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => None,
     }
 }
 

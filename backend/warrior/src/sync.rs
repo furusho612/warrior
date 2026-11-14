@@ -129,6 +129,18 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
             )
             .await?
         }
+        OperationKind::SupersetCreate
+        | OperationKind::SupersetDelete
+        | OperationKind::SupersetReorder => {
+            crate::superset::superset_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
     };
     let statements = match statements {
         BatchOutcome::Apply(statements) => statements,
@@ -210,7 +222,10 @@ fn zero_change_outcome(
         | OperationKind::SetUpdate
         | OperationKind::SetDelete
         | OperationKind::SetReorder
-        | OperationKind::SetComplete => match session {
+        | OperationKind::SetComplete
+        | OperationKind::SupersetCreate
+        | OperationKind::SupersetDelete
+        | OperationKind::SupersetReorder => match session {
             Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
             _ => ZeroChangeOutcome::NotFound,
         },
@@ -871,6 +886,9 @@ mod tests {
             OperationKind::SetDelete,
             OperationKind::SetReorder,
             OperationKind::SetComplete,
+            OperationKind::SupersetCreate,
+            OperationKind::SupersetDelete,
+            OperationKind::SupersetReorder,
         ] {
             assert_eq!(
                 zero_change_outcome(kind, Some(&recording), USER_ID),

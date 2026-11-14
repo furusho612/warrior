@@ -470,5 +470,26 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
                     == segment
                         .duration_seconds
                         .and_then(|duration| u32::try_from(duration).ok())
+                && same_side(
+                    payload.left.as_ref(),
+                    segment.left_weight_kg,
+                    segment.left_reps,
+                )
+                && same_side(
+                    payload.right.as_ref(),
+                    segment.right_weight_kg,
+                    segment.right_reps,
+                )
         })
+}
+
+fn same_side(
+    side: Option<&warrior_core::set_calc::SideValue>,
+    weight: Option<f64>,
+    reps: Option<i64>,
+) -> bool {
+    match side {
+        None => weight.is_none() && reps.is_none(),
+        Some(side) => weight == Some(side.weight_kg) && reps == Some(i64::from(side.reps)),
+    }
 }

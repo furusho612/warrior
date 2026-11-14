@@ -6,27 +6,18 @@
 //! セットの集計は `warrior_core::set_calc` の `SetRecord` に変換して行う。
 
 use dioxus::prelude::*;
-use warrior_core::exercise::{GripSelection, RecordMode};
+use warrior_core::exercise::{GripSelection, Laterality, RecordMode};
 use warrior_core::previous::PreviousSet;
 use warrior_core::profile::bodyweight_set_weight;
-use warrior_core::set_calc::{BestKey, SetKind, SetRecord, SetSegment};
+use warrior_core::set_calc::{BestKey, SetKind, SetRecord, SetSegment, SideValue};
 use warrior_core::set_rules;
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 
+pub(super) use super::set_inputs::Field;
+use super::set_inputs::SegmentInputs;
 use crate::storage::StoredSet;
 use crate::text::{text, Key};
-use crate::training_set::{SetSegmentValues, SetValues};
-
-/// セットの入力の欄。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Field {
-    /// 重量または加重。
-    Weight,
-    /// 回数。
-    Reps,
-    /// 時間。
-    Duration,
-}
+use crate::training_set::{SegmentSideValues, SetSegmentValues, SetValues};
 
 /// セットの表から送る操作。
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +92,14 @@ pub(super) struct SegmentView {
     pub(super) reps: String,
     /// 時間の入力。
     pub(super) duration: String,
+    /// 左の重量または加重の入力。
+    pub(super) left_weight: String,
+    /// 左の回数の入力。
+    pub(super) left_reps: String,
+    /// 右の重量または加重の入力。
+    pub(super) right_weight: String,
+    /// 右の回数の入力。
+    pub(super) right_reps: String,
 }
 
 impl SegmentView {
@@ -109,28 +108,71 @@ impl SegmentView {
             weight: number_text(record.weight_kg.unwrap_or(0.0)),
             reps: count_text(record.reps.unwrap_or(0)),
             duration: duration_text(record.duration_seconds),
+            left_weight: number_text(record.left_weight_kg.unwrap_or(0.0)),
+            left_reps: count_text(record.left_reps.unwrap_or(0)),
+            right_weight: number_text(record.right_weight_kg.unwrap_or(0.0)),
+            right_reps: count_text(record.right_reps.unwrap_or(0)),
             record,
         }
     }
 
-    fn values(&self) -> SetSegmentValues {
+    fn values(&self, lateral: bool) -> SetSegmentValues {
+        let side = |weight: &str, reps: &str| SegmentSideValues {
+            weight_kg: parse_number(weight).unwrap_or(0.0),
+            reps: parse_count(reps).unwrap_or(0),
+        };
         SetSegmentValues {
             weight_kg: parse_number(&self.weight).unwrap_or(0.0),
             reps: parse_count(&self.reps).unwrap_or(0),
             duration_seconds: parse_duration(&self.duration),
+            left: lateral.then(|| side(&self.left_weight, &self.left_reps)),
+            right: lateral.then(|| side(&self.right_weight, &self.right_reps)),
         }
     }
 
-    fn can_complete(&self, mode: RecordMode) -> bool {
+    fn can_complete(&self, mode: RecordMode, lateral: bool) -> bool {
         match mode {
             RecordMode::Time => parse_duration(&self.duration).is_some(),
             RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-                parse_count(&self.reps).is_some() && parse_number(&self.weight).is_some()
+                if lateral {
+                    parse_count(&self.left_reps).is_some()
+                        && parse_number(&self.left_weight).is_some()
+                        && parse_count(&self.right_reps).is_some()
+                        && parse_number(&self.right_weight).is_some()
+                } else {
+                    parse_count(&self.reps).is_some() && parse_number(&self.weight).is_some()
+                }
             }
         }
     }
 
-    fn to_set_segment(&self, mode: RecordMode, body_weight_kg: Option<f64>) -> Option<SetSegment> {
+    fn to_set_segment(
+        &self,
+        mode: RecordMode,
+        body_weight_kg: Option<f64>,
+        lateral: bool,
+    ) -> Option<SetSegment> {
+        if lateral {
+            return Some(SetSegment {
+                weight_kg: 0.0,
+                reps: 0,
+                momentum_reps: 0,
+                assisted_reps: 0,
+                left: Some(self.to_side(
+                    mode,
+                    body_weight_kg,
+                    &self.left_weight,
+                    &self.left_reps,
+                )?),
+                right: Some(self.to_side(
+                    mode,
+                    body_weight_kg,
+                    &self.right_weight,
+                    &self.right_reps,
+                )?),
+                duration_seconds: None,
+            });
+        }
         let weight = parse_number(&self.weight)?;
         let reps = parse_count(&self.reps)?;
         let weight = match mode {
@@ -146,6 +188,28 @@ impl SegmentView {
             assisted_reps: 0,
             left: None,
             right: None,
+            duration_seconds: None,
+        })
+    }
+
+    fn to_side(
+        &self,
+        mode: RecordMode,
+        body_weight_kg: Option<f64>,
+        weight: &str,
+        reps: &str,
+    ) -> Option<SideValue> {
+        let weight = parse_number(weight)?;
+        let reps = parse_count(reps)?;
+        let weight = match mode {
+            RecordMode::BodyweightAndReps => {
+                bodyweight_set_weight(body_weight_kg, weight).unwrap_or(0.0)
+            }
+            RecordMode::WeightAndReps | RecordMode::Time => weight,
+        };
+        Some(SideValue {
+            weight_kg: weight,
+            reps,
             duration_seconds: None,
         })
     }
@@ -199,13 +263,13 @@ impl SetView {
     }
 
     /// 入力から保存する値を作る。空の回数は 0 とする。
-    pub(super) fn values(&self) -> SetValues {
+    pub(super) fn values(&self, lateral: bool) -> SetValues {
         SetValues {
             kind: self.kind(),
             segments: self
                 .segments
                 .iter()
-                .map(SegmentView::values)
+                .map(|segment| segment.values(lateral))
                 .collect::<Vec<_>>(),
             completed: self.completed(),
             body_weight_kg: self.record.body_weight_kg,
@@ -215,7 +279,7 @@ impl SetView {
     }
 
     /// 完了できるか。時間の種目は時間、それ以外は回数が要る。
-    pub(super) fn can_complete(&self, mode: RecordMode) -> bool {
+    pub(super) fn can_complete(&self, mode: RecordMode, lateral: bool) -> bool {
         if self.completed() {
             return true;
         }
@@ -224,11 +288,16 @@ impl SetView {
         }
         self.segments
             .iter()
-            .all(|segment| segment.can_complete(mode))
+            .all(|segment| segment.can_complete(mode, lateral))
     }
 
     /// crate::set_calc のセットの記録に変換する。入力が足りないときは None。
-    pub(super) fn to_record(&self, exercise_id: &str, mode: RecordMode) -> Option<SetRecord> {
+    pub(super) fn to_record(
+        &self,
+        exercise_id: &str,
+        mode: RecordMode,
+        lateral: bool,
+    ) -> Option<SetRecord> {
         let kind = self.kind();
         let (grip, attachment) = grip_selection(&self.record)
             .map(|grip| grip.comparison_key())
@@ -247,7 +316,9 @@ impl SetView {
                 let segments = self
                     .segments
                     .iter()
-                    .map(|segment| segment.to_set_segment(mode, self.record.body_weight_kg))
+                    .map(|segment| {
+                        segment.to_set_segment(mode, self.record.body_weight_kg, lateral)
+                    })
                     .collect::<Option<Vec<_>>>()?;
                 SetRecord::new(key, kind, segments, self.record.rpe, None, mode).ok()
             }
@@ -268,10 +339,12 @@ pub(super) fn previous_values(
     previous: &PreviousSet,
     mode: RecordMode,
     body_weight_kg: Option<f64>,
+    laterality: Laterality,
 ) -> Option<SetValues> {
     if previous.segments.is_empty() {
         return None;
     }
+    let lateral = laterality == Laterality::Unilateral && mode != RecordMode::Time;
     let segments = previous
         .segments
         .iter()
@@ -290,10 +363,23 @@ pub(super) fn previous_values(
                 }
                 RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => None,
             };
+            let side = |value: Option<&SideValue>| SegmentSideValues {
+                weight_kg: match mode {
+                    RecordMode::BodyweightAndReps => previous.body_weight_kg.map_or(0.0, |body| {
+                        (value.map_or(0.0, |side| side.weight_kg) - body).max(0.0)
+                    }),
+                    RecordMode::WeightAndReps | RecordMode::Time => {
+                        value.map_or(0.0, |side| side.weight_kg)
+                    }
+                },
+                reps: value.map_or(0, |side| side.reps),
+            };
             SetSegmentValues {
                 weight_kg: weight,
                 reps: segment.reps,
                 duration_seconds: duration,
+                left: lateral.then(|| side(segment.left.as_ref())),
+                right: lateral.then(|| side(segment.right.as_ref())),
             }
         })
         .collect();
@@ -314,6 +400,7 @@ pub(super) fn SetTable(
     rows: Vec<SetView>,
     is_time: bool,
     is_bodyweight: bool,
+    is_lateral: bool,
     disabled: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
@@ -358,6 +445,7 @@ pub(super) fn SetTable(
                         can_move_down: move_candidate_valid(&kinds, index, 1),
                         is_time,
                         is_bodyweight,
+                        is_lateral,
                         disabled,
                         on_action,
                     }
@@ -382,6 +470,7 @@ fn SetRow(
     can_move_down: bool,
     is_time: bool,
     is_bodyweight: bool,
+    is_lateral: bool,
     disabled: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
@@ -395,7 +484,7 @@ fn SetRow(
     } else {
         RecordMode::WeightAndReps
     };
-    let ready = set.can_complete(mode);
+    let ready = set.can_complete(mode, is_lateral);
     let kind = set.kind();
     let is_drop = kind == SetKind::Drop;
     let number_text = number.map_or_else(|| "D".to_owned(), |number| number.to_string());
@@ -441,8 +530,9 @@ fn SetRow(
                         SegmentInputs {
                             segment: segment.clone(),
                             set_id: set_id.clone(),
-                            is_time,
+                            mode,
                             is_bodyweight,
+                            is_lateral,
                             disabled,
                             on_action,
                         }
@@ -457,6 +547,7 @@ fn SetRow(
                     segment_index,
                     is_time,
                     is_bodyweight,
+                    is_lateral,
                     disabled,
                     on_action,
                 }
@@ -598,9 +689,17 @@ fn SegmentRow(
     segment_index: usize,
     is_time: bool,
     is_bodyweight: bool,
+    is_lateral: bool,
     disabled: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
+    let mode = if is_time {
+        RecordMode::Time
+    } else if is_bodyweight {
+        RecordMode::BodyweightAndReps
+    } else {
+        RecordMode::WeightAndReps
+    };
     let delete_set_id = set_id.clone();
     let delete_segment_id = segment.record.id.clone();
     let segment_id = segment.record.id.clone();
@@ -613,8 +712,9 @@ fn SegmentRow(
             SegmentInputs {
                 segment,
                 set_id,
-                is_time,
+                mode,
                 is_bodyweight,
+                is_lateral,
                 disabled,
                 on_action,
             }
@@ -627,80 +727,6 @@ fn SegmentRow(
                     segment_id: delete_segment_id.clone(),
                 }),
                 "{text(Key::RecordSetSegmentDelete)}"
-            }
-        }
-    }
-}
-
-/// 1 つの段の入力の欄。
-#[component]
-fn SegmentInputs(
-    segment: SegmentView,
-    set_id: String,
-    is_time: bool,
-    is_bodyweight: bool,
-    disabled: bool,
-    on_action: EventHandler<SetAction>,
-) -> Element {
-    let weight_set_id = set_id.clone();
-    let reps_set_id = set_id.clone();
-    let duration_set_id = set_id;
-    let weight_id = segment.record.id.clone();
-    let reps_id = segment.record.id.clone();
-    let duration_id = segment.record.id.clone();
-    rsx! {
-        if is_time {
-            input {
-                class: "min-h-8 w-16 shrink-0 border border-line bg-bg px-1 text-[11px]",
-                r#type: "number",
-                inputmode: "numeric",
-                min: "1",
-                step: "1",
-                placeholder: "{text(Key::RecordExerciseDuration)}",
-                "data-set-duration": "true",
-                value: "{segment.duration}",
-                disabled,
-                oninput: move |event| on_action.call(SetAction::Input {
-                    set_id: duration_set_id.clone(),
-                    segment_id: duration_id.clone(),
-                    field: Field::Duration,
-                    value: event.value(),
-                }),
-            }
-        } else {
-            input {
-                class: "min-h-8 w-14 shrink-0 border border-line bg-bg px-1 text-[11px]",
-                r#type: "number",
-                inputmode: "decimal",
-                min: "0",
-                step: "0.5",
-                placeholder: if is_bodyweight { text(Key::RecordSetAddedWeight) } else { text(Key::RecordExerciseWeight) },
-                "data-set-weight": "true",
-                value: "{segment.weight}",
-                disabled,
-                oninput: move |event| on_action.call(SetAction::Input {
-                    set_id: weight_set_id.clone(),
-                    segment_id: weight_id.clone(),
-                    field: Field::Weight,
-                    value: event.value(),
-                }),
-            }
-            input {
-                class: "min-h-8 w-12 shrink-0 border border-line bg-bg px-1 text-[11px]",
-                r#type: "number",
-                inputmode: "numeric",
-                min: "1",
-                step: "1",
-                placeholder: "{text(Key::RecordExerciseReps)}",
-                "data-set-reps": "true",
-                value: "{segment.reps}",
-                disabled,
-                oninput: move |event| on_action.call(SetAction::Input {
-                    set_id: reps_set_id.clone(),
-                    segment_id: reps_id.clone(),
-                    field: Field::Reps,
-                    value: event.value(),
-                }),
             }
         }
     }
@@ -821,8 +847,9 @@ fn grip_selection(record: &SetRecordRow) -> Option<GripSelection> {
 mod tests {
     //! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`。
 
+    use warrior_core::exercise::Laterality;
     use warrior_core::previous::PreviousSet;
-    use warrior_core::set_calc::{RecordMode, SetKind, SetSegment};
+    use warrior_core::set_calc::{RecordMode, SetKind, SetSegment, SideValue};
     use wasm_bindgen_test::wasm_bindgen_test;
     use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -851,8 +878,13 @@ mod tests {
     #[wasm_bindgen_test]
     fn copies_the_added_weight_from_the_previous_body_weight() {
         let previous = previous_set(Some(70.0), 80.0);
-        let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
-            .expect("the previous values");
+        let values = previous_values(
+            &previous,
+            RecordMode::BodyweightAndReps,
+            Some(75.0),
+            Laterality::Bilateral,
+        )
+        .expect("the previous values");
         assert_eq!(values.segments[0].weight_kg, 10.0);
         assert_eq!(values.body_weight_kg, Some(75.0));
         assert_eq!(values.segments[0].reps, 5);
@@ -861,8 +893,13 @@ mod tests {
     #[wasm_bindgen_test]
     fn copies_no_added_weight_without_the_previous_body_weight() {
         let previous = previous_set(None, 0.0);
-        let values = previous_values(&previous, RecordMode::BodyweightAndReps, Some(75.0))
-            .expect("the previous values");
+        let values = previous_values(
+            &previous,
+            RecordMode::BodyweightAndReps,
+            Some(75.0),
+            Laterality::Bilateral,
+        )
+        .expect("the previous values");
         assert_eq!(values.segments[0].weight_kg, 0.0);
         assert_eq!(values.segments[0].reps, 5);
     }
@@ -870,8 +907,13 @@ mod tests {
     #[wasm_bindgen_test]
     fn copies_the_weight_for_weight_and_reps() {
         let previous = previous_set(Some(70.0), 80.0);
-        let values = previous_values(&previous, RecordMode::WeightAndReps, Some(75.0))
-            .expect("the previous values");
+        let values = previous_values(
+            &previous,
+            RecordMode::WeightAndReps,
+            Some(75.0),
+            Laterality::Bilateral,
+        )
+        .expect("the previous values");
         assert_eq!(values.segments[0].weight_kg, 80.0);
     }
 
@@ -888,12 +930,43 @@ mod tests {
             right: None,
             duration_seconds: None,
         });
-        let values = previous_values(&previous, RecordMode::WeightAndReps, Some(75.0))
-            .expect("the previous values");
+        let values = previous_values(
+            &previous,
+            RecordMode::WeightAndReps,
+            Some(75.0),
+            Laterality::Bilateral,
+        )
+        .expect("the previous values");
         assert_eq!(values.kind, SetKind::Drop);
         assert_eq!(values.segments.len(), 2);
         assert_eq!(values.segments[1].weight_kg, 60.0);
         assert_eq!(values.segments[1].reps, 8);
+    }
+
+    #[wasm_bindgen_test]
+    fn copies_both_sides_of_a_unilateral_set() {
+        let mut previous = previous_set(Some(70.0), 0.0);
+        previous.segments[0].left = Some(SideValue {
+            weight_kg: 80.0,
+            reps: 5,
+            duration_seconds: None,
+        });
+        previous.segments[0].right = Some(SideValue {
+            weight_kg: 75.0,
+            reps: 4,
+            duration_seconds: None,
+        });
+        let values = previous_values(
+            &previous,
+            RecordMode::BodyweightAndReps,
+            Some(70.0),
+            Laterality::Unilateral,
+        )
+        .expect("the previous values");
+        assert_eq!(values.segments[0].left.unwrap().weight_kg, 10.0);
+        assert_eq!(values.segments[0].left.unwrap().reps, 5);
+        assert_eq!(values.segments[0].right.unwrap().weight_kg, 5.0);
+        assert_eq!(values.segments[0].right.unwrap().reps, 4);
     }
 
     #[wasm_bindgen_test]

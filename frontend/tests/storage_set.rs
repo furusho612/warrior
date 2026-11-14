@@ -4,11 +4,11 @@
 //! セットの追加、更新、削除、並べ替え、完了が送信待ちの列を通り、段がセットの更新で
 //! 全置換され、削除でセットと一緒に消えることを確かめる。
 
-use warrior_core::set_calc::SetKind;
-use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload};
+use warrior_core::set_calc::{RecordMode, SetKind, SideValue};
+use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload, SetCreatePayload};
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use warrior_frontend::storage::{DiscardOutcome, Store};
-use warrior_frontend::training_set::{self, SetSegmentValues, SetValues};
+use warrior_frontend::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -96,6 +96,8 @@ fn values_for(kind: SetKind, segments: &[(f64, u32)]) -> SetValues {
                 weight_kg: *weight_kg,
                 reps: *reps,
                 duration_seconds: None,
+                left: None,
+                right: None,
             })
             .collect(),
         completed: false,
@@ -103,6 +105,84 @@ fn values_for(kind: SetKind, segments: &[(f64, u32)]) -> SetValues {
         rpe: None,
         grip: None,
     }
+}
+
+#[wasm_bindgen_test]
+async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
+    let name = database_name("set-unilateral");
+    let storage = open(&name).await;
+    create_and_confirm(&storage, CREATE_OPERATION_ID, "").await;
+
+    let values = SetValues {
+        kind: SetKind::Normal,
+        segments: vec![SetSegmentValues {
+            weight_kg: 0.0,
+            reps: 0,
+            duration_seconds: None,
+            left: Some(SegmentSideValues {
+                weight_kg: 10.0,
+                reps: 5,
+            }),
+            right: Some(SegmentSideValues {
+                weight_kg: 12.0,
+                reps: 4,
+            }),
+        }],
+        completed: false,
+        body_weight_kg: Some(70.0),
+        rpe: None,
+        grip: None,
+    };
+    let (rows, operation) =
+        training_set::create(TRAINING_ID, EXERCISE_ROW_ID, 1, &values).expect("a unilateral set");
+    storage
+        .save_set_create(&rows.set, &rows.segments, &operation)
+        .await
+        .expect("the unilateral set must be saved");
+
+    let stored = storage
+        .training_sets(EXERCISE_ROW_ID)
+        .await
+        .expect("the sets must be readable");
+    assert_eq!(stored[0].segments[0].left_weight_kg, Some(10.0));
+    assert_eq!(stored[0].segments[0].left_reps, Some(5));
+    assert_eq!(stored[0].segments[0].right_weight_kg, Some(12.0));
+    assert_eq!(stored[0].segments[0].right_reps, Some(4));
+
+    let payload: SetCreatePayload =
+        serde_json::from_value(operation.payload.clone()).expect("the create payload");
+    assert_eq!(
+        payload.segments[0].left,
+        Some(SideValue {
+            weight_kg: 10.0,
+            reps: 5,
+            duration_seconds: None,
+        })
+    );
+    assert_eq!(
+        payload.segments[0].right,
+        Some(SideValue {
+            weight_kg: 12.0,
+            reps: 4,
+            duration_seconds: None,
+        })
+    );
+    let record = payload
+        .to_record("unilateral", RecordMode::WeightAndReps)
+        .expect("a record");
+    assert_eq!(record.total_weight_kg(), 50.0 + 48.0);
+
+    let mut partial = values.clone();
+    partial.segments[0].right = Some(SegmentSideValues {
+        weight_kg: 0.0,
+        reps: 0,
+    });
+    assert!(!partial.completed_with_values());
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
 }
 
 #[wasm_bindgen_test]

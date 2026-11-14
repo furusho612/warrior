@@ -14,6 +14,8 @@ pub struct SetCompleted {
     pub training_exercise_id: String,
     /// 完了したセットの ID。
     pub set_id: String,
+    /// この完了でレストタイマーを起動するか。
+    pub starts_rest_timer: bool,
 }
 
 /// セットの完了のイベントを溜める signal。
@@ -29,5 +31,14 @@ impl SetCompletedEvents {
     /// 発行したイベントの件数。
     pub fn count(self) -> usize {
         self.0.read().len()
+    }
+
+    /// レストタイマーを起動するイベントの件数。
+    pub fn rest_timer_count(self) -> usize {
+        self.0
+            .read()
+            .iter()
+            .filter(|event| event.starts_rest_timer)
+            .count()
     }
 }

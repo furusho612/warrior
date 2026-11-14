@@ -7,15 +7,19 @@
 //! `warrior_core::previous` の純粋な関数を使う。
 
 use dioxus::prelude::*;
-use warrior_core::exercise::{ExerciseSnapshot, RecordMode};
+use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
 use warrior_core::previous::{
     DurationDifference, ExerciseDifference, PreviousExercise, PreviousTraining,
     TotalWeightDifference,
 };
 
-use super::exercise_view::{dispatch, exercise_diff, training_difference, ExerciseView, SetSaver};
+use super::exercise_view::{
+    dispatch, dissolve_superset, exercise_diff, save_superset_group, training_difference,
+    ExerciseView, SetSaver, SupersetGroupView,
+};
 use super::set_events::SetCompletedEvents;
 use super::sets::{format_number, set_kind_text, SetAction, SetTable, SetView};
+use super::superset_panel::{SupersetCandidate, SupersetPanel};
 use super::RecordSignals;
 use crate::previous as previous_api;
 use crate::record_rail::{RecordRailExercise, RecordRailState};
@@ -149,6 +153,25 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
     let on_add = EventHandler::new(move |_: ()| {
         navigate(&format!("/record/{add_training_id}/exercises"));
     });
+    let superset_training_id = training_id.clone();
+    let on_superset_create =
+        EventHandler::new(move |(view_id, candidate_ids): (String, Vec<String>)| {
+            let training_id = superset_training_id.clone();
+            spawn(async move {
+                if save_superset_group(training_id, view_id, candidate_ids, views, error).await {
+                    reload.set((reload)() + 1);
+                }
+            });
+        });
+    let delete_superset_training_id = training_id.clone();
+    let on_superset_delete = EventHandler::new(move |superset_id: String| {
+        let training_id = delete_superset_training_id.clone();
+        spawn(async move {
+            if dissolve_superset(training_id, superset_id, error).await {
+                reload.set((reload)() + 1);
+            }
+        });
+    });
 
     let current_views = (views)();
     let rail_state = (rail)();
@@ -166,6 +189,32 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
     let training_diff = training_difference(&current_views, (previous_training)().as_ref());
     let load_error = (error)();
     let is_loading = (loading)();
+    let superset_candidates = selected_view.as_ref().map_or_else(Vec::new, |selected| {
+        current_views
+            .iter()
+            .filter(|view| view.record.id != selected.record.id && view.superset.is_none())
+            .map(|view| SupersetCandidate {
+                training_exercise_id: view.record.id.clone(),
+                exercise_id: view.snapshot.exercise_id.clone(),
+                name: view.snapshot.name.clone(),
+            })
+            .collect::<Vec<_>>()
+    });
+    let superset_members = selected_view
+        .as_ref()
+        .and_then(|view| view.superset.as_ref())
+        .map_or_else(Vec::new, |group| {
+            group
+                .member_ids
+                .iter()
+                .filter_map(|id| {
+                    current_views
+                        .iter()
+                        .find(|view| &view.record.id == id)
+                        .map(|view| (id.clone(), view.snapshot.name.clone()))
+                })
+                .collect::<Vec<_>>()
+        });
 
     rsx! {
         section {
@@ -205,10 +254,14 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                             disabled: view_only,
                             first,
                             last,
+                            superset_members,
+                            superset_candidates,
                             on_action,
                             on_up: move |_| on_move.call((up_id.clone(), -1)),
                             on_down: move |_| on_move.call((down_id.clone(), 1)),
                             on_delete: move |_| on_delete.call(delete_id.clone()),
+                            on_superset_create,
+                            on_superset_delete,
                         }
                     }
                 }
@@ -249,6 +302,14 @@ async fn load(
         }
     };
     let body_weight_kg = crate::profile::body_weight_for_record().await;
+    let supersets = match storage.training_supersets(&training_id).await {
+        Ok(supersets) => supersets,
+        Err(_) => {
+            set_error(error, Key::RecordSupersetLoadFailed);
+            loading.set(false);
+            return;
+        }
+    };
     let old = (views)();
     let mut next = Vec::with_capacity(records.len());
     let mut training_previous = match previous_api::fetch_training(&training_id).await {
@@ -288,6 +349,22 @@ async fn load(
         } else {
             loaded_sets
         };
+        let superset = supersets
+            .iter()
+            .find(|group| {
+                group
+                    .members
+                    .iter()
+                    .any(|member| member.training_exercise_id == record.id)
+            })
+            .map(|group| SupersetGroupView {
+                id: group.id.clone(),
+                member_ids: group
+                    .members
+                    .iter()
+                    .map(|member| member.training_exercise_id.clone())
+                    .collect(),
+            });
         next.push(ExerciseView {
             record,
             snapshot,
@@ -295,6 +372,7 @@ async fn load(
             previous_error,
             sets,
             body_weight_kg,
+            superset,
         });
     }
     let current_selected = if rail.peek().training_id.as_deref() == Some(training_id.as_str()) {
@@ -333,10 +411,14 @@ fn ExerciseDetail(
     disabled: bool,
     first: bool,
     last: bool,
+    superset_members: Vec<(String, String)>,
+    superset_candidates: Vec<SupersetCandidate>,
     on_action: EventHandler<SetAction>,
     on_up: EventHandler<()>,
     on_down: EventHandler<()>,
     on_delete: EventHandler<()>,
+    on_superset_create: EventHandler<(String, Vec<String>)>,
+    on_superset_delete: EventHandler<String>,
 ) -> Element {
     let diff = exercise_diff(&view);
     let view_id = view.record.id.clone();
@@ -345,6 +427,9 @@ fn ExerciseDetail(
     let previous_error = view.previous_error;
     let is_time = view.snapshot.record_mode == RecordMode::Time;
     let is_bodyweight = view.snapshot.record_mode == RecordMode::BodyweightAndReps;
+    let is_lateral = view.snapshot.laterality == Laterality::Unilateral;
+    let superset_view_id = view.record.id.clone();
+    let superset = view.superset.clone();
     let rows = view.sets.clone();
 
     rsx! {
@@ -392,6 +477,15 @@ fn ExerciseDetail(
             } else if previous_error {
                 p { class: "text-[11px] text-text-sub", "{text(Key::RecordExercisePreviousFailed)}" }
             }
+            SupersetPanel {
+                view_id: superset_view_id,
+                group: superset,
+                members: superset_members,
+                candidates: superset_candidates,
+                disabled,
+                on_create: on_superset_create,
+                on_delete: on_superset_delete,
+            }
             if let Some(diff) = diff {
                 ExerciseDifferenceView { diff }
             }
@@ -400,6 +494,7 @@ fn ExerciseDetail(
                 rows,
                 is_time,
                 is_bodyweight,
+                is_lateral,
                 disabled,
                 on_action,
             }
@@ -489,11 +584,25 @@ fn previous_set_text(index: usize, set: &warrior_core::previous::PreviousSet) ->
     let segment = set.segments.first();
     let value = match segment {
         Some(segment) => {
-            let duration = segment.longest_duration_seconds();
-            if duration > 0 && segment.weight_kg == 0.0 && segment.reps == 0 {
-                format!("{duration}{}", text(Key::RecordSeconds))
-            } else {
-                format!("{} kg x {}", format_number(segment.weight_kg), segment.reps)
+            let side_text = |side: &warrior_core::set_calc::SideValue| {
+                format!("{} kg x {}", format_number(side.weight_kg), side.reps)
+            };
+            match (segment.left.as_ref(), segment.right.as_ref()) {
+                (Some(left), Some(right)) => format!(
+                    "{} {} / {} {}",
+                    text(Key::RecordSetLeft),
+                    side_text(left),
+                    text(Key::RecordSetRight),
+                    side_text(right)
+                ),
+                _ => {
+                    let duration = segment.longest_duration_seconds();
+                    if duration > 0 && segment.weight_kg == 0.0 && segment.reps == 0 {
+                        format!("{duration}{}", text(Key::RecordSeconds))
+                    } else {
+                        format!("{} kg x {}", format_number(segment.weight_kg), segment.reps)
+                    }
+                }
             }
         }
         None => String::new(),
