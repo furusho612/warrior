@@ -145,6 +145,7 @@ pub(super) fn update_set_input(
         return;
     };
     let lateral = is_lateral(&view.snapshot);
+    let mode = view.snapshot.record_mode;
     let Some(set) = view.sets.iter_mut().find(|set| set.record.id == set_id) else {
         return;
     };
@@ -168,7 +169,7 @@ pub(super) fn update_set_input(
         Field::RightReps => segment.right_reps = value,
         Field::RightDuration => segment.right_duration = value,
     }
-    if set.completed() && !set.values(lateral).is_complete() {
+    if set.completed() && !set.values(lateral, mode).is_complete() {
         set.record.completed = 0;
     }
     set.bump();
@@ -357,6 +358,7 @@ pub(super) async fn add_set(
     });
     let values = SetValues {
         kind: SetKind::Normal,
+        mode: view.snapshot.record_mode,
         segments: vec![SetSegmentValues {
             weight_kg: 0.0,
             reps: 0,
@@ -418,13 +420,17 @@ pub(super) async fn save_set_loop(
         return;
     }
     let lateral = lateral_for_set(views, &set_id);
+    let Some(mode) = mode_for_set(views, &set_id) else {
+        saver.finish(&set_id);
+        return;
+    };
     while let Some(set) = find_set(views, &set_id) {
         if let Some(key) = set.validation_error(lateral) {
             set_error(error, key);
             break;
         }
         let revision = set.revision;
-        let values = set.values(lateral);
+        let values = set.values(lateral, mode);
         let segment_records = set
             .segments
             .iter()
@@ -579,6 +585,7 @@ pub(super) async fn complete_set(
     };
     let completed = !set.completed();
     let lateral = is_lateral(&view.snapshot);
+    let mode = view.snapshot.record_mode;
     if completed && !set.can_complete(view.snapshot.record_mode, lateral) {
         set_error(
             error,
@@ -608,7 +615,7 @@ pub(super) async fn complete_set(
     };
     // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
     if completed {
-        let values = set.values(lateral);
+        let values = set.values(lateral, mode);
         let segments = set
             .segments
             .iter()
@@ -905,6 +912,13 @@ fn lateral_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> bool {
         .iter()
         .find(|view| view.sets.iter().any(|set| set.record.id == set_id))
         .is_some_and(|view| is_lateral(&view.snapshot))
+}
+
+fn mode_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<RecordMode> {
+    (views)()
+        .iter()
+        .find(|view| view.sets.iter().any(|set| set.record.id == set_id))
+        .map(|view| view.snapshot.record_mode)
 }
 
 fn find_view_and_set(

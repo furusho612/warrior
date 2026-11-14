@@ -46,6 +46,20 @@ const SIDE_OVER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c563b";
 const COMPLETE_PLANK_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5640";
 const COMPLETE_MAX_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5641";
 const COMPLETE_SIDE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5642";
+const EMPTY_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5650";
+const EMPTY_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5651";
+const EMPTY_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5652";
+const EMPTY_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5653";
+const EMPTY_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5654";
+const REPS_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5655";
+const REPS_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5656";
+const REPS_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5657";
+const WEIGHT_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5658";
+const WEIGHT_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5659";
+const WEIGHT_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565a";
+const SEEDED_REPS_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565b";
+const SEEDED_REPS_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565c";
+const SEEDED_REPS_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565d";
 
 #[test]
 fn saves_time_sets_and_checks_the_duration_bests() {
@@ -63,6 +77,9 @@ fn saves_time_sets_and_checks_the_duration_bests() {
     create_the_plank_set(&server, &cookie);
     create_the_maximum_plank_set(&server, &cookie);
     create_the_side_plank_set(&server, &cookie);
+    create_the_empty_plank_set(&server, &cookie);
+    seed_a_reps_only_time_set(&server, &cookie);
+    reject_non_time_values(&server, &cookie);
     reject_invalid_durations(&server, &cookie);
     check_the_record(&server, &cookie);
     complete_the_sets(&server, &cookie);
@@ -202,6 +219,142 @@ fn create_the_side_plank_set(server: &DevServer, cookie: &str) {
             "assisted_reps": 0
         })
     );
+}
+
+fn create_the_empty_plank_set(server: &DevServer, cookie: &str) {
+    let operation = create_operation(
+        EMPTY_OPERATION_ID,
+        TRAINING_ID,
+        PLANK_ROW_ID,
+        EMPTY_SET_ID,
+        SetSpec {
+            position: 3,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![segment(EMPTY_SEGMENT_ID, 1, 0.0, 0)],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(status(&response), "applied");
+    let row = first_row(
+        server,
+        &format!(
+            "SELECT weight_kg, reps, duration_seconds, momentum_reps, assisted_reps \
+             FROM set_segments WHERE id = '{EMPTY_SEGMENT_ID}'"
+        ),
+    );
+    assert!(row["weight_kg"].is_null());
+    assert!(row["reps"].is_null());
+    assert!(row["duration_seconds"].is_null());
+    assert_eq!(row["momentum_reps"].as_i64(), Some(0));
+    assert_eq!(row["assisted_reps"].as_i64(), Some(0));
+
+    let complete = complete_operation(EMPTY_COMPLETE_OPERATION_ID, TRAINING_ID, EMPTY_SET_ID, true);
+    let response = post(server, cookie, &complete);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{EMPTY_SET_ID}'")
+        )["completed"],
+        0
+    );
+    assert_eq!(applied_count(server, EMPTY_COMPLETE_OPERATION_ID), 0);
+}
+
+fn seed_a_reps_only_time_set(server: &DevServer, cookie: &str) {
+    for sql in [
+        format!(
+            "INSERT INTO sets (id, user_id, training_exercise_id, position, kind, completed, \
+             created_at, updated_at) \
+             VALUES ('{SEEDED_REPS_SET_ID}', '{USER_ID}', '{PLANK_ROW_ID}', 4, 'normal', 0, \
+              '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO set_segments (id, user_id, set_id, position, weight_kg, reps, \
+             momentum_reps, assisted_reps, duration_seconds, created_at, updated_at) \
+             VALUES ('{SEEDED_REPS_SEGMENT_ID}', '{USER_ID}', '{SEEDED_REPS_SET_ID}', 1, \
+              NULL, 5, 0, 0, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    ] {
+        server
+            .execute_d1_json(&sql)
+            .expect("the reps-only time set must be seeded");
+    }
+    let complete = complete_operation(
+        SEEDED_REPS_COMPLETE_OPERATION_ID,
+        TRAINING_ID,
+        SEEDED_REPS_SET_ID,
+        true,
+    );
+    let response = post(server, cookie, &complete);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{SEEDED_REPS_SET_ID}'")
+        )["completed"],
+        0
+    );
+    assert_eq!(applied_count(server, SEEDED_REPS_COMPLETE_OPERATION_ID), 0);
+}
+
+fn reject_non_time_values(server: &DevServer, cookie: &str) {
+    for (operation_id, set_id, segment_id, weight_kg, reps) in [
+        (REPS_OPERATION_ID, REPS_SET_ID, REPS_SEGMENT_ID, 0.0, 5),
+        (
+            WEIGHT_OPERATION_ID,
+            WEIGHT_SET_ID,
+            WEIGHT_SEGMENT_ID,
+            100.0,
+            0,
+        ),
+    ] {
+        let operation = create_operation(
+            operation_id,
+            TRAINING_ID,
+            PLANK_ROW_ID,
+            set_id,
+            SetSpec {
+                position: 5,
+                kind: "normal",
+                body_weight_kg: None,
+            },
+            vec![segment(segment_id, 1, weight_kg, reps)],
+        );
+        let response = post(server, cookie, &operation);
+        assert_eq!(response.status, 400, "{}", response.body);
+        assert_eq!(count(server, "sets", set_id), 0);
+        assert_eq!(count(server, "set_segments", segment_id), 0);
+        assert_eq!(applied_count(server, operation_id), 0);
+    }
+
+    let update = update_operation(
+        EMPTY_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        EMPTY_SET_ID,
+        UpdateSpec {
+            position: 3,
+            kind: "normal",
+            completed: false,
+            body_weight_kg: None,
+        },
+        vec![segment(EMPTY_SEGMENT_ID, 1, 0.0, 5)],
+    );
+    let response = post(server, cookie, &update);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(server, EMPTY_UPDATE_OPERATION_ID), 0);
+    let row = first_row(
+        server,
+        &format!(
+            "SELECT weight_kg, reps, duration_seconds FROM set_segments \
+             WHERE id = '{EMPTY_SEGMENT_ID}'"
+        ),
+    );
+    assert!(row["weight_kg"].is_null());
+    assert!(row["reps"].is_null());
+    assert!(row["duration_seconds"].is_null());
 }
 
 fn reject_invalid_durations(server: &DevServer, cookie: &str) {

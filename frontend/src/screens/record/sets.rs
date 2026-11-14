@@ -356,9 +356,10 @@ impl SetView {
     }
 
     /// 入力から保存する値を作る。空の回数は 0 とする。
-    pub(super) fn values(&self, lateral: bool) -> SetValues {
+    pub(super) fn values(&self, lateral: bool, mode: RecordMode) -> SetValues {
         SetValues {
             kind: self.kind(),
+            mode,
             segments: self
                 .segments
                 .iter()
@@ -495,6 +496,7 @@ pub(super) fn previous_values(
         .collect();
     Some(SetValues {
         kind: previous.kind,
+        mode,
         segments,
         body_weight_kg,
         rpe: previous.rpe,

@@ -80,6 +80,7 @@ async fn records_time_sets_with_the_stopwatch_and_manual_input() {
     let stopwatch_set = add_set(&driver, &plank).await;
     let stopwatch_row = set_row(&plank, &stopwatch_set);
     assert_time_inputs(&driver, &stopwatch_row).await;
+    wait_for_empty_time_set(&server, &stopwatch_set).await;
     start_the_stopwatch(&driver, &stopwatch_row).await;
 
     let bike = detail_selector(BIKE_EXERCISE_ID);
@@ -344,6 +345,32 @@ async fn assert_time_inputs(driver: &WebDriver, set: &str) {
                 .is_err(),
             "a time set must not show {selector}"
         );
+    }
+}
+
+async fn wait_for_empty_time_set(server: &DevServer, set: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let sql = format!(
+        "SELECT sg.weight_kg, sg.reps, sg.duration_seconds, sg.momentum_reps, \
+         sg.assisted_reps \
+         FROM sets s JOIN set_segments sg ON sg.set_id = s.id WHERE s.id = '{set}'"
+    );
+    loop {
+        let row = record_common::optional_row(server, &sql);
+        if row.as_ref().is_some_and(|row| {
+            row["weight_kg"].is_null()
+                && row["reps"].is_null()
+                && row["duration_seconds"].is_null()
+                && row["momentum_reps"].as_i64() == Some(0)
+                && row["assisted_reps"].as_i64() == Some(0)
+        }) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the empty time set {set} stored weight or reps: {row:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 

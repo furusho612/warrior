@@ -93,6 +93,7 @@ fn values(kind: SetKind, weight_kg: f64, reps: u32) -> SetValues {
 fn values_for(kind: SetKind, segments: &[(f64, u32)]) -> SetValues {
     SetValues {
         kind,
+        mode: RecordMode::WeightAndReps,
         segments: segments
             .iter()
             .map(|(weight_kg, reps)| SetSegmentValues {
@@ -120,6 +121,7 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
 
     let values = SetValues {
         kind: SetKind::Normal,
+        mode: RecordMode::WeightAndReps,
         segments: vec![SetSegmentValues {
             weight_kg: 0.0,
             reps: 0,
@@ -203,6 +205,7 @@ async fn req_set_010_time_sets_keep_the_duration_without_weight_or_reps() {
 
     let bilateral = SetValues {
         kind: SetKind::Normal,
+        mode: RecordMode::Time,
         segments: vec![SetSegmentValues {
             weight_kg: 0.0,
             reps: 0,
@@ -231,6 +234,7 @@ async fn req_set_010_time_sets_keep_the_duration_without_weight_or_reps() {
 
     let unilateral = SetValues {
         kind: SetKind::Normal,
+        mode: RecordMode::Time,
         segments: vec![SetSegmentValues {
             weight_kg: 0.0,
             reps: 0,
@@ -265,11 +269,35 @@ async fn req_set_010_time_sets_keep_the_duration_without_weight_or_reps() {
         .await
         .expect("the unilateral time set must be saved");
 
+    let empty = SetValues {
+        kind: SetKind::Normal,
+        mode: RecordMode::Time,
+        segments: vec![SetSegmentValues {
+            weight_kg: 0.0,
+            reps: 0,
+            momentum_reps: 0,
+            assisted_reps: 0,
+            duration_seconds: None,
+            left: None,
+            right: None,
+        }],
+        completed: false,
+        body_weight_kg: Some(70.0),
+        rpe: None,
+        grip: None,
+    };
+    let (empty_rows, empty_operation) =
+        training_set::create(TRAINING_ID, EXERCISE_ROW_ID, 3, &empty).expect("an empty time set");
+    storage
+        .save_set_create(&empty_rows.set, &empty_rows.segments, &empty_operation)
+        .await
+        .expect("the empty time set must be saved");
+
     let stored = storage
         .training_sets(EXERCISE_ROW_ID)
         .await
         .expect("the sets must be readable");
-    assert_eq!(stored.len(), 2);
+    assert_eq!(stored.len(), 3);
     let bilateral_segment = &stored[0].segments[0];
     assert_eq!(bilateral_segment.weight_kg, None);
     assert_eq!(bilateral_segment.reps, None);
@@ -283,6 +311,12 @@ async fn req_set_010_time_sets_keep_the_duration_without_weight_or_reps() {
     assert_eq!(unilateral_segment.right_weight_kg, None);
     assert_eq!(unilateral_segment.right_reps, None);
     assert_eq!(unilateral_segment.right_duration_seconds, Some(40));
+    let empty_segment = &stored[2].segments[0];
+    assert_eq!(empty_segment.weight_kg, None);
+    assert_eq!(empty_segment.reps, None);
+    assert_eq!(empty_segment.momentum_reps, 0);
+    assert_eq!(empty_segment.assisted_reps, 0);
+    assert_eq!(empty_segment.duration_seconds, None);
 
     let payload: SetCreatePayload =
         serde_json::from_value(unilateral_operation.payload.clone()).expect("the create payload");
