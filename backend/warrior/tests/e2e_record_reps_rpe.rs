@@ -3,9 +3,9 @@
 //! 対応する要求: `REQ-SET-006`、`REQ-SET-007`、`REQ-REC-005`。
 //! セット詳細の drawer で反動と補助の回数、RPE を入力し、保存した値を開き直して
 //! 表示することを確かめる。回数の内訳と RPE の無効値を拒否してエラーを表示し、
-//! 正しい値に直すとエラーが消えて保存されることを確かめる。RPE を空にした
-//! セットも保存できることを確かめる。終了のサマリーで、補助の回数だけを除いた
-//! 総重量を確かめる。
+//! 正しい値に直すとエラーが消えて保存されることを確かめる。別のセットを保存しても、
+//! あるセットのエラーが消えないことを確かめる。RPE を空にしたセットも保存できることを
+//! 確かめる。終了のサマリーで、補助の回数だけを除いた総重量を確かめる。
 
 mod support;
 
@@ -109,6 +109,19 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
         "RPE は 6.0 から 10.0 まで 0.5 刻みで入力してください。",
     )
     .await;
+
+    let empty_rpe_set = add_set(&driver).await;
+    browser::set_input(&driver, &weight_selector(&empty_rpe_set), "60").await;
+    browser::set_input(&driver, &reps_selector(&empty_rpe_set), "5").await;
+    browser::click(&driver, &complete_selector(&empty_rpe_set)).await;
+    wait_for_set(&server, &empty_rpe_set, None, 0, 0).await;
+    browser::wait_for_present(
+        &driver,
+        &format!("[data-record-error][data-record-error-set-id=\"{second_set}\"]"),
+    )
+    .await;
+    browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
+
     browser::set_input(&driver, &rpe_selector(), "10.0").await;
     browser::wait_for_absent(&driver, "[data-record-error]").await;
     browser::click(&driver, &complete_selector(&second_set)).await;
@@ -116,13 +129,6 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
     clear_input(&driver, &rpe_selector()).await;
     browser::wait_for_absent(&driver, "[data-record-error]").await;
     wait_for_set(&server, &second_set, None, 0, 0).await;
-    browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
-
-    let empty_rpe_set = add_set(&driver).await;
-    browser::set_input(&driver, &weight_selector(&empty_rpe_set), "60").await;
-    browser::set_input(&driver, &reps_selector(&empty_rpe_set), "5").await;
-    browser::click(&driver, &complete_selector(&empty_rpe_set)).await;
-    wait_for_set(&server, &empty_rpe_set, None, 0, 0).await;
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
     finish_and_check_the_summary(&driver).await;

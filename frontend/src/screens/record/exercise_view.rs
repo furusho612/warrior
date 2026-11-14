@@ -19,6 +19,7 @@ use warrior_core::set_calc::SetKind;
 use warrior_core::superset::{rest_timer_starts, SupersetMembers};
 use warrior_core::training_record::TrainingExerciseRecord;
 
+use super::errors::{clear_set_error, set_load_error, set_set_error, RecordErrors};
 use super::set_events::{SetCompleted, SetCompletedEvents};
 use super::sets::{
     kind_allowed, move_allowed, previous_values, Field, SegmentView, SetAction, SetView,
@@ -26,7 +27,7 @@ use super::sets::{
 use crate::ids::{new_uuid, now_iso};
 use crate::storage;
 use crate::sync;
-use crate::text::{text, Key};
+use crate::text::Key;
 use crate::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
 
 /// 画面が読む 1 つの種目の組。
@@ -196,7 +197,7 @@ pub(super) fn update_set_kind(
     mut views: Signal<Vec<ExerciseView>>,
     set_id: &str,
     kind: SetKind,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) -> bool {
     let mut list = (views)();
     let Some(view_index) = list
@@ -213,7 +214,7 @@ pub(super) fn update_set_kind(
         return false;
     };
     if !kind_allowed(&list[view_index].sets, set_index, kind) {
-        set_error(error, Key::RecordSetDropInvalid);
+        set_set_error(error, set_id, Key::RecordSetDropInvalid);
         return false;
     }
     let set = &mut list[view_index].sets[set_index];
@@ -230,7 +231,7 @@ pub(super) fn update_set_kind(
 pub(super) fn append_segment(
     mut views: Signal<Vec<ExerciseView>>,
     set_id: &str,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) -> bool {
     let mut list = (views)();
     let Some(view) = list
@@ -247,7 +248,7 @@ pub(super) fn append_segment(
         return false;
     }
     let Ok(segment_id) = new_uuid() else {
-        set_error(error, Key::RecordSetSaveFailed);
+        set_set_error(error, set_id, Key::RecordSetSaveFailed);
         return false;
     };
     let now = now_iso();
@@ -298,7 +299,7 @@ pub(super) async fn delete_segment(
     set_id: String,
     segment_id: String,
     mut views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
     saver: SetSaver,
 ) {
     let mut list = (views)();
@@ -329,7 +330,7 @@ pub(super) async fn add_set(
     training_id: String,
     view_id: String,
     mut views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) {
     let Some(view) = (views)()
         .iter()
@@ -368,7 +369,7 @@ pub(super) async fn add_set(
     let (rows, operation) = match training_set::create(&training_id, &view_id, position, &values) {
         Ok(rows) => rows,
         Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_load_error(error, Key::RecordSetSaveFailed);
             return;
         }
     };
@@ -394,7 +395,7 @@ pub(super) async fn add_set(
             view.sets.retain(|set| set.record.id != rows.set.id);
         }
         views.set(list);
-        set_error(error, Key::RecordSetSaveFailed);
+        set_load_error(error, Key::RecordSetSaveFailed);
         return;
     }
     sync::flush_in_background();
@@ -405,7 +406,7 @@ pub(super) async fn save_set_loop(
     training_id: String,
     set_id: String,
     views: Signal<Vec<ExerciseView>>,
-    mut error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
     saver: SetSaver,
 ) {
     if !saver.start(&set_id) {
@@ -414,10 +415,9 @@ pub(super) async fn save_set_loop(
     let lateral = lateral_for_set(views, &set_id);
     while let Some(set) = find_set(views, &set_id) {
         if let Some(key) = set.validation_error(lateral) {
-            set_error(error, key);
+            set_set_error(error, &set_id, key);
             break;
         }
-        error.set(None);
         let revision = set.revision;
         let values = set.values(lateral);
         let segment_records = set
@@ -429,7 +429,7 @@ pub(super) async fn save_set_loop(
             match training_set::update(&training_id, &set.record, &segment_records, &values) {
                 Ok(rows) => rows,
                 Err(_) => {
-                    set_error(error, Key::RecordSetSaveFailed);
+                    set_set_error(error, &set_id, Key::RecordSetSaveFailed);
                     break;
                 }
             };
@@ -442,9 +442,10 @@ pub(super) async fn save_set_loop(
             Err(error) => Err(error),
         };
         if result.is_err() {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
             break;
         }
+        clear_set_error(error, &set_id);
         sync::flush_in_background();
         match find_set(views, &set_id) {
             None => {
@@ -476,7 +477,7 @@ pub(super) async fn copy_sets(
     training_id: String,
     view_id: String,
     mut views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) {
     let Some(view) = (views)()
         .iter()
@@ -506,7 +507,7 @@ pub(super) async fn copy_sets(
     let storage = match storage::current().await {
         Ok(storage) => storage,
         Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_load_error(error, Key::RecordSetSaveFailed);
             return;
         }
     };
@@ -514,7 +515,7 @@ pub(super) async fn copy_sets(
         let operation = match training_set::delete(&training_id, &set.record.id) {
             Ok(operation) => operation,
             Err(_) => {
-                set_error(error, Key::RecordSetSaveFailed);
+                set_load_error(error, Key::RecordSetSaveFailed);
                 return;
             }
         };
@@ -523,7 +524,7 @@ pub(super) async fn copy_sets(
             .await
             .is_err()
         {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_load_error(error, Key::RecordSetSaveFailed);
             restore_sets(views, &view_id, error).await;
             return;
         }
@@ -535,7 +536,7 @@ pub(super) async fn copy_sets(
         {
             Ok(rows) => rows,
             Err(_) => {
-                set_error(error, Key::RecordSetSaveFailed);
+                set_load_error(error, Key::RecordSetSaveFailed);
                 restore_sets(views, &view_id, error).await;
                 return;
             }
@@ -545,7 +546,7 @@ pub(super) async fn copy_sets(
             .await
             .is_err()
         {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_load_error(error, Key::RecordSetSaveFailed);
             restore_sets(views, &view_id, error).await;
             return;
         }
@@ -566,7 +567,7 @@ pub(super) async fn complete_set(
     training_id: String,
     set_id: String,
     views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
     completed_events: SetCompletedEvents,
 ) {
     let Some((view, set)) = find_view_and_set(views, &set_id) else {
@@ -575,8 +576,9 @@ pub(super) async fn complete_set(
     let completed = !set.completed();
     let lateral = is_lateral(&view.snapshot);
     if completed && !set.can_complete(view.snapshot.record_mode, lateral) {
-        set_error(
+        set_set_error(
             error,
+            &set_id,
             if view.snapshot.record_mode == RecordMode::Time {
                 Key::RecordSetTimeInvalid
             } else if lateral {
@@ -590,14 +592,14 @@ pub(super) async fn complete_set(
     let (updated, operation) = match training_set::complete(&training_id, &set.record, completed) {
         Ok(updated) => updated,
         Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
             return;
         }
     };
     let storage = match storage::current().await {
         Ok(storage) => storage,
         Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
             return;
         }
     };
@@ -613,7 +615,7 @@ pub(super) async fn complete_set(
             match training_set::update(&training_id, &set.record, &segments, &values) {
                 Ok(rows) => rows,
                 Err(_) => {
-                    set_error(error, Key::RecordSetSaveFailed);
+                    set_set_error(error, &set_id, Key::RecordSetSaveFailed);
                     return;
                 }
             };
@@ -622,7 +624,7 @@ pub(super) async fn complete_set(
             .await
             .is_err()
         {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
             return;
         }
     }
@@ -633,9 +635,10 @@ pub(super) async fn complete_set(
         .is_err()
     {
         update_completed(views, &set_id, !completed);
-        set_error(error, Key::RecordSetSaveFailed);
+        set_set_error(error, &set_id, Key::RecordSetSaveFailed);
         return;
     }
+    clear_set_error(error, &set_id);
     if completed {
         let starts_rest_timer = rest_timer_starts(
             view.superset
@@ -670,7 +673,7 @@ pub(super) async fn delete_set(
     training_id: String,
     set_id: String,
     mut views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) {
     let Some((view, _set)) = find_view_and_set(views, &set_id) else {
         return;
@@ -678,7 +681,7 @@ pub(super) async fn delete_set(
     let operation = match training_set::delete(&training_id, &set_id) {
         Ok(operation) => operation,
         Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
             return;
         }
     };
@@ -698,10 +701,11 @@ pub(super) async fn delete_set(
         Err(error) => Err(error),
     };
     if result.is_err() {
-        set_error(error, Key::RecordSetSaveFailed);
+        set_set_error(error, &set_id, Key::RecordSetSaveFailed);
         restore_sets(views, &view.record.id, error).await;
         return;
     }
+    clear_set_error(error, &set_id);
     sync::flush_in_background();
 }
 
@@ -711,7 +715,7 @@ pub(super) async fn move_set(
     set_id: String,
     delta: i32,
     views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) {
     let Some((view_id, ordered)) = move_set_order(views, &set_id, delta, error) else {
         return;
@@ -719,7 +723,7 @@ pub(super) async fn move_set(
     let operation = match training_set::reorder(&training_id, &view_id, &ordered) {
         Ok(operation) => operation,
         Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
+            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
             return;
         }
     };
@@ -732,10 +736,11 @@ pub(super) async fn move_set(
         Err(error) => Err(error),
     };
     if result.is_err() {
-        set_error(error, Key::RecordSetSaveFailed);
+        set_set_error(error, &set_id, Key::RecordSetSaveFailed);
         restore_sets(views, &view_id, error).await;
         return;
     }
+    clear_set_error(error, &set_id);
     sync::flush_in_background();
 }
 
@@ -743,7 +748,7 @@ fn move_set_order(
     mut views: Signal<Vec<ExerciseView>>,
     set_id: &str,
     delta: i32,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) -> Option<(String, Vec<String>)> {
     let mut list = (views)();
     let (view_id, ordered) = {
@@ -756,7 +761,7 @@ fn move_set_order(
             return None;
         }
         if !move_allowed(&view.sets, index, delta) {
-            set_error(error, Key::RecordSetDropInvalid);
+            set_set_error(error, set_id, Key::RecordSetDropInvalid);
             return None;
         }
         view.sets.swap(index, target as usize);
@@ -776,14 +781,14 @@ fn move_set_order(
 async fn restore_sets(
     mut views: Signal<Vec<ExerciseView>>,
     view_id: &str,
-    mut error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) {
     let Ok(storage) = storage::current().await else {
-        set_error(error, Key::RecordSetSaveFailed);
+        set_load_error(error, Key::RecordSetSaveFailed);
         return;
     };
     let Ok(stored) = storage.training_sets(view_id).await else {
-        set_error(error, Key::RecordSetSaveFailed);
+        set_load_error(error, Key::RecordSetSaveFailed);
         return;
     };
     let sets = stored
@@ -795,7 +800,6 @@ async fn restore_sets(
         view.sets = sets;
     }
     views.set(list);
-    error.set(None);
 }
 
 /// 選んだ種目と候補の種目をスーパーセットの組にする。
@@ -806,7 +810,7 @@ pub(super) async fn save_superset_group(
     view_id: String,
     candidate_ids: Vec<String>,
     views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) -> bool {
     let Some(view) = (views)()
         .iter()
@@ -816,7 +820,7 @@ pub(super) async fn save_superset_group(
         return false;
     };
     if view.superset.is_some() {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
     let mut members = vec![view.record.id.clone()];
@@ -826,11 +830,11 @@ pub(super) async fn save_superset_group(
         }
     }
     let Ok(members) = SupersetMembers::new(members) else {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
     let Ok(storage) = storage::current().await else {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
     let position = storage
@@ -842,7 +846,7 @@ pub(super) async fn save_superset_group(
     let (record, operation) = match crate::superset::create(&training_id, position, &members) {
         Ok(rows) => rows,
         Err(_) => {
-            set_error(error, Key::RecordSupersetSaveFailed);
+            set_load_error(error, Key::RecordSupersetSaveFailed);
             return false;
         }
     };
@@ -851,7 +855,7 @@ pub(super) async fn save_superset_group(
         .await
         .is_err()
     {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
     sync::flush_in_background();
@@ -862,16 +866,16 @@ pub(super) async fn save_superset_group(
 pub(super) async fn dissolve_superset(
     training_id: String,
     superset_id: String,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
 ) -> bool {
     let Ok(storage) = storage::current().await else {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     };
     let operation = match crate::superset::delete(&training_id, &superset_id) {
         Ok(operation) => operation,
         Err(_) => {
-            set_error(error, Key::RecordSupersetSaveFailed);
+            set_load_error(error, Key::RecordSupersetSaveFailed);
             return false;
         }
     };
@@ -880,7 +884,7 @@ pub(super) async fn dissolve_superset(
         .await
         .is_err()
     {
-        set_error(error, Key::RecordSupersetSaveFailed);
+        set_load_error(error, Key::RecordSupersetSaveFailed);
         return false;
     }
     sync::flush_in_background();
@@ -914,16 +918,12 @@ fn find_view_and_set(
     None
 }
 
-fn set_error(mut error: Signal<Option<String>>, key: Key) {
-    error.set(Some(text(key).to_owned()));
-}
-
 /// セットの操作を、種類ごとの非同期の処理へ振り分ける。
 pub(super) fn dispatch(
     action: SetAction,
     training_id: String,
     views: Signal<Vec<ExerciseView>>,
-    error: Signal<Option<String>>,
+    error: Signal<RecordErrors>,
     saver: SetSaver,
     completed_events: SetCompletedEvents,
 ) {

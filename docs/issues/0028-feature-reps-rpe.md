@@ -80,4 +80,9 @@ RPE はセットごとに持つ。
 - `set_segments.momentum_reps` と `assisted_reps` は `migrations/0006_training_sessions.sql` に既にあるため、migration を追加しなかった。
 - `backend/warrior/src/set.rs` は既存の列への保存を持っていたため、変更しなかった。検証は `backend/warrior_core/src/sync_set.rs` と `backend/warrior_core/src/set_calc.rs` に置いた。
 - セット詳細の drawer は `frontend/src/screens/record/set_drawer.rs` に置き、`frontend/src/screens/record/exercises.rs` から描画した。drawer は選択中の種目のセット状態を読むため、記録画面のトップレベルではなく種目の一覧の側に置いた。
+- カレンダーのセットの注記は `warrior_core::rpe::format` を使い、`RPE 8.0` の表記に統一した。
+- 端末内の保存では、操作の payload とセットの行の位置、種別、完了、RPE、グリップ、体重、段が一致することを確かめてから送信待ちの列へ積むようにした。
+- セットの保存のエラーはセット ID ごとに保持し、保存に成功したセットのエラーだけを消すようにした。別のセットの保存でエラーが消えない。
+- PBT の入力の生成は `backend/pbt/tests/support/set.rs` に集約し、`reps_rpe.rs` を REQ-SET-006 と REQ-SET-007 の所有者にした。
+- `backend/warrior_core/src/set_calc.rs` は 1202 行のままとし、分割は 0077 で追跡する。
 - 種目別の履歴は 0049 が実装する。0028 はセット詳細の表示までを担う。
