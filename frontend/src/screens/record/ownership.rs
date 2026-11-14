@@ -98,6 +98,12 @@ async fn takeover_record(
                 .set(Some(text(Key::RecordTakeoverFinished).to_owned()));
             return;
         }
+        Err(TrainingApiError::Forbidden) => {
+            ownership
+                .error
+                .set(Some(text(Key::RecordTakeoverChanged).to_owned()));
+            return;
+        }
         Err(_) => {
             ownership
                 .error

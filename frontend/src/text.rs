@@ -88,6 +88,7 @@ text_keys! {
     RecordTakeoverAccept => "引き継ぎを実行する",
     RecordTakeoverCancel => "キャンセル",
     RecordTakeoverFailed => "記録を引き継げませんでした。通信を確認して、もう一度お試しください。",
+    RecordTakeoverChanged => "記録の状態が変わりました。読み直してください。",
     RecordTakeoverFinished => "終了したトレーニングは引き継げません。",
     RecordReloadFromServer => "サーバーの内容を読み直す",
     RecordReloadFailed => "サーバーの内容を読み込めませんでした。",
