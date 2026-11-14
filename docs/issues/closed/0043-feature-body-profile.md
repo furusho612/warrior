@@ -3,6 +3,7 @@
 - Requirements: REQ-PRF-001, REQ-PRF-002, REQ-PRF-003, REQ-PRF-004, REQ-PRF-005, REQ-LIB-004, REQ-MYP-001, REQ-NFR-018, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-body-profile
 
@@ -86,3 +87,12 @@
 `frontend/src/screens/record.rs` に身体情報の入力を促す案内を置く。セット表と自重種目の加重の入力は 0025 が担う。
 `backend/warrior/tests/e2e_profile.rs` に E2E を追加する。
 `backend/pbt/tests/profile.rs` に性質テストを置く。
+
+## 結果
+
+身体情報、目的、週あたりのトレーニング可能日数、日常の活動量を、`profiles` の 1 利用者 1 行で保存する。初回の登録と「あとで入力する」、マイページからの更新、ホームのオンボーディング、注意書きを実装した。
+満年齢は生年月日と日本時間の日付から求め、BMI は身長と体重だけで計算する。18 歳未満または BMI 18.5 未満の利用者には、登録・更新の後に注意書きと相談のガイドを出す。
+`sets.body_weight_kg` に記録時点の体重を保存し、読み取り時に `set_segments.weight_kg` の加重と足して自重種目の重量を求める。身体情報がないときは体重を保存せず、総重量と自己ベストの対象外にする。セットの書き込みは 0025 のセット API が行う。
+0025 でセットの追加、入力、完了、`body_weight_kg` の保存が入り、この issue の完了条件を満たした。
+
+検証は、`wrangler_profile` 2 件、`e2e_profile`、`e2e_auth`、`e2e_training_session`、`e2e_offline`、`mise run formal` を通した。0025 のセット書き込み後も `wrangler_record_set`、`wrangler_record_exercise`、`e2e_record_set` が通ることを確認した。Safari の E2E はローカルの remote automation が無効なため未実行で、CI で確認する。
