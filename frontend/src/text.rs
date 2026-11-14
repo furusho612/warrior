@@ -77,6 +77,8 @@ text_keys! {
     RecordPendingOperations => "送信中の操作があります。通信の復帰を待ってください",
     RecordFailedOperationsRemain => "失敗した操作を再試行するか破棄してください",
     RecordSets => "セット",
+    RecordOneRepMax => "推定 1RM",
+    RecordOneRepMaxReference => "参考値",
     RecordSetAdd => "セットを追加",
     RecordSetDelete => "セットを削除",
     RecordSetComplete => "完了",

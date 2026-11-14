@@ -5,6 +5,7 @@
 //! 操作 ID の保存を同じ `batch()` に入れる (ADR-002、ADR-003)。
 //! データ文が 0 行のときは操作 ID を残さず、段の文は保存した操作 ID があるときだけ動く。
 //! 段の重量は、自重種目ではセットごとの加重を表す。記録した時点の体重は `sets` が持つ。
+//! 完了の操作の後には、自己ベストを判定し、更新した項目を応答へ返す。
 
 use serde::Deserialize;
 use warrior_core::exercise::GripSelection;
@@ -15,7 +16,8 @@ use warrior_core::sync::{
     SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetSegmentPayload,
     SetUpdatePayload, ValidatedOperation, ValidatedPayload,
 };
-use worker::{Response, Result};
+use warrior_core::training_session::PersonalBestItem;
+use worker::{console_error, Response, Result};
 
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
@@ -123,6 +125,32 @@ pub(crate) async fn set_batch(
     ];
     statements.extend(data.children);
     Ok(BatchOutcome::Apply(statements))
+}
+
+/// セットの完了の適用の後に、自己ベストを判定して返す。
+///
+/// セットの完了以外の操作と、完了を取り消す操作は、自己ベストを変えない。
+pub(crate) async fn personal_bests_after_completion(
+    db: &Db,
+    user_id: &str,
+    validated: &ValidatedOperation,
+) -> Vec<PersonalBestItem> {
+    let ValidatedPayload::SetComplete(payload) = &validated.payload else {
+        return Vec::new();
+    };
+    if !payload.completed {
+        return Vec::new();
+    }
+    match crate::personal_best::apply_completion(db, user_id, &validated.operation.training_id)
+        .await
+    {
+        Ok(items) => items,
+        Err(error) => {
+            // セットの完了は保存済みである。サマリーの終了時に同じ判定をやり直す。
+            console_error!("failed to update the personal bests: {error}");
+            Vec::new()
+        }
+    }
 }
 
 /// セットのデータ文。先頭の文が操作の成否を決め、残りは操作 ID の保存の後に動く。

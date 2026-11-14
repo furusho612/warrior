@@ -151,7 +151,7 @@ fn PersonalBestRow(item: PersonalBestItem) -> Element {
     }
 }
 
-fn best_label(kind: BestKind) -> &'static str {
+pub(crate) fn best_label(kind: BestKind) -> &'static str {
     match kind {
         BestKind::MaxWeight => text(Key::SummaryBestMaxWeight),
         BestKind::EstimatedOneRepMax => text(Key::SummaryBestEstimatedOneRepMax),
@@ -160,7 +160,7 @@ fn best_label(kind: BestKind) -> &'static str {
     }
 }
 
-fn best_value(item: &PersonalBestItem) -> String {
+pub(crate) fn best_value(item: &PersonalBestItem) -> String {
     match item.kind {
         BestKind::LongestDuration => format_duration(item.value as i64),
         BestKind::EstimatedOneRepMax | BestKind::TotalWeight => {

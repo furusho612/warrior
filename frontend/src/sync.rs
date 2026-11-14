@@ -1,12 +1,14 @@
 //! 送信待ちの列をサーバーへ送る。
 //!
 //! 起動時と online イベントで送り、2xx で未保存の表示を消す (ADR-002)。
+//! セットの完了の応答が返す自己ベストは、記録中のトレーニングの端末内の行へ反映する。
 //! 送信の再試行は固定の sleep で待たず、次の online イベントか起動で行う。
 //! テストの待機も条件で行い、固定の sleep を書かない (ADR-024)。
 
 use std::cell::Cell;
 
-use warrior_core::sync::{next_sendable, Operation};
+use warrior_core::sync::{next_sendable, Operation, OperationResponse};
+use warrior_core::training_session::PersonalBestItem;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -154,9 +156,18 @@ async fn flush_inner() {
         if storage::generation() != generation {
             return;
         }
+        let (outcome, personal_bests) = outcome;
 
         match outcome {
             SendOutcome::Success => {
+                if !personal_bests.is_empty()
+                    && storage
+                        .merge_personal_bests(&entry.operation.training_id, &personal_bests)
+                        .await
+                        .is_err()
+                {
+                    return;
+                }
                 if storage.mark_success(&operation_id).await.is_err() {
                     return;
                 }
@@ -195,19 +206,19 @@ enum SendOutcome {
     Transient,
 }
 
-async fn send(operation: &Operation) -> SendOutcome {
+async fn send(operation: &Operation) -> (SendOutcome, Vec<PersonalBestItem>) {
     let Ok(body) = serde_json::to_string(operation) else {
-        return SendOutcome::Permanent;
+        return (SendOutcome::Permanent, Vec::new());
     };
     let Some(window) = web_sys::window() else {
-        return SendOutcome::Transient;
+        return (SendOutcome::Transient, Vec::new());
     };
     let headers = match Headers::new() {
         Ok(headers) => headers,
-        Err(_) => return SendOutcome::Transient,
+        Err(_) => return (SendOutcome::Transient, Vec::new()),
     };
     if headers.set("Content-Type", "application/json").is_err() {
-        return SendOutcome::Transient;
+        return (SendOutcome::Transient, Vec::new());
     }
     let init = RequestInit::new();
     init.set_method("POST");
@@ -215,16 +226,30 @@ async fn send(operation: &Operation) -> SendOutcome {
     init.set_body(&JsValue::from_str(&body));
     let request = match Request::new_with_str_and_init("/api/sync/operations", &init) {
         Ok(request) => request,
-        Err(_) => return SendOutcome::Transient,
+        Err(_) => return (SendOutcome::Transient, Vec::new()),
     };
     let response = JsFuture::from(window.fetch_with_request(&request)).await;
     let Ok(response) = response else {
-        return SendOutcome::Transient;
+        return (SendOutcome::Transient, Vec::new());
     };
     let Ok(response) = response.dyn_into::<Response>() else {
-        return SendOutcome::Transient;
+        return (SendOutcome::Transient, Vec::new());
     };
-    classify_status(response.status())
+    let outcome = classify_status(response.status());
+    if outcome != SendOutcome::Success {
+        return (outcome, Vec::new());
+    }
+    let personal_bests = match response.text() {
+        Ok(promise) => match JsFuture::from(promise).await {
+            Ok(value) => value.as_string(),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    }
+    .and_then(|text| serde_json::from_str::<OperationResponse>(&text).ok())
+    .map(|response| response.personal_bests)
+    .unwrap_or_default();
+    (SendOutcome::Success, personal_bests)
 }
 
 fn classify_status(status: u16) -> SendOutcome {

@@ -4,6 +4,7 @@
 use warrior_core::exercise::Laterality;
 use warrior_core::previous::PreviousSet;
 use warrior_core::set_calc::{RecordMode, SetKind, SetSegment, SideValue};
+use warrior_core::training_record::SetSegmentRecord;
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
@@ -184,6 +185,91 @@ fn req_set_007_the_drawer_formats_and_validates_rpe() {
     assert_eq!(view.validation_error(false), Some(Key::RecordSetRpeInvalid));
     view.rpe = String::new();
     assert_eq!(view.validation_error(false), None);
+}
+
+#[wasm_bindgen_test]
+fn req_set_008_one_rep_max_uses_the_weight_for_one_rep() {
+    let view = set_view_with_inputs("100", "1");
+    let value = view
+        .one_rep_max(RecordMode::WeightAndReps, false)
+        .expect("the estimated one rep max");
+
+    assert_eq!(value.value_kg, 100.0);
+    assert!(!value.is_reference);
+}
+
+#[wasm_bindgen_test]
+fn req_set_008_one_rep_max_uses_the_formula_for_more_reps() {
+    let view = set_view_with_inputs("100", "5");
+    let value = view
+        .one_rep_max(RecordMode::WeightAndReps, false)
+        .expect("the estimated one rep max");
+    let expected = warrior_core::set_calc::estimated_one_rep_max(100.0, 5).expect("the formula");
+
+    assert_eq!(value.value_kg, expected);
+    assert!(!value.is_reference);
+}
+
+#[wasm_bindgen_test]
+fn req_set_008_zero_reps_have_no_one_rep_max_and_more_than_ten_reps_are_a_reference() {
+    let zero = set_view_with_inputs("100", "0");
+    assert_eq!(zero.one_rep_max(RecordMode::WeightAndReps, false), None);
+
+    let eleven = set_view_with_inputs("100", "11");
+    let value = eleven
+        .one_rep_max(RecordMode::WeightAndReps, false)
+        .expect("the reference value");
+    assert!(value.is_reference);
+}
+
+#[wasm_bindgen_test]
+fn req_set_008_time_records_have_no_one_rep_max() {
+    let view = set_view_with_inputs("100", "5");
+    assert_eq!(view.one_rep_max(RecordMode::Time, false), None);
+}
+
+#[wasm_bindgen_test]
+fn req_set_008_a_unilateral_set_uses_the_larger_side() {
+    let mut view = set_view_with_inputs("0", "0");
+    view.segments[0].left_weight = "80".to_owned();
+    view.segments[0].left_reps = "5".to_owned();
+    view.segments[0].right_weight = "100".to_owned();
+    view.segments[0].right_reps = "5".to_owned();
+    let value = view
+        .one_rep_max(RecordMode::WeightAndReps, true)
+        .expect("the larger side");
+
+    assert_eq!(
+        value.value_kg,
+        warrior_core::set_calc::estimated_one_rep_max(100.0, 5).unwrap()
+    );
+}
+
+fn set_view_with_inputs(weight: &str, reps: &str) -> SetView {
+    let mut view = SetView::from_rows(
+        set_view("normal").record,
+        vec![SetSegmentRecord {
+            id: "segment".to_owned(),
+            set_id: "set".to_owned(),
+            position: 1,
+            weight_kg: Some(0.0),
+            reps: Some(0),
+            momentum_reps: 0,
+            assisted_reps: 0,
+            duration_seconds: None,
+            left_weight_kg: None,
+            left_reps: None,
+            left_duration_seconds: None,
+            right_weight_kg: None,
+            right_reps: None,
+            right_duration_seconds: None,
+            created_at: "2026-11-12T00:00:00Z".to_owned(),
+            updated_at: "2026-11-12T00:00:00Z".to_owned(),
+        }],
+    );
+    view.segments[0].weight = weight.to_owned();
+    view.segments[0].reps = reps.to_owned();
+    view
 }
 
 fn set_view(kind: &str) -> SetView {

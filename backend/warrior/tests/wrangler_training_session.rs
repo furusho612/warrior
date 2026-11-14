@@ -118,7 +118,7 @@ fn a_past_session_limits_the_updated_personal_bests() {
     ];
     assert_items(&summary.personal_bests, &updated);
     check_summary_endpoint(&server, &cookie, TRAINING_ID, &updated);
-    assert_items(&stored_bests(&server, TRAINING_ID), &session_bests());
+    assert_items(&stored_bests(&server, TRAINING_ID), &updated);
 }
 
 fn start_server(port: u16) -> DevServer {
@@ -376,6 +376,21 @@ fn seed_past_session(server: &DevServer) {
             personal_bests.to_string().replace('\'', "''")
         ))
         .expect("the past session must be seeded");
+    for (kind, value, grip) in [
+        ("max_weight", 105.0, BENCH_GRIP_KEY),
+        ("total_weight", 2_000.0, BENCH_GRIP_KEY),
+        ("max_weight", 999.0, "supinated_medium"),
+    ] {
+        server
+            .execute_d1_json(&format!(
+                "INSERT INTO personal_bests \
+                 (user_id, exercise_id, grip, attachment, kind, value, achieved_on, training_id, \
+                 created_at, updated_at) \
+                 VALUES ('{USER_ID}', '{BENCH_EXERCISE_ID}', '{grip}', '', '{kind}', {value}, \
+                 '{date}', '{PAST_TRAINING_ID}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+            ))
+            .expect("the past personal bests must be seeded");
+    }
 }
 
 fn seed_sets(server: &DevServer, training_id: &str) {

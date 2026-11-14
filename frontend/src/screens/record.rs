@@ -13,7 +13,7 @@ use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
     SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
-use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
+use warrior_core::training_session::{PersonalBestItem, SessionSource, TrainingSessionSummary};
 
 use crate::ids::{new_uuid, now_iso};
 use crate::routes::{navigate, Route};
@@ -26,7 +26,9 @@ use crate::training_session::TrainingApiError;
 mod exercise_view;
 mod exercises;
 mod failed_operations;
+mod one_rep_max;
 mod ownership;
+mod personal_bests;
 mod set_drawer;
 mod set_events;
 mod set_inputs;
@@ -37,6 +39,7 @@ mod superset_panel;
 use exercises::ExerciseSection;
 use failed_operations::FailedOperations;
 use ownership::RecordOwnership;
+use personal_bests::RecordPersonalBests;
 use set_events::{SetCompleted, SetCompletedEvents};
 
 #[component]
@@ -109,6 +112,7 @@ struct RecordState {
     confirmed: String,
     failed: Vec<OutboxEntry>,
     view_only: bool,
+    personal_bests: Vec<PersonalBestItem>,
 }
 
 /// 画面が読む同期の状態の signal。
@@ -117,6 +121,7 @@ struct StateSignals {
     status: Signal<SyncStatus>,
     failed: Signal<Vec<OutboxEntry>>,
     confirmed: Signal<String>,
+    personal_bests: Signal<Vec<PersonalBestItem>>,
 }
 
 /// 記録画面の入力と保存が共有する signal。
@@ -166,6 +171,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
     let ownership_busy = use_signal(|| false);
     let ownership_error = use_signal(|| Option::<String>::None);
     let completed_events = use_signal(Vec::<SetCompleted>::new);
+    let personal_bests = use_signal(Vec::<PersonalBestItem>::new);
     let completed_event_signal = SetCompletedEvents(completed_events);
     use_context_provider(|| completed_event_signal);
     let signals = RecordSignals {
@@ -187,6 +193,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
         status,
         failed,
         confirmed,
+        personal_bests,
     };
     let route_id = training_id.clone();
 
@@ -242,6 +249,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             }
             MemoEditor { signals, state_signals }
             RecordFinish { signals }
+            RecordPersonalBests { items: (state_signals.personal_bests)() }
             if profile_prompt() {
                 ProfilePrompt {}
             }
@@ -667,6 +675,9 @@ fn apply_state(mut state_signals: StateSignals, mut signals: RecordSignals, stat
     if *state_signals.confirmed.peek() != state.confirmed {
         state_signals.confirmed.set(state.confirmed);
     }
+    if *state_signals.personal_bests.peek() != state.personal_bests {
+        state_signals.personal_bests.set(state.personal_bests);
+    }
     if *signals.view_only.peek() != state.view_only {
         signals.view_only.set(state.view_only);
     }
@@ -691,12 +702,13 @@ async fn read_record_state(training_id: &str) -> RecordState {
         return RecordState::default();
     };
     let entries = storage.outbox_entries().await.unwrap_or_default();
-    let confirmed = storage
-        .session(training_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|session| session.confirmed_memo)
+    let session = storage.session(training_id).await.ok().flatten();
+    let confirmed = session
+        .as_ref()
+        .map(|session| session.confirmed_memo.clone())
+        .unwrap_or_default();
+    let personal_bests = session
+        .map(|session| session.personal_bests)
         .unwrap_or_default();
     let view_only = storage
         .forbidden_trainings()
@@ -709,6 +721,7 @@ async fn read_record_state(training_id: &str) -> RecordState {
             failed: failed_count(&entries),
         },
         confirmed,
+        personal_bests,
         failed: entries
             .into_iter()
             .filter(|entry| entry.state == OutboxState::Failed)

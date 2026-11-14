@@ -11,10 +11,11 @@ use warrior_core::exercise::{GripSelection, Laterality, RecordMode};
 use warrior_core::previous::PreviousSet;
 use warrior_core::profile::bodyweight_set_weight;
 use warrior_core::rpe;
-use warrior_core::set_calc::{BestKey, SetKind, SetRecord, SetSegment, SideValue};
+use warrior_core::set_calc::{BestKey, OneRepMax, SetKind, SetRecord, SetSegment, SideValue};
 use warrior_core::set_rules;
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 
+use super::one_rep_max::OneRepMaxBadge;
 pub(super) use super::set_inputs::Field;
 use super::set_inputs::SegmentInputs;
 use crate::storage::StoredSet;
@@ -371,6 +372,17 @@ impl SetView {
         }
     }
 
+    /// このセットの推定 1RM。時間で記録する種目と、重量か回数が空のときは None。
+    pub(super) fn one_rep_max(&self, mode: RecordMode, lateral: bool) -> Option<OneRepMax> {
+        if mode == RecordMode::Time {
+            return None;
+        }
+        self.segments
+            .first()?
+            .to_set_segment(mode, self.record.body_weight_kg, lateral)?
+            .one_rep_max()
+    }
+
     /// 入力の誤りを返す。RPE と回数の内訳を確かめる。
     pub(super) fn validation_error(&self, lateral: bool) -> Option<Key> {
         if rpe::parse(&self.rpe).is_err() {
@@ -657,6 +669,7 @@ fn SetRow(
                     }
                 }
                 RowButtons { buttons, disabled, on_action }
+                OneRepMaxBadge { value: set.one_rep_max(mode, is_lateral) }
             }
             for (segment_index, segment) in set.segments.iter().enumerate().skip(1) {
                 SegmentRow {

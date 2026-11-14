@@ -25,6 +25,7 @@ pub mod indexeddb;
 pub mod outbox;
 
 mod exercise;
+mod personal_best;
 mod set;
 mod stopwatch;
 mod superset;

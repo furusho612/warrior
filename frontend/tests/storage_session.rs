@@ -221,6 +221,68 @@ async fn saving_a_finished_summary_removes_the_session_from_the_active_session()
 }
 
 #[wasm_bindgen_test]
+async fn merging_personal_bests_keeps_the_last_value_of_the_same_key() {
+    let name = database_name("personal-best");
+    let storage = open(&name).await;
+    storage
+        .save_session_create(&session(""), &create_operation(CREATE_ID))
+        .await
+        .expect("the create must be saved");
+
+    storage
+        .merge_personal_bests(
+            TRAINING_ID,
+            &[
+                best(None, BestKind::MaxWeight, 100.0),
+                best(Some("pronated_medium"), BestKind::MaxWeight, 80.0),
+            ],
+        )
+        .await
+        .expect("the first response must be saved");
+    storage
+        .merge_personal_bests(
+            TRAINING_ID,
+            &[
+                best(None, BestKind::MaxWeight, 110.0),
+                best(None, BestKind::EstimatedOneRepMax, 120.0),
+            ],
+        )
+        .await
+        .expect("the second response must be saved");
+
+    let stored = storage
+        .session(TRAINING_ID)
+        .await
+        .expect("the session must be readable")
+        .expect("the session must exist");
+    assert_eq!(stored.personal_bests.len(), 3);
+    assert_eq!(stored.personal_bests[0].value, 110.0);
+    assert_eq!(
+        stored.personal_bests[1].grip.as_deref(),
+        Some("pronated_medium")
+    );
+    assert_eq!(stored.personal_bests[2].kind, BestKind::EstimatedOneRepMax);
+
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+fn best(grip: Option<&str>, kind: BestKind, value: f64) -> PersonalBestItem {
+    PersonalBestItem {
+        exercise_id: "bench-press".to_owned(),
+        exercise_name: Some("ベンチプレス".to_owned()),
+        record_mode: RecordMode::WeightAndReps,
+        laterality: Laterality::Bilateral,
+        grip: grip.map(str::to_owned),
+        attachment: None,
+        kind,
+        value,
+    }
+}
+
+#[wasm_bindgen_test]
 async fn a_duplicate_operation_id_aborts_and_does_not_write_the_session() {
     let name = database_name("duplicate");
     let storage = open(&name).await;

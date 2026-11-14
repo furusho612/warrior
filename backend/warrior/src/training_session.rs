@@ -1,8 +1,8 @@
 //! トレーニングの終了と、保存したサマリーの取得。
 //!
-//! 終了の時点でサーバーが D1 の種目、セット、段から今回のセッションのベストを計算し、
-//! 過去の終了済みトレーニングのベストと比較して、更新した自己ベストを返す。
-//! 今回のセッションのベストは `training_sessions.personal_bests` に保存する (ADR-015)。
+//! 終了の時点でサーバーが D1 の種目、セット、段から今回のセッションのベストを計算する。
+//! そのベストを `personal_bests` の表へ書き、このトレーニングで更新したものだけを
+//! `training_sessions.personal_bests` に保存して画面へ返す。
 //! 保存と読み直しは 1 つの `batch()` にまとめ、終了済みのトレーニングの終了は
 //! 保存済みの値を返す (ADR-002)。
 
@@ -11,9 +11,7 @@ use warrior_core::datetime;
 use warrior_core::jst::JstDate;
 use warrior_core::ownership::{decide_write, WriteDecision};
 use warrior_core::sql::{SqlStatement, SqlValue};
-use warrior_core::training_session::{
-    summary_from_sets, updated_personal_bests, PersonalBestItem, TrainingSessionSummary,
-};
+use warrior_core::training_session::{summary_from_sets, PersonalBestItem, TrainingSessionSummary};
 use worker::{console_error, Date, Request, Response, Result, RouteContext};
 
 use crate::auth::session;
@@ -35,11 +33,6 @@ struct SessionSummaryRow {
     personal_bests: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct PersonalBestsRow {
-    personal_bests: Option<String>,
-}
-
 const SESSION_SUMMARY_COLUMNS: &str = "date, started_at, finished_at, owner_terminal_id, \
      duration_seconds, total_weight_kg, exercise_count, set_count, personal_bests";
 
@@ -57,7 +50,7 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     };
     if session_row.finished_at.is_some() {
-        return summary_response(&db, &session_row, &training_id, &authenticated.id).await;
+        return summary_response(&session_row);
     }
     let Some(terminal_id) = ownership::ensure(&db, &request, &authenticated.id).await? else {
         return Ok(response(
@@ -101,7 +94,34 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
     let finished_at = datetime::format_utc(now_seconds);
     let duration_seconds = now_seconds.saturating_sub(started_seconds);
     let summary = summary_from_sets(achieved_on, duration_seconds, &sets);
-    let personal_bests = match serde_json::to_string(&summary.personal_bests) {
+    let candidates = warrior_core::personal_best::candidates(achieved_on, &sets);
+    if let Err(error) = crate::personal_best::apply_candidates(
+        &db,
+        &authenticated.id,
+        &training_id,
+        achieved_on,
+        &candidates,
+    )
+    .await
+    {
+        console_error!("failed to save the personal bests: {error}");
+        return Ok(response(ErrorCode::Internal, "internal error"));
+    }
+    let personal_bests = match crate::personal_best::updated_for_training(
+        &db,
+        &authenticated.id,
+        &training_id,
+        &summary.personal_bests,
+    )
+    .await
+    {
+        Ok(personal_bests) => personal_bests,
+        Err(error) => {
+            console_error!("failed to read the updated personal bests: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    let personal_bests = match serde_json::to_string(&personal_bests) {
         Ok(personal_bests) => personal_bests,
         Err(error) => {
             console_error!("failed to serialize the personal bests: {error}");
@@ -148,7 +168,7 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         console_error!("the summary select returned no row");
         return Ok(response(ErrorCode::Internal, "internal error"));
     };
-    summary_response(&db, &saved, &training_id, &authenticated.id).await
+    summary_response(&saved)
 }
 
 /// 終了の更新が 0 行だったときの、再取得した行からの応答。
@@ -182,7 +202,7 @@ async fn reject_or_return_saved_summary(
             let Some(row) = current else {
                 return Ok(response(ErrorCode::Internal, "internal error"));
             };
-            summary_response(db, &row, training_id, user_id).await
+            summary_response(&row)
         }
         FinishAfterBatch::Forbidden => {
             // 判定の後、更新の前にほかの端末が編集権を得た。
@@ -211,7 +231,7 @@ pub async fn summary(request: Request, context: RouteContext<()>) -> Result<Resp
     if session_row.finished_at.is_none() {
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     }
-    summary_response(&db, &session_row, &training_id, &authenticated.id).await
+    summary_response(&session_row)
 }
 
 fn current_seconds() -> i64 {
@@ -267,26 +287,12 @@ fn finish_statement(
     )
 }
 
-async fn summary_response(
-    db: &Db,
-    row: &SessionSummaryRow,
-    training_id: &str,
-    user_id: &str,
-) -> Result<Response> {
+fn summary_response(row: &SessionSummaryRow) -> Result<Response> {
     let Some(summary) = stored_summary(row) else {
         console_error!("the stored summary is incomplete");
         return Ok(response(ErrorCode::Internal, "internal error"));
     };
-    let finished_at = row.finished_at.as_deref().unwrap_or_default();
-    let past = past_personal_bests(db, user_id, training_id, finished_at).await?;
-    let personal_bests = updated_personal_bests(&summary.personal_bests, &past);
-    Response::from_json(&TrainingSessionSummary {
-        duration_seconds: summary.duration_seconds,
-        total_weight_kg: summary.total_weight_kg,
-        exercise_count: summary.exercise_count,
-        set_count: summary.set_count,
-        personal_bests,
-    })
+    Response::from_json(&summary)
 }
 
 fn stored_summary(row: &SessionSummaryRow) -> Option<TrainingSessionSummary> {
@@ -300,39 +306,6 @@ fn stored_summary(row: &SessionSummaryRow) -> Option<TrainingSessionSummary> {
         )
         .ok()?,
     })
-}
-
-async fn past_personal_bests(
-    db: &Db,
-    user_id: &str,
-    training_id: &str,
-    finished_at: &str,
-) -> Result<Vec<PersonalBestItem>> {
-    let result = db
-        .all(&SqlStatement::new(
-            "SELECT personal_bests FROM training_sessions \
-             WHERE user_id = ? AND id <> ? AND finished_at IS NOT NULL AND finished_at < ? \
-             AND personal_bests IS NOT NULL",
-            vec![
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(training_id.to_owned()),
-                SqlValue::Text(finished_at.to_owned()),
-            ],
-        ))
-        .await?;
-    let rows = result.results::<PersonalBestsRow>()?;
-    let mut items = Vec::new();
-    for row in rows {
-        let Some(personal_bests) = row.personal_bests else {
-            continue;
-        };
-        let stored =
-            serde_json::from_str::<Vec<PersonalBestItem>>(&personal_bests).map_err(|error| {
-                worker::Error::RustError(format!("the stored personal bests are invalid: {error}"))
-            })?;
-        items.extend(stored);
-    }
-    Ok(items)
 }
 
 #[cfg(test)]
