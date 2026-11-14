@@ -214,7 +214,11 @@ proptest! {
     #[test]
     fn day_body_parts_keep_the_eight_part_order(mask in body_part_mask()) {
         let expected = masked_parts(&mask);
-        prop_assert_eq!(day_body_parts(expected.clone()), expected.clone());
+        let mut rotated = expected.clone();
+        if !rotated.is_empty() {
+            rotated.rotate_left(1);
+        }
+        prop_assert_eq!(day_body_parts(rotated), expected.clone());
         let reversed = expected.iter().rev().copied().collect::<Vec<_>>();
         prop_assert_eq!(day_body_parts(reversed), expected.clone());
         let mut unique = expected.clone();

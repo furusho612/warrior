@@ -330,7 +330,7 @@ mod tests {
 
     use serde_json::json;
     use warrior_core::exercise::{BodyPart, Laterality};
-    use warrior_core::set_calc::{RecordMode, SetKind};
+    use warrior_core::set_calc::{RecordMode, SetKind, SideValue};
 
     use super::{build_exercises, session_sets, BuildSetsError, SetSegmentRow};
 
@@ -437,6 +437,44 @@ mod tests {
     }
 
     #[test]
+    fn a_unilateral_row_becomes_the_left_and_right_sides() {
+        let row = unilateral_row(
+            "training-a",
+            "exercise-unilateral",
+            "set-normal",
+            (10.0, 5),
+            (12.5, 4),
+        );
+        let exercises = build_exercises(vec![row]).expect("the stored sets are valid");
+        assert_eq!(exercises.len(), 1);
+        assert_eq!(exercises[0].sets.len(), 1);
+        let segments = exercises[0].sets[0].segments();
+        assert_eq!(segments.len(), 1);
+        let segment = &segments[0];
+        assert_eq!(segment.weight_kg, 0.0);
+        assert_eq!(segment.reps, 0);
+        assert_eq!(segment.momentum_reps, 2);
+        assert_eq!(segment.assisted_reps, 1);
+        assert_eq!(segment.duration_seconds, None);
+        assert_eq!(
+            segment.left,
+            Some(SideValue {
+                weight_kg: 10.0,
+                reps: 5,
+                duration_seconds: None,
+            })
+        );
+        assert_eq!(
+            segment.right,
+            Some(SideValue {
+                weight_kg: 12.5,
+                reps: 4,
+                duration_seconds: None,
+            })
+        );
+    }
+
+    #[test]
     fn an_unknown_set_kind_is_rejected() {
         let rows = vec![segment_row(
             "training-a",
@@ -515,20 +553,10 @@ mod tests {
         } else {
             "weight_and_reps"
         };
-        let snapshot = json!({
-            "exercise_id": exercise_id,
-            "name": exercise_id,
-            "body_part": "chest",
-            "muscles": [],
-            "record_mode": record_mode,
-            "laterality": "bilateral",
-            "grip_mode": "none",
-            "grip_options": []
-        });
         SetSegmentRow {
             training_id: training_id.to_owned(),
             training_exercise_id: exercise_id.to_owned(),
-            snapshot: snapshot.to_string(),
+            snapshot: snapshot_json(exercise_id, record_mode, "bilateral"),
             set_id: set_id.to_owned(),
             kind: kind.to_owned(),
             set_rpe: None,
@@ -546,5 +574,49 @@ mod tests {
             right_reps: None,
             right_duration_seconds: None,
         }
+    }
+
+    fn unilateral_row(
+        training_id: &str,
+        exercise_id: &str,
+        set_id: &str,
+        left: (f64, i64),
+        right: (f64, i64),
+    ) -> SetSegmentRow {
+        SetSegmentRow {
+            training_id: training_id.to_owned(),
+            training_exercise_id: exercise_id.to_owned(),
+            snapshot: snapshot_json(exercise_id, "weight_and_reps", "unilateral"),
+            set_id: set_id.to_owned(),
+            kind: "normal".to_owned(),
+            set_rpe: None,
+            grip: None,
+            segment_id: Some(format!("{set_id}-segment")),
+            weight_kg: None,
+            reps: None,
+            momentum_reps: Some(2),
+            assisted_reps: Some(1),
+            duration_seconds: None,
+            left_weight_kg: Some(left.0),
+            left_reps: Some(left.1),
+            left_duration_seconds: None,
+            right_weight_kg: Some(right.0),
+            right_reps: Some(right.1),
+            right_duration_seconds: None,
+        }
+    }
+
+    fn snapshot_json(exercise_id: &str, record_mode: &str, laterality: &str) -> String {
+        json!({
+            "exercise_id": exercise_id,
+            "name": exercise_id,
+            "body_part": "chest",
+            "muscles": [],
+            "record_mode": record_mode,
+            "laterality": laterality,
+            "grip_mode": "none",
+            "grip_options": []
+        })
+        .to_string()
     }
 }

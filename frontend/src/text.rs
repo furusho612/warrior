@@ -88,7 +88,6 @@ text_keys! {
     RecordRail => "種目",
     RestTimer => "レストタイマー",
     CalendarTitle => "カレンダー",
-    CalendarDescription => "日ごとのトレーニングと部位をここに表示します。",
     CalendarPreviousMonth => "前の月",
     CalendarNextMonth => "次の月",
     CalendarTrainingDays => "トレーニング",

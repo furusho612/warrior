@@ -91,7 +91,13 @@ pub async fn month(request: Request, context: RouteContext<()>) -> Result<Respon
 
 /// `GET /api/calendar/:date`
 pub async fn day(request: Request, context: RouteContext<()>) -> Result<Response> {
-    let Some(text) = context.param("date").cloned() else {
+    // 認証を日付の検証より先に返すため、param は env の取り出し前に読み取る。
+    let date_text = context.param("date").cloned();
+    let env = context.env;
+    let Some(authenticated) = session::resolve(&request, &env).await? else {
+        return Ok(response(ErrorCode::Unauthorized, "authentication required"));
+    };
+    let Some(text) = date_text else {
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     };
     let Some(date) = JstDate::parse(&text) else {
@@ -99,10 +105,6 @@ pub async fn day(request: Request, context: RouteContext<()>) -> Result<Response
             ErrorCode::BadRequest,
             "the date must be YYYY-MM-DD",
         ));
-    };
-    let env = context.env;
-    let Some(authenticated) = session::resolve(&request, &env).await? else {
-        return Ok(response(ErrorCode::Unauthorized, "authentication required"));
     };
     let db = Db::new(env.d1("DB")?);
     let sessions = db

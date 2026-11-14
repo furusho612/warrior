@@ -18,192 +18,296 @@ use crate::text::{text, Key};
 #[component]
 pub fn CalendarScreen() -> Element {
     let today = current_date();
-    let mut month = use_signal(|| today.map(|date| date.month_range()));
-    let mut part = use_signal(|| Option::<BodyPart>::None);
-    let mut selected = use_signal(|| Option::<JstDate>::None);
-    let mut month_data = use_signal(|| Option::<CalendarMonth>::None);
-    let mut day_data = use_signal(|| Option::<CalendarDayDetail>::None);
-    let month_error = use_signal(|| Option::<String>::None);
-    let mut day_error = use_signal(|| Option::<String>::None);
-    let mut month_reload = use_signal(|| 0u32);
-    let mut day_reload = use_signal(|| 0u32);
+    let state = use_calendar_state(today);
+    let handlers = calendar_handlers(state);
 
-    use_effect(move || {
-        let _ = month_reload();
-        let Some(current) = month() else {
-            return;
-        };
-        let part = part();
-        spawn(async move {
-            load_month(current, part, month_data, month_error).await;
-        });
-    });
-
-    use_effect(move || {
-        let _ = day_reload();
-        let Some(date) = selected() else {
-            return;
-        };
-        spawn(async move {
-            load_day(date, day_data, day_error).await;
-        });
-    });
-
-    let on_select = EventHandler::new(move |date: JstDate| {
-        selected.set(Some(date));
-        day_data.set(None);
-        day_error.set(None);
-    });
-    let on_part = EventHandler::new(move |value: Option<BodyPart>| {
-        part.set(value);
-    });
-    let on_previous = EventHandler::new(move |_: ()| {
-        let Some(current) = month() else {
-            return;
-        };
-        let Some(previous) = previous_month(current) else {
-            return;
-        };
-        month.set(Some(previous));
-        month_data.set(None);
-        selected.set(None);
-        day_data.set(None);
-    });
-    let on_next = EventHandler::new(move |_: ()| {
-        let Some(current) = month() else {
-            return;
-        };
-        let Some(next) = next_month(current) else {
-            return;
-        };
-        month.set(Some(next));
-        month_data.set(None);
-        selected.set(None);
-        day_data.set(None);
-    });
-    let on_month_retry = EventHandler::new(move |_: ()| {
-        month_reload += 1;
-    });
-    let on_day_retry = EventHandler::new(move |_: ()| {
-        day_reload += 1;
-    });
-
-    let month_now = month();
-    let part_now = part();
-    let view = month_data();
-    let detail = day_data();
-    let loading = month_now.is_some() && view.is_none() && month_error().is_none();
-    let (year, month_number) = month_now
-        .map(|current| (current.start().year(), current.start().month()))
-        .unwrap_or_default();
-    let cells = build_cells(month_now, view.as_ref(), selected(), today);
-    let counts = part_counts(view.as_ref());
+    let month_now = (state.month)();
+    let part_now = (state.part)();
+    let selected = (state.selected)();
+    let view = (state.month_data)();
+    let month_error = (state.month_error)();
+    let detail = (state.day_data)();
+    let day_error = (state.day_error)();
     let training_days = view.as_ref().map(|view| view.training_days).unwrap_or(0);
-    let detail_loading = selected().is_some() && detail.is_none() && day_error().is_none();
-    let month_attr = month_now.map(month_text).unwrap_or_default();
-    let part_attr = part_now.map(BodyPart::as_str).unwrap_or_default();
+    let loading = month_now.is_some() && view.is_none() && month_error.is_none();
+    let detail_loading = selected.is_some() && detail.is_none() && day_error.is_none();
 
     rsx! {
         div {
             class: "flex min-h-full",
             "data-calendar": "true",
-            "data-calendar-month": month_attr,
-            "data-calendar-selected-part": part_attr,
+            "data-calendar-month": month_now.map(month_text).unwrap_or_default(),
+            "data-calendar-selected-part": part_now.map(BodyPart::as_str).unwrap_or_default(),
             PartRail {
-                counts: counts,
+                counts: part_counts(view.as_ref()),
                 selected: part_now,
                 training_days: training_days,
-                on_select: on_part,
+                on_select: handlers.part,
             }
             section { class: "min-w-0 flex-1 px-3.5",
                 div { class: "flex h-12 items-center justify-between",
                     h1 { class: "text-[17px] font-black", "{text(Key::CalendarTitle)}" }
                 }
-                div { class: "flex h-11 items-center justify-between",
-                    button {
-                        class: "flex h-11 w-11 items-center justify-center border border-line",
-                        "data-calendar-previous": "true",
-                        "aria-label": text(Key::CalendarPreviousMonth),
-                        onclick: move |_| on_previous.call(()),
-                        svg {
-                            class: "h-5 w-5",
-                            view_box: "0 0 24 24",
-                            fill: "none",
-                            stroke: "currentColor",
-                            stroke_width: "2",
-                            stroke_linecap: "round",
-                            stroke_linejoin: "round",
-                            path { d: "M15 5l-7 7 7 7" }
-                        }
-                    }
-                    div { class: "flex items-baseline gap-3",
-                        span { class: "text-sm font-bold",
-                            span { class: "font-condensed text-[26px] font-semibold", "{year}" }
-                            " 年 "
-                            span { class: "font-condensed text-[26px] font-semibold", "{month_number}" }
-                            " 月"
-                        }
-                        span { class: "text-xs text-text-sub",
-                            "{text(Key::CalendarTrainingDays)} "
-                            strong {
-                                class: "font-condensed text-xl font-semibold text-text",
-                                "data-calendar-training-days": "{training_days}",
-                                "{training_days}"
-                            }
-                            " {text(Key::CalendarDaysUnit)}"
-                        }
-                    }
-                    button {
-                        class: "flex h-11 w-11 items-center justify-center border border-line",
-                        "data-calendar-next": "true",
-                        "aria-label": text(Key::CalendarNextMonth),
-                        onclick: move |_| on_next.call(()),
-                        svg {
-                            class: "h-5 w-5",
-                            view_box: "0 0 24 24",
-                            fill: "none",
-                            stroke: "currentColor",
-                            stroke_width: "2",
-                            stroke_linecap: "round",
-                            stroke_linejoin: "round",
-                            path { d: "M9 5l7 7-7 7" }
-                        }
-                    }
+                MonthHeading {
+                    month: month_now,
+                    training_days: training_days,
+                    on_previous: handlers.previous,
+                    on_next: handlers.next,
                 }
-                div {
-                    class: "mt-3 grid grid-cols-7 text-center text-[11px] leading-5 text-text-sub",
-                    "aria-hidden": "true",
-                    for weekday in weekdays() {
-                        span { "{weekday}" }
-                    }
-                }
-                div { class: "grid grid-cols-7",
-                    for cell in cells {
-                        if let Some(cell) = cell {
-                            CalendarDayCell { cell: cell, on_select: on_select }
-                        } else {
-                            div { class: "h-[50px] border-t border-line", "aria-hidden": "true" }
-                        }
-                    }
+                MonthGrid {
+                    month: month_now,
+                    view: view,
+                    selected: selected,
+                    today: today,
+                    on_select: handlers.select,
                 }
                 DayDetail {
                     detail: detail,
-                    selected: selected(),
-                    error: day_error(),
+                    selected: selected,
+                    error: day_error,
                     loading: detail_loading,
-                    on_retry: on_day_retry,
+                    on_retry: handlers.day_retry,
                 }
-                if loading {
-                    p { class: "mt-2 text-[13px] text-text-sub", "{text(Key::CalendarLoading)}" }
+                MonthStatus {
+                    loading: loading,
+                    error: month_error,
+                    on_retry: handlers.month_retry,
                 }
-                if let Some(message) = month_error() {
-                    p { class: "mt-2 text-[13px] text-primary", "{message}" }
-                    button {
-                        class: "mt-1 min-h-11 border border-line px-3 text-[13px]",
-                        onclick: move |_| on_month_retry.call(()),
-                        "{text(Key::CalendarRetry)}"
+            }
+        }
+    }
+}
+
+/// カレンダー画面の状態。月と日の読み込みも、この状態へ書き込む。
+#[derive(Clone, Copy)]
+struct CalendarSignals {
+    month: Signal<Option<JstMonth>>,
+    part: Signal<Option<BodyPart>>,
+    selected: Signal<Option<JstDate>>,
+    month_data: Signal<Option<CalendarMonth>>,
+    month_error: Signal<Option<String>>,
+    day_data: Signal<Option<CalendarDayDetail>>,
+    day_error: Signal<Option<String>>,
+    month_reload: Signal<u32>,
+    day_reload: Signal<u32>,
+    month_generation: Signal<u32>,
+    day_generation: Signal<u32>,
+}
+
+/// カレンダー画面の状態を作り、月と日の読み込みを始める効果を登録する。
+fn use_calendar_state(today: Option<JstDate>) -> CalendarSignals {
+    let state = CalendarSignals {
+        month: use_signal(|| today.map(|date| date.month_range())),
+        part: use_signal(|| Option::<BodyPart>::None),
+        selected: use_signal(|| Option::<JstDate>::None),
+        month_data: use_signal(|| Option::<CalendarMonth>::None),
+        month_error: use_signal(|| Option::<String>::None),
+        day_data: use_signal(|| Option::<CalendarDayDetail>::None),
+        day_error: use_signal(|| Option::<String>::None),
+        month_reload: use_signal(|| 0u32),
+        day_reload: use_signal(|| 0u32),
+        month_generation: use_signal(|| 0u32),
+        day_generation: use_signal(|| 0u32),
+    };
+
+    use_effect(move || {
+        let mut state = state;
+        let _ = (state.month_reload)();
+        let Some(current) = (state.month)() else {
+            return;
+        };
+        let generation = state.month_generation.peek().wrapping_add(1);
+        state.month_generation.set(generation);
+        state.month_error.set(None);
+        let request = MonthLoad {
+            generation,
+            month: current,
+            part: (state.part)(),
+        };
+        spawn(async move {
+            load_month(request, state).await;
+        });
+    });
+
+    use_effect(move || {
+        let mut state = state;
+        let _ = (state.day_reload)();
+        let Some(date) = (state.selected)() else {
+            return;
+        };
+        let generation = state.day_generation.peek().wrapping_add(1);
+        state.day_generation.set(generation);
+        state.day_error.set(None);
+        let request = DayLoad { generation, date };
+        spawn(async move {
+            load_day(request, state).await;
+        });
+    });
+
+    state
+}
+
+/// カレンダー画面の操作。
+#[derive(Clone, Copy)]
+struct CalendarHandlers {
+    select: EventHandler<JstDate>,
+    part: EventHandler<Option<BodyPart>>,
+    previous: EventHandler<()>,
+    next: EventHandler<()>,
+    month_retry: EventHandler<()>,
+    day_retry: EventHandler<()>,
+}
+
+fn calendar_handlers(state: CalendarSignals) -> CalendarHandlers {
+    CalendarHandlers {
+        select: EventHandler::new(move |date: JstDate| {
+            let mut state = state;
+            state.selected.set(Some(date));
+            state.day_data.set(None);
+            state.day_error.set(None);
+        }),
+        part: EventHandler::new(move |value: Option<BodyPart>| {
+            let mut state = state;
+            state.part.set(value);
+        }),
+        previous: EventHandler::new(move |_: ()| move_to_month(state, previous_month)),
+        next: EventHandler::new(move |_: ()| move_to_month(state, next_month)),
+        month_retry: EventHandler::new(move |_: ()| {
+            let mut state = state;
+            state.month_reload += 1;
+        }),
+        day_retry: EventHandler::new(move |_: ()| {
+            let mut state = state;
+            state.day_reload += 1;
+        }),
+    }
+}
+
+/// 月を移し、前の月の読み込み結果と選択を捨てる。
+fn move_to_month(state: CalendarSignals, target: impl FnOnce(JstMonth) -> Option<JstMonth>) {
+    let mut state = state;
+    let Some(month) = (state.month)() else {
+        return;
+    };
+    let Some(month) = target(month) else {
+        return;
+    };
+    state.month.set(Some(month));
+    state.month_data.set(None);
+    state.selected.set(None);
+    state.day_data.set(None);
+    state.day_error.set(None);
+}
+
+/// 月の見出しと、前後の月への移動。
+#[component]
+fn MonthHeading(
+    month: Option<JstMonth>,
+    training_days: u32,
+    on_previous: EventHandler<()>,
+    on_next: EventHandler<()>,
+) -> Element {
+    let (year, month_number) = month
+        .map(|current| (current.start().year(), current.start().month()))
+        .unwrap_or_default();
+    rsx! {
+        div { class: "flex h-11 items-center justify-between",
+            button {
+                class: "flex h-11 w-11 items-center justify-center border border-line",
+                "data-calendar-previous": "true",
+                "aria-label": text(Key::CalendarPreviousMonth),
+                onclick: move |_| on_previous.call(()),
+                svg {
+                    class: "h-5 w-5",
+                    view_box: "0 0 24 24",
+                    fill: "none",
+                    stroke: "currentColor",
+                    stroke_width: "2",
+                    stroke_linecap: "round",
+                    stroke_linejoin: "round",
+                    path { d: "M15 5l-7 7 7 7" }
+                }
+            }
+            div { class: "flex items-baseline gap-3",
+                span { class: "text-sm font-bold",
+                    span { class: "font-condensed text-[26px] font-semibold", "{year}" }
+                    " 年 "
+                    span { class: "font-condensed text-[26px] font-semibold", "{month_number}" }
+                    " 月"
+                }
+                span { class: "text-xs text-text-sub",
+                    "{text(Key::CalendarTrainingDays)} "
+                    strong {
+                        class: "font-condensed text-xl font-semibold text-text",
+                        "data-calendar-training-days": "{training_days}",
+                        "{training_days}"
                     }
+                    " {text(Key::CalendarDaysUnit)}"
                 }
+            }
+            button {
+                class: "flex h-11 w-11 items-center justify-center border border-line",
+                "data-calendar-next": "true",
+                "aria-label": text(Key::CalendarNextMonth),
+                onclick: move |_| on_next.call(()),
+                svg {
+                    class: "h-5 w-5",
+                    view_box: "0 0 24 24",
+                    fill: "none",
+                    stroke: "currentColor",
+                    stroke_width: "2",
+                    stroke_linecap: "round",
+                    stroke_linejoin: "round",
+                    path { d: "M9 5l7 7-7 7" }
+                }
+            }
+        }
+    }
+}
+
+/// 曜日の見出しと、月の日のセルのグリッド。
+#[component]
+fn MonthGrid(
+    month: Option<JstMonth>,
+    view: Option<CalendarMonth>,
+    selected: Option<JstDate>,
+    today: Option<JstDate>,
+    on_select: EventHandler<JstDate>,
+) -> Element {
+    let cells = build_cells(month, view.as_ref(), selected, today);
+    rsx! {
+        div {
+            class: "mt-3 grid grid-cols-7 text-center text-[11px] leading-5 text-text-sub",
+            "aria-hidden": "true",
+            for weekday in weekdays() {
+                span { "{weekday}" }
+            }
+        }
+        div { class: "grid grid-cols-7",
+            for cell in cells {
+                if let Some(cell) = cell {
+                    CalendarDayCell { cell: cell, on_select: on_select }
+                } else {
+                    div { class: "h-[50px] border-t border-line", "aria-hidden": "true" }
+                }
+            }
+        }
+    }
+}
+
+/// 月の読み込み中と、読み込みに失敗したときの表示。
+#[component]
+fn MonthStatus(loading: bool, error: Option<String>, on_retry: EventHandler<()>) -> Element {
+    rsx! {
+        if loading {
+            p { class: "mt-2 text-[13px] text-text-sub", "{text(Key::CalendarLoading)}" }
+        }
+        if let Some(message) = error {
+            p { class: "mt-2 text-[13px] text-primary", "{message}" }
+            button {
+                class: "mt-1 min-h-11 border border-line px-3 text-[13px]",
+                onclick: move |_| on_retry.call(()),
+                "{text(Key::CalendarRetry)}"
             }
         }
     }
@@ -266,7 +370,7 @@ fn PartRail(
 #[component]
 fn CalendarDayCell(cell: CalendarCell, on_select: EventHandler<JstDate>) -> Element {
     let class = day_cell_class(&cell);
-    let number_class = day_number_class(cell.today);
+    let number_class = day_number_class(&cell);
     let date = cell.date;
     let label = day_aria_label(&cell);
     let parts = cell
@@ -282,6 +386,7 @@ fn CalendarDayCell(cell: CalendarCell, on_select: EventHandler<JstDate>) -> Elem
             "data-calendar-parts": parts,
             "data-calendar-highlighted": if cell.highlighted { "true" } else { "false" },
             "data-calendar-selected": if cell.selected { "true" } else { "false" },
+            "data-calendar-future": if cell.future { "true" } else { "false" },
             "aria-pressed": if cell.selected { "true" } else { "false" },
             "aria-label": label,
             onclick: move |_| on_select.call(date),
@@ -424,39 +529,75 @@ fn SetDetail(index: usize, set: CalendarSet) -> Element {
     }
 }
 
-async fn load_month(
+/// 月の読み込み要求。応答を適用してよいかを、要求した月と部位と世代で決める。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MonthLoad {
+    /// 要求の世代。要求を出すたびに進む。
+    generation: u32,
     month: JstMonth,
     part: Option<BodyPart>,
-    mut data: Signal<Option<CalendarMonth>>,
-    mut error: Signal<Option<String>>,
-) {
-    error.set(None);
-    match calendar_api::month(month.start(), part).await {
+}
+
+impl MonthLoad {
+    /// いまの世代が要求のままで、表示中の月と部位も要求のままなら応答を適用する。
+    fn is_current(self, generation: u32, month: Option<JstMonth>, part: Option<BodyPart>) -> bool {
+        self.generation == generation && month == Some(self.month) && self.part == part
+    }
+}
+
+/// 日の読み込み要求。応答を適用してよいかを、要求した日と世代で決める。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DayLoad {
+    /// 要求の世代。要求を出すたびに進む。
+    generation: u32,
+    date: JstDate,
+}
+
+impl DayLoad {
+    /// いまの世代が要求のままで、選択中の日も要求のままなら応答を適用する。
+    fn is_current(self, generation: u32, selected: Option<JstDate>) -> bool {
+        self.generation == generation && selected == Some(self.date)
+    }
+}
+
+async fn load_month(request: MonthLoad, mut state: CalendarSignals) {
+    let result = calendar_api::month(request.month.start(), request.part).await;
+    if !request.is_current(
+        *state.month_generation.peek(),
+        *state.month.peek(),
+        *state.part.peek(),
+    ) {
+        return;
+    }
+    match result {
         Ok(view) => {
-            data.set(Some(view));
-            error.set(None);
+            state.month_data.set(Some(view));
+            state.month_error.set(None);
         }
         Err(_) => {
-            data.set(None);
-            error.set(Some(text(Key::CalendarLoadFailed).to_owned()));
+            state.month_data.set(None);
+            state
+                .month_error
+                .set(Some(text(Key::CalendarLoadFailed).to_owned()));
         }
     }
 }
 
-async fn load_day(
-    date: JstDate,
-    mut data: Signal<Option<CalendarDayDetail>>,
-    mut error: Signal<Option<String>>,
-) {
-    error.set(None);
-    match calendar_api::day(date).await {
+async fn load_day(request: DayLoad, mut state: CalendarSignals) {
+    let result = calendar_api::day(request.date).await;
+    if !request.is_current(*state.day_generation.peek(), *state.selected.peek()) {
+        return;
+    }
+    match result {
         Ok(detail) => {
-            data.set(Some(detail));
-            error.set(None);
+            state.day_data.set(Some(detail));
+            state.day_error.set(None);
         }
         Err(_) => {
-            data.set(None);
-            error.set(Some(text(Key::CalendarDayLoadFailed).to_owned()));
+            state.day_data.set(None);
+            state
+                .day_error
+                .set(Some(text(Key::CalendarDayLoadFailed).to_owned()));
         }
     }
 }
@@ -468,4 +609,79 @@ fn current_date() -> Option<JstDate> {
 
 fn month_text(month: JstMonth) -> String {
     format!("{:04}-{:02}", month.start().year(), month.start().month())
+}
+
+#[cfg(test)]
+mod tests {
+    //! 月と日の読み込み結果を適用してよいかの単体テスト。
+    //!
+    //! 要求の受入基準は E2E が担う。応答の到着順は実ブラウザの通信に依存するため、
+    //! ここでは古い応答を捨てる条件を直接確かめる。
+
+    use warrior_core::calendar::next_month;
+    use warrior_core::exercise::BodyPart;
+    use warrior_core::jst::JstDate;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::{DayLoad, MonthLoad};
+
+    #[wasm_bindgen_test]
+    fn a_month_response_of_a_month_that_moved_away_is_not_applied() {
+        let november = JstDate::new(2026, 11, 12).unwrap().month_range();
+        let december = next_month(november).expect("a next month");
+        let request = MonthLoad {
+            generation: 2,
+            month: november,
+            part: None,
+        };
+        assert!(request.is_current(2, Some(november), None));
+        assert!(
+            !request.is_current(2, Some(december), None),
+            "the displayed month moved before the response arrived"
+        );
+        assert!(
+            !request.is_current(3, Some(november), None),
+            "a newer request replaced this request"
+        );
+        assert!(
+            !request.is_current(2, Some(november), Some(BodyPart::Chest)),
+            "the part filter changed before the response arrived"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_month_response_is_applied_while_the_filter_stays() {
+        let november = JstDate::new(2026, 11, 12).unwrap().month_range();
+        let request = MonthLoad {
+            generation: 4,
+            month: november,
+            part: Some(BodyPart::Chest),
+        };
+        assert!(request.is_current(4, Some(november), Some(BodyPart::Chest)));
+        assert!(!request.is_current(4, Some(november), None));
+        assert!(!request.is_current(4, Some(november), Some(BodyPart::Legs)));
+    }
+
+    #[wasm_bindgen_test]
+    fn a_day_response_of_an_unselected_day_is_not_applied() {
+        let first = JstDate::new(2026, 11, 1).unwrap();
+        let second = JstDate::new(2026, 11, 2).unwrap();
+        let request = DayLoad {
+            generation: 5,
+            date: first,
+        };
+        assert!(request.is_current(5, Some(first)));
+        assert!(
+            !request.is_current(5, Some(second)),
+            "the selected day changed before the response arrived"
+        );
+        assert!(
+            !request.is_current(5, None),
+            "the month moved and the day is no longer selected"
+        );
+        assert!(
+            !request.is_current(6, Some(first)),
+            "a newer request replaced this request"
+        );
+    }
 }

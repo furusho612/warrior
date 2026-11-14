@@ -14,15 +14,20 @@ use warrior_core::base64url;
 const DEFAULT_PORT: u16 = 8788;
 
 fn main() {
-    let port = parse_port();
-    let listener = TcpListener::bind(("127.0.0.1", port)).expect("test OIDC provider must bind");
-    let mut state = State::new(port);
+    let (listener, mut state) = listen(parse_port()).expect("test OIDC provider must bind");
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
         };
         let _ = handle(stream, &mut state);
     }
+}
+
+/// 待ち受ける listener と、実際のポートから決めた発行元を持つ状態を返す。
+fn listen(port: u16) -> std::io::Result<(TcpListener, State)> {
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, State::new(port)))
 }
 
 fn parse_port() -> u16 {
@@ -343,4 +348,27 @@ fn response(status: u16, content_type: &str, headers: &[(&str, &str)], body: &st
     response.push_str("\r\n");
     response.push_str(body);
     response.into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{id_token, listen};
+
+    #[test]
+    fn the_id_token_issuer_uses_the_port_the_server_listens_on() {
+        let (listener, state) = listen(0).expect("the provider must bind a free port");
+        let port = listener
+            .local_addr()
+            .expect("the listener has a local address")
+            .port();
+        assert_ne!(port, 0, "port 0 must be replaced by the bound port");
+        let token = id_token("sub-a", "nonce-a", "client-a", &state.issuer);
+        let payload = token.split('.').nth(1).expect("the payload segment");
+        let payload = warrior_core::base64url::decode(payload).expect("the payload is base64url");
+        let payload: Value = serde_json::from_slice(&payload).expect("the payload is JSON");
+        assert_eq!(payload["iss"], format!("http://localhost:{port}"));
+        assert_eq!(payload["aud"], "client-a");
+    }
 }

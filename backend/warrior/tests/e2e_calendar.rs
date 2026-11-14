@@ -1,21 +1,20 @@
 //! カレンダーの月表示、部位の色、日数の集計、日の詳細、絞り込み、凡例の E2E。
 //!
 //! 対応する要求: `REQ-CLD-001`、`REQ-CLD-002`、`REQ-CLD-003`、`REQ-CLD-004`、`REQ-CLD-005`、`REQ-CLD-006`。
-//! 日付は日本時間の今日の月から作り、種目とセットは D1 に置く。
+//! 日付は画面が表示している月を基準に作り、種目とセットは D1 に置く。
 //! 月の移動、部位の色と凡例、日数の集計、日の詳細、部位の絞り込みを実ブラウザで確かめる。
 
 mod support;
 
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
-use warrior_core::calendar::{next_month, previous_month};
+use warrior_core::calendar::{next_month, parse_month, previous_month};
 use warrior_core::datetime;
-use warrior_core::jst::{JstDate, UtcInstant};
+use warrior_core::jst::{JstDate, JstMonth};
 
 const SERVER_PORT: u16 = 8812;
 const OIDC_PORT: u16 = 8813;
@@ -68,14 +67,14 @@ async fn the_calendar_navigates_filters_and_shows_the_day_detail() {
 
     login(&driver, &server, &provider).await;
     let user_id = current_user_id(&driver).await;
-    let dates = FixtureDates::current();
-    seed(&server, &user_id, &dates);
-
     driver
         .goto(format!("{}/calendar", server.origin()))
         .await
         .expect("the calendar must open");
     browser::wait_for_route(&driver, "/calendar").await;
+    let dates = FixtureDates::displayed(&driver).await;
+    seed(&server, &user_id, &dates);
+    show_the_month_again(&driver, &dates).await;
     check_the_current_month(&driver, &dates).await;
     check_the_legend(&driver, &dates).await;
     check_the_day_detail(&driver, &dates).await;
@@ -413,6 +412,18 @@ async fn check_the_month_navigation(driver: &WebDriver, dates: &FixtureDates) {
         "0",
     )
     .await;
+    browser::wait_for_attribute(
+        driver,
+        &day_selector(dates.next_first),
+        "data-calendar-future",
+        "true",
+    )
+    .await;
+    assert_eq!(
+        day_number_color(driver, dates.next_first).await,
+        subtle_text_color(driver).await,
+        "a day after today uses the subtle text color"
+    );
 
     click(driver, "[data-calendar-previous]").await;
     browser::wait_for_attribute(
@@ -499,6 +510,35 @@ async fn legend_color(driver: &WebDriver, part: &str) -> String {
     .to_owned()
 }
 
+async fn day_number_color(driver: &WebDriver, date: JstDate) -> String {
+    eval_json(
+        driver,
+        &format!(
+            "const done = arguments[arguments.length - 1]; \
+             const number = document.querySelector('{} > span'); \
+             done(JSON.stringify(number ? getComputedStyle(number).color : ''));",
+            day_selector(date)
+        ),
+    )
+    .await
+    .as_str()
+    .unwrap_or_default()
+    .to_owned()
+}
+
+async fn subtle_text_color(driver: &WebDriver) -> String {
+    eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         const label = document.querySelector('[data-calendar-training-days]').parentElement; \
+         done(JSON.stringify(label ? getComputedStyle(label).color : ''));",
+    )
+    .await
+    .as_str()
+    .unwrap_or_default()
+    .to_owned()
+}
+
 fn day_selector(date: JstDate) -> String {
     format!("[data-calendar-day=\"{date}\"]")
 }
@@ -507,12 +547,13 @@ async fn eval_json(driver: &WebDriver, script: &str) -> Value {
     browser::eval_json(driver, script, Vec::new()).await
 }
 
-/// E2E で作る日付。今日の月と、その前後の月を使う。
+/// E2E で作る日付。画面が表示している月と、その前後の月を使う。
 struct FixtureDates {
     first: JstDate,
     second: JstDate,
     rest: JstDate,
     previous_day: JstDate,
+    next_first: JstDate,
     days_in_month: u32,
     current_month: String,
     next_month: String,
@@ -520,15 +561,18 @@ struct FixtureDates {
 }
 
 impl FixtureDates {
-    fn current() -> Self {
-        let seconds = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("the clock is after the epoch")
-            .as_secs() as i64;
-        let today = UtcInstant::from_epoch_seconds(seconds)
-            .jst_date()
-            .expect("a Japan date");
-        let month = today.month_range();
+    /// 画面が表示している月を基準にする。端末の時計が月をまたいでも、画面の月と種の月が食い違わない。
+    async fn displayed(driver: &WebDriver) -> Self {
+        driver
+            .find(By::Css("[data-calendar]"))
+            .await
+            .expect("the calendar must render");
+        let text = browser::attribute(driver, "[data-calendar]", "data-calendar-month").await;
+        let month = parse_month(&text).expect("the displayed month must be YYYY-MM");
+        Self::for_month(month)
+    }
+
+    fn for_month(month: JstMonth) -> Self {
         let first = month.start();
         let previous_day = first.add_days(-1).expect("a previous day");
         Self {
@@ -536,12 +580,36 @@ impl FixtureDates {
             second: first.add_days(1).expect("a second day"),
             rest: first.add_days(2).expect("a rest day"),
             previous_day,
+            next_first: month
+                .end()
+                .add_days(1)
+                .expect("a first day of the next month"),
             days_in_month: u32::from(month.end().day()),
             current_month: month_text(first),
             next_month: month_text(next_month(month).expect("a next month").start()),
             previous_month: month_text(previous_month(month).expect("a previous month").start()),
         }
     }
+}
+
+/// 種を置いた後に、表示中の月を取り直す。次の月へ移ってから戻ると、表示中の月を読み直す。
+async fn show_the_month_again(driver: &WebDriver, dates: &FixtureDates) {
+    click(driver, "[data-calendar-next]").await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-calendar]",
+        "data-calendar-month",
+        &dates.next_month,
+    )
+    .await;
+    click(driver, "[data-calendar-previous]").await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-calendar]",
+        "data-calendar-month",
+        &dates.current_month,
+    )
+    .await;
 }
 
 fn month_text(date: JstDate) -> String {

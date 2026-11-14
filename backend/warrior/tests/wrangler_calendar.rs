@@ -23,6 +23,7 @@ const OTHER_USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4802";
 const JAN_FIRST: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4810";
 const JAN_SECOND: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4811";
 const JAN_SECOND_EMPTY: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4815";
+const JAN_SECOND_WITHOUT_START: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4816";
 const JAN_LAST: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4812";
 const FEB_FIRST: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4813";
 const OTHER_JAN: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4814";
@@ -63,6 +64,7 @@ fn the_calendar_returns_the_month_and_the_day_details_for_its_owner() {
     check_the_month_boundary(&server, &cookie);
     check_the_empty_month(&server, &cookie);
     check_the_day_detail(&server, &cookie);
+    check_the_day_orders_sessions_without_a_start(&server, &cookie);
     check_the_day_without_training(&server, &cookie);
     check_rejections(&server, &cookie);
 }
@@ -253,6 +255,26 @@ fn check_the_day_detail(server: &DevServer, cookie: &str) {
     assert_eq!(pushdown.sets[0].segments[0].reps, 12);
 }
 
+fn check_the_day_orders_sessions_without_a_start(server: &DevServer, cookie: &str) {
+    let detail = get_day(server, cookie, "2026-01-20");
+    assert_eq!(
+        detail
+            .trainings
+            .iter()
+            .map(|training| (
+                training.training_id.as_str(),
+                training.started_at.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (JAN_SECOND, Some("2026-01-20T03:00:00Z")),
+            (JAN_SECOND_EMPTY, Some("2026-01-20T10:00:00Z")),
+            (JAN_SECOND_WITHOUT_START, None),
+        ],
+        "a session without a start time is ordered by its creation time"
+    );
+}
+
 fn check_the_day_without_training(server: &DevServer, cookie: &str) {
     let detail = get_day(server, cookie, "2026-01-11");
     assert!(detail.trainings.is_empty());
@@ -275,7 +297,11 @@ fn check_rejections(server: &DevServer, cookie: &str) {
             rejected.body
         );
     }
-    for path in ["/api/calendar?month=2026-01", "/api/calendar/2026-01-10"] {
+    for path in [
+        "/api/calendar?month=2026-01",
+        "/api/calendar/2026-01-10",
+        "/api/calendar/2026-02-30",
+    ] {
         let unauthorized = server.request("GET", path, &[]);
         assert_eq!(unauthorized.status, 401, "{path}: {}", unauthorized.body);
         assert!(
@@ -349,6 +375,13 @@ fn seed(server: &DevServer, token: &str) {
             "2026-01-20",
             "2026-01-20T10:00:00Z",
             "同じ日の空の記録",
+        ),
+        session_without_start_sql(
+            JAN_SECOND_WITHOUT_START,
+            USER_ID,
+            "2026-01-20",
+            "2026-01-20T23:00:00Z",
+            "後から追加した記録",
         ),
         session_sql(JAN_LAST, USER_ID, "2026-01-31", "2026-01-31T14:59:59Z", ""),
         session_sql(FEB_FIRST, USER_ID, "2026-02-01", "2026-01-31T15:00:00Z", ""),
@@ -561,6 +594,19 @@ fn session_sql(id: &str, user_id: &str, date: &str, started_at: &str, memo: &str
         "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \
          VALUES ('{id}', '{user_id}', '{date}', '{started_at}', '{memo}', \
          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    )
+}
+
+fn session_without_start_sql(
+    id: &str,
+    user_id: &str,
+    date: &str,
+    created_at: &str,
+    memo: &str,
+) -> String {
+    format!(
+        "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \
+         VALUES ('{id}', '{user_id}', '{date}', NULL, '{memo}', '{created_at}', '{created_at}')"
     )
 }
 

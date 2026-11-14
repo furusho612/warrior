@@ -17,6 +17,7 @@ pub(crate) struct CalendarCell {
     pub highlighted: bool,
     pub selected: bool,
     pub today: bool,
+    pub future: bool,
 }
 
 /// 月表示のセルの並びを作る。月の外のセルは None にする。
@@ -42,6 +43,7 @@ pub(crate) fn build_cells(
                     highlighted: day.map_or(part.is_none(), |day| day.highlighted),
                     selected: selected == Some(date),
                     today: today == Some(date),
+                    future: today.is_some_and(|today| date > today),
                 }
             })
         })
@@ -80,9 +82,11 @@ pub(crate) fn day_cell_class(cell: &CalendarCell) -> String {
     class
 }
 
-pub(crate) fn day_number_class(today: bool) -> &'static str {
-    if today {
+pub(crate) fn day_number_class(cell: &CalendarCell) -> &'static str {
+    if cell.today {
         "flex h-6 w-[26px] items-center justify-center border-[1.5px] border-primary text-primary"
+    } else if cell.future {
+        "flex h-6 items-center justify-center text-text-sub"
     } else {
         "flex h-6 items-center justify-center"
     }
@@ -343,9 +347,9 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
-        attachment_label, build_cells, day_aria_label, day_parts, day_title, format_seconds,
-        grip_label, part_color_class, part_counts, part_label, set_notes, set_text, weekdays,
-        CalendarCell,
+        attachment_label, build_cells, day_aria_label, day_number_class, day_parts, day_title,
+        format_seconds, grip_label, part_color_class, part_counts, part_label, set_notes, set_text,
+        weekdays, CalendarCell,
     };
     use crate::generated::tokens;
 
@@ -393,19 +397,26 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn the_part_counts_list_every_part_in_the_prd_order() {
+    fn the_part_counts_count_the_days_of_every_part() {
         let counts = part_counts(Some(&month_view()));
-        assert_eq!(counts.len(), 8);
         assert_eq!(
-            counts.iter().map(|(part, _)| *part).collect::<Vec<_>>(),
-            BodyPart::ALL.to_vec()
+            counts,
+            vec![
+                (BodyPart::Chest, 1),
+                (BodyPart::Back, 0),
+                (BodyPart::Shoulders, 0),
+                (BodyPart::BicepsForearm, 0),
+                (BodyPart::Triceps, 1),
+                (BodyPart::Legs, 1),
+                (BodyPart::Abs, 0),
+                (BodyPart::Other, 0),
+            ]
         );
-        assert_eq!(counts[0], (BodyPart::Chest, 1));
-        assert_eq!(counts[4], (BodyPart::Triceps, 1));
-        assert_eq!(counts[5], (BodyPart::Legs, 1));
-        assert_eq!(counts[1], (BodyPart::Back, 0));
         let empty = part_counts(None);
-        assert!(empty.iter().all(|(_, days)| *days == 0));
+        assert!(
+            empty.iter().all(|(_, days)| *days == 0),
+            "a month without training has no day on any part"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -476,6 +487,7 @@ mod tests {
             highlighted: true,
             selected: false,
             today: false,
+            future: false,
         };
         assert_eq!(day_aria_label(&cell), "11月1日(日): 背中、二頭・前腕");
         let empty = CalendarCell {
@@ -483,6 +495,34 @@ mod tests {
             ..cell
         };
         assert_eq!(day_aria_label(&empty), "11月1日(日)");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_days_after_today_use_the_subtle_text_color() {
+        let month = JstDate::new(2026, 11, 12).unwrap().month_range();
+        let cells = build_cells(
+            Some(month),
+            None,
+            None,
+            Some(JstDate::new(2026, 11, 10).unwrap()),
+        );
+        let past = cells[14].as_ref().expect("the ninth day");
+        let today_cell = cells[15].as_ref().expect("the tenth day");
+        let future_cell = cells[16].as_ref().expect("the eleventh day");
+        assert_eq!(past.date, JstDate::new(2026, 11, 9).unwrap());
+        assert!(today_cell.today);
+        assert_eq!(future_cell.date, JstDate::new(2026, 11, 11).unwrap());
+        assert!(!past.future);
+        assert!(!today_cell.future);
+        assert!(future_cell.future);
+        assert!(!day_number_class(past).contains("text-text-sub"));
+        assert!(day_number_class(today_cell).contains("text-primary"));
+        assert!(day_number_class(future_cell).contains("text-text-sub"));
+        let without_today = build_cells(Some(month), None, None, None);
+        assert!(
+            without_today.iter().flatten().all(|cell| !cell.future),
+            "a calendar without today has no future day"
+        );
     }
 
     #[wasm_bindgen_test]
