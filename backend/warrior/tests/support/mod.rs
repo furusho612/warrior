@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod browser;
 pub mod ownership;
+pub mod record_browser;
 pub mod record_common;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);

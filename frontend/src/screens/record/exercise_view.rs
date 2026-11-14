@@ -15,6 +15,7 @@ use warrior_core::previous::{
     PreviousTraining, TotalWeightDifference,
 };
 use warrior_core::set_calc::SetKind;
+use warrior_core::set_rules;
 use warrior_core::superset::{rest_timer_starts, SupersetMembers};
 use warrior_core::training_record::TrainingExerciseRecord;
 
@@ -487,7 +488,9 @@ pub(super) async fn copy_sets(
             return;
         }
     };
-    for set in &view.sets {
+    // 末尾から削除する。削除するセットの直後は常に空であり、直後のドロップセットが
+    // あるセットの削除を避けられる。
+    for set in view.sets.iter().rev() {
         let operation = match training_set::delete(&training_id, &set.record.id) {
             Ok(operation) => operation,
             Err(_) => {
@@ -652,6 +655,16 @@ pub(super) async fn delete_set(
     let Some((view, _set)) = find_view_and_set(views, &set_id) else {
         return;
     };
+    let next = view
+        .sets
+        .iter()
+        .position(|set| set.record.id == set_id)
+        .and_then(|index| view.sets.get(index + 1))
+        .map(SetView::kind);
+    if !set_rules::delete_set_allowed(next) {
+        set_error(error, Key::RecordSetDeleteBlockedByDrop);
+        return;
+    }
     let operation = match training_set::delete(&training_id, &set_id) {
         Ok(operation) => operation,
         Err(_) => {

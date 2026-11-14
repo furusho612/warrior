@@ -83,7 +83,6 @@ fn the_create_statements_scope_the_set_and_the_segments() {
         &validated,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
-        None,
     )
     .expect("data statements");
     assert!(data
@@ -147,7 +146,6 @@ fn the_update_and_delete_statements_keep_the_training_scope() {
         &update,
         ExerciseOwnership::Finished,
         NOW,
-        None,
     );
     assert!(statement
         .sql()
@@ -188,7 +186,6 @@ fn every_set_statement_uses_the_applied_operation_condition() {
         &create,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
-        None,
     )
     .expect("data statements");
     for child in &data.children {
@@ -205,7 +202,7 @@ fn every_set_statement_uses_the_applied_operation_condition() {
             set_id: SET_ID.to_owned(),
         }),
     );
-    let data = set_statements(USER_ID, &delete, ExerciseOwnership::Finished, NOW, None)
+    let data = set_statements(USER_ID, &delete, ExerciseOwnership::Finished, NOW)
         .expect("data statements");
     assert_eq!(data.children.len(), 1);
     assert!(data.children[0]
@@ -229,7 +226,6 @@ fn the_reorder_statement_numbers_the_positions_from_one() {
         &validated,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
-        None,
     )
     .expect("data statements");
     assert!(data.main.sql().contains("position = CASE id"));
@@ -258,7 +254,7 @@ fn the_complete_statement_sets_the_completed_flag() {
         OperationKind::SetComplete,
         ValidatedPayload::SetComplete(payload),
     );
-    let data = set_statements(USER_ID, &validated, ExerciseOwnership::Finished, NOW, None)
+    let data = set_statements(USER_ID, &validated, ExerciseOwnership::Finished, NOW)
         .expect("data statements");
     assert!(data.main.sql().contains("UPDATE sets SET completed = ?"));
     assert_eq!(data.main.bindings()[0], SqlValue::Integer(1));

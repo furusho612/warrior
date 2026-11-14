@@ -18,6 +18,8 @@ use warrior_core::base64url;
 
 const UNILATERAL_PORT: u16 = 8838;
 const SUPERSET_PORT: u16 = 8839;
+const TIME_PORT: u16 = 8842;
+const CONCURRENT_PORT: u16 = 8843;
 
 const UNILATERAL_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5910";
 const UNILATERAL_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5911";
@@ -27,6 +29,12 @@ const FOURTH_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5916";
 const SECOND_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5914";
 const THIRD_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5915";
 const FOURTH_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5917";
+const TIME_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b0";
+const TIME_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b1";
+const TIME_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b2";
+const TIME_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b3";
+const TIME_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b4";
+const TIME_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b5";
 
 const NORMAL_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5920";
 const NORMAL_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5921";
@@ -75,6 +83,10 @@ const CHANGING_REORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a
 const DELETE_SECOND_GROUP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a8";
 const DUPLICATE_SECOND_GROUP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59a9";
 const DUPLICATE_SECOND_GROUP_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59aa";
+const CONCURRENT_A_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59ab";
+const CONCURRENT_A_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59ac";
+const CONCURRENT_B_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59ad";
+const CONCURRENT_B_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59ae";
 const FOREIGN_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5978";
 const FOREIGN_MEMBER_SUPERSET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5979";
 const THREE_MEMBER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5980";
@@ -123,6 +135,143 @@ fn supersets_keep_members_in_order_and_dissolve_when_one_remains() {
     delete_the_two_member_group(&server, &session_cookie);
     reject_the_empty_and_foreign_groups(&server, &session_cookie);
     dissolve_the_three_member_group(&server, &session_cookie);
+}
+
+#[test]
+fn concurrent_group_creates_conflict_on_the_member_index() {
+    let server = DevServer::start(CONCURRENT_PORT);
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let token = base64url::encode(&[100u8; 32]);
+    let terminal_token = base64url::encode(&[101u8; 32]);
+    let other_terminal_token = base64url::encode(&[102u8; 32]);
+    seed_base(&server, &token, &terminal_token, &other_terminal_token);
+    let session_cookie = cookie(&token, &terminal_token);
+    seed_superset_exercises(&server);
+
+    let first = superset_create_operation(
+        CONCURRENT_A_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        CONCURRENT_A_SUPERSET_ID,
+        &[SECOND_ROW_ID, THIRD_ROW_ID],
+    );
+    let second = superset_create_operation(
+        CONCURRENT_B_OPERATION_ID,
+        FINISHED_TRAINING_ID,
+        CONCURRENT_B_SUPERSET_ID,
+        &[SECOND_ROW_ID, THIRD_ROW_ID],
+    );
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| post(&server, &session_cookie, &first));
+        let second = scope.spawn(|| post(&server, &session_cookie, &second));
+        (
+            first.join().expect("the first create"),
+            second.join().expect("the second create"),
+        )
+    });
+    let mut statuses = vec![first.status, second.status];
+    statuses.sort_unstable();
+    assert_eq!(statuses, vec![200, 409], "{}", first.body);
+    assert_eq!(
+        count(&server, "supersets", CONCURRENT_A_SUPERSET_ID)
+            + count(&server, "supersets", CONCURRENT_B_SUPERSET_ID),
+        1
+    );
+}
+
+#[test]
+fn unilateral_time_sets_keep_the_top_level_duration() {
+    let server = DevServer::start(TIME_PORT);
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let token = base64url::encode(&[97u8; 32]);
+    let terminal_token = base64url::encode(&[98u8; 32]);
+    let other_terminal_token = base64url::encode(&[99u8; 32]);
+    seed_base(&server, &token, &terminal_token, &other_terminal_token);
+    let session_cookie = cookie(&token, &terminal_token);
+    seed_unilateral_time_exercise(&server);
+
+    let operation = create_operation(
+        TIME_OPERATION_ID,
+        TRAINING_ID,
+        TIME_ROW_ID,
+        TIME_SET_ID,
+        SetSpec {
+            position: 1,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![json!({
+            "segment_id": TIME_SEGMENT_ID,
+            "position": 1,
+            "weight_kg": 0.0,
+            "reps": 0,
+            "momentum_reps": 0,
+            "assisted_reps": 0,
+            "duration_seconds": 60,
+            "left": null,
+            "right": null
+        })],
+    );
+    let response = post(&server, &session_cookie, &operation);
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    let response = post(
+        &server,
+        &session_cookie,
+        &complete_operation(TIME_COMPLETE_OPERATION_ID, TRAINING_ID, TIME_SET_ID, true),
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    let response = server.request(
+        "POST",
+        &format!("/api/trainings/{TRAINING_ID}/finish"),
+        &[("Origin", ORIGIN), ("Cookie", &session_cookie)],
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let summary: Value = serde_json::from_str(&response.body).expect("a summary");
+    let longest = summary["personal_bests"]
+        .as_array()
+        .expect("personal bests")
+        .iter()
+        .find(|item| item["kind"] == "longest_duration")
+        .expect("a longest duration best");
+    assert_eq!(longest["value"].as_f64(), Some(60.0));
+
+    let day = server.request(
+        "GET",
+        "/api/calendar/2026-11-12",
+        &[("Cookie", &session_cookie)],
+    );
+    assert_eq!(day.status, 200, "{}", day.body);
+    assert!(day.body.contains(TIME_EXERCISE_ID), "{}", day.body);
+
+    let previous = server.request(
+        "GET",
+        &format!("/api/trainings/{TRAINING_ID}/previous?exercise_id={TIME_EXERCISE_ID}"),
+        &[("Cookie", &session_cookie)],
+    );
+    assert_eq!(previous.status, 200, "{}", previous.body);
+}
+
+fn seed_unilateral_time_exercise(server: &DevServer) {
+    record_common::seed_exercise_with_laterality(
+        server,
+        record_common::ExerciseSeed {
+            row_id: TIME_ROW_ID,
+            user_id: USER_ID,
+            training_id: TRAINING_ID,
+            exercise_id: TIME_EXERCISE_ID,
+            name: "サイドプランク",
+            body_part: "abs",
+            muscle: "rectus_abdominis_upper",
+            record_mode: "time",
+            position: 4,
+        },
+        "unilateral",
+    );
 }
 
 fn seed_unilateral_exercise(server: &DevServer) {

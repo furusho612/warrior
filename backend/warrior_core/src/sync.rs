@@ -476,6 +476,8 @@ pub enum SyncError {
     InvalidBodyWeight,
     /// 段が空である。
     EmptySegments,
+    /// 通常とウォームアップのセットが 1 つでない段を持つ。
+    InvalidSegmentCount,
     /// 組の ID が UUID v4 でない。
     InvalidSupersetId,
     /// 組の種目が 2 つ未満である。
@@ -511,6 +513,7 @@ impl SyncError {
             Self::InvalidDuration => "invalid_duration",
             Self::InvalidBodyWeight => "invalid_body_weight",
             Self::EmptySegments => "empty_segments",
+            Self::InvalidSegmentCount => "invalid_segment_count",
             Self::InvalidSupersetId => "invalid_superset_id",
             Self::EmptySuperset => "empty_superset",
             Self::InvalidSupersetMembers => "invalid_superset_members",

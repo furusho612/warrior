@@ -9,7 +9,8 @@ use crate::exercise::GripSelection;
 use crate::ids::is_valid_uuid_v4;
 use crate::profile::bodyweight_set_weight;
 use crate::set_calc::{
-    validate_rpe, BestKey, RecordMode, SetRecord, SetSegment, SetValidationError, SideValue,
+    validate_rpe, BestKey, RecordMode, SetKind, SetRecord, SetSegment, SetValidationError,
+    SideValue,
 };
 use crate::sync::{
     Operation, SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload,
@@ -31,6 +32,7 @@ pub(crate) fn validate_create(
         &payload.set_id,
         Some(&payload.training_exercise_id),
         payload.position,
+        payload.kind,
         payload.rpe,
         payload.body_weight_kg,
         &payload.segments,
@@ -50,6 +52,7 @@ pub(crate) fn validate_update(
         &payload.set_id,
         None,
         payload.position,
+        payload.kind,
         payload.rpe,
         payload.body_weight_kg,
         &payload.segments,
@@ -113,6 +116,7 @@ fn validate_set_fields(
     set_id: &str,
     training_exercise_id: Option<&str>,
     position: i64,
+    kind: SetKind,
     rpe: Option<f64>,
     body_weight_kg: Option<f64>,
     segments: &[SetSegmentPayload],
@@ -136,6 +140,9 @@ fn validate_set_fields(
     }
     if segments.is_empty() {
         return Err(SyncError::EmptySegments);
+    }
+    if kind != SetKind::Drop && segments.len() != 1 {
+        return Err(SyncError::InvalidSegmentCount);
     }
     let mut seen = Vec::new();
     for segment in segments {
@@ -480,6 +487,7 @@ mod tests {
 
         let operation = create_operation();
         let mut payload = create_from(&operation);
+        payload.kind = SetKind::Drop;
         payload.segments.push(segment());
         assert_eq!(
             validate_create(&operation, payload),
@@ -513,6 +521,26 @@ mod tests {
             validate_create(&operation, payload),
             Err(SyncError::EmptySegments)
         );
+    }
+
+    #[test]
+    fn a_non_drop_set_needs_exactly_one_segment() {
+        let operation = create_operation();
+        let mut payload = create_from(&operation);
+        let mut extra = segment();
+        extra.segment_id = OTHER_ID.to_owned();
+        extra.position = 2;
+        payload.segments.push(extra.clone());
+        assert_eq!(
+            validate_create(&operation, payload),
+            Err(SyncError::InvalidSegmentCount)
+        );
+
+        let operation = create_operation();
+        let mut payload = create_from(&operation);
+        payload.kind = SetKind::Drop;
+        payload.segments.push(extra);
+        assert!(validate_create(&operation, payload).is_ok());
     }
 
     #[test]

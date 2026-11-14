@@ -7,11 +7,12 @@
 use dioxus::prelude::*;
 use warrior_core::exercise::{Laterality, RecordMode};
 use warrior_core::set_calc::SetKind;
+use warrior_core::set_rules;
 
 use super::set_inputs::{SegmentInputs, SegmentInputsState};
 use super::sets::{
-    is_lateral, kind_change_allowed, move_candidate_valid, set_numbers, SegmentView, SetAction,
-    SetView,
+    is_lateral, kind_change_allowed, move_candidate_valid, needs_segment_confirmation, set_numbers,
+    SegmentView, SetAction, SetView,
 };
 use crate::text::{text, Key};
 
@@ -80,6 +81,9 @@ pub(super) fn SetTable(state: SetTableState, on_action: EventHandler<SetAction>)
                             warmup_allowed: kind_change_allowed(&kinds, index, SetKind::Warmup),
                             can_move_up: move_candidate_valid(&kinds, index, -1),
                             can_move_down: move_candidate_valid(&kinds, index, 1),
+                            can_delete: set_rules::delete_set_allowed(
+                                rows.get(index + 1).map(SetView::kind),
+                            ),
                             mode: state.mode,
                             lateral,
                             disabled,
@@ -112,6 +116,8 @@ struct SetRowState {
     can_move_up: bool,
     /// 後ろへ移動できるか。
     can_move_down: bool,
+    /// セットを削除できるか。
+    can_delete: bool,
     /// 記録方式。
     mode: RecordMode,
     /// 左右の列を使うか。
@@ -129,10 +135,25 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
     let ready = row.set.can_complete(row.mode, row.lateral);
     let kind = row.set.kind();
     let is_drop = kind == SetKind::Drop;
+    let segment_count = row.set.segments.len();
+    let can_delete = row.can_delete;
+    let can_delete_first_segment = segment_count > 1 || can_delete;
     let number_text = row
         .number
         .map_or_else(|| "D".to_owned(), |number| number.to_string());
     let first_segment = row.set.segments.first().cloned();
+    let mut pending_kind = use_signal(|| Option::<SetKind>::None);
+    let kind_set_id = set_id.clone();
+    let on_kind = EventHandler::new(move |new_kind: SetKind| {
+        if needs_segment_confirmation(kind, new_kind, segment_count) {
+            pending_kind.set(Some(new_kind));
+        } else {
+            on_action.call(SetAction::Kind {
+                set_id: kind_set_id.clone(),
+                kind: new_kind,
+            });
+        }
+    });
     let buttons = RowButtonState {
         set_id: row.set.record.id.clone(),
         first_segment_id: row
@@ -143,10 +164,13 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
         is_drop,
         can_move_up: row.can_move_up,
         can_move_down: row.can_move_down,
+        can_delete,
+        can_delete_first_segment,
         ready,
         completed,
     };
     let disabled = row.disabled;
+    let confirm_set_id = set_id.clone();
     rsx! {
         div {
             class: "flex flex-col",
@@ -161,12 +185,11 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                 class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
                 span { class: "w-4 shrink-0 text-[11px] text-text-sub", "{number_text}" }
                 KindSelect {
-                    set_id: row.set.record.id.clone(),
                     kind,
                     disabled,
                     drop_allowed: row.drop_allowed,
                     warmup_allowed: row.warmup_allowed,
-                    on_action,
+                    on_kind,
                 }
                 if let Some(segment) = first_segment {
                     div {
@@ -186,6 +209,43 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                     }
                 }
                 RowButtons { buttons, disabled, on_action }
+            }
+            if !can_delete {
+                p {
+                    class: "border-b border-line px-2 py-1 text-[10px] text-primary",
+                    "data-set-delete-blocked": "true",
+                    "{text(Key::RecordSetDeleteBlockedByDrop)}"
+                }
+            }
+            if let Some(pending) = (pending_kind)() {
+                div {
+                    class: "flex flex-col gap-1 border-b border-line px-2 py-1",
+                    p {
+                        class: "text-[10px] text-primary",
+                        "data-kind-change-confirm": "true",
+                        "{text(Key::RecordSetKindChangeConfirm)}"
+                    }
+                    div { class: "flex gap-1",
+                        button {
+                            class: "min-h-8 border border-primary px-2 text-[10px] font-bold text-primary",
+                            "data-kind-change-accept": "true",
+                            onclick: move |_| {
+                                on_action.call(SetAction::Kind {
+                                    set_id: confirm_set_id.clone(),
+                                    kind: pending,
+                                });
+                                pending_kind.set(None);
+                            },
+                            "{text(Key::RecordSetKindChangeAccept)}"
+                        }
+                        button {
+                            class: "min-h-8 border border-line px-2 text-[10px]",
+                            "data-kind-change-cancel": "true",
+                            onclick: move |_| pending_kind.set(None),
+                            "{text(Key::RecordSetKindChangeCancel)}"
+                        }
+                    }
+                }
             }
             for (segment_index, segment) in row.set.segments.iter().enumerate().skip(1) {
                 SegmentRow {
@@ -216,12 +276,11 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
 /// セット種別の選択。
 #[component]
 fn KindSelect(
-    set_id: String,
     kind: SetKind,
     disabled: bool,
     drop_allowed: bool,
     warmup_allowed: bool,
-    on_action: EventHandler<SetAction>,
+    on_kind: EventHandler<SetKind>,
 ) -> Element {
     rsx! {
         select {
@@ -232,7 +291,7 @@ fn KindSelect(
             value: "{kind.as_str()}",
             onchange: move |event| {
                 if let Some(kind) = SetKind::parse(&event.value()) {
-                    on_action.call(SetAction::Kind { set_id: set_id.clone(), kind });
+                    on_kind.call(kind);
                 }
             },
             option { value: "normal", selected: kind == SetKind::Normal, "{text(Key::RecordSetKindNormal)}" }
@@ -255,6 +314,10 @@ struct RowButtonState {
     can_move_up: bool,
     /// 後ろへ移動できるか。
     can_move_down: bool,
+    /// セットを削除できるか。
+    can_delete: bool,
+    /// 最初の段を削除できるか。
+    can_delete_first_segment: bool,
     /// 完了できるか。
     ready: bool,
     /// 完了しているか。
@@ -276,6 +339,8 @@ fn RowButtons(
     let first_segment_id = buttons.first_segment_id.clone();
     let can_move_up = buttons.can_move_up;
     let can_move_down = buttons.can_move_down;
+    let can_delete = buttons.can_delete;
+    let can_delete_first_segment = buttons.can_delete_first_segment;
     let ready = buttons.ready;
     let completed = buttons.completed;
     rsx! {
@@ -310,7 +375,7 @@ fn RowButtons(
                 button {
                     class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
                     "data-delete-segment": "true",
-                    disabled,
+                    disabled: disabled || !can_delete_first_segment,
                     onclick: move |_| on_action.call(SetAction::DeleteSegment {
                         set_id: delete_segment_set_id.clone(),
                         segment_id: segment_id.clone(),
@@ -322,7 +387,7 @@ fn RowButtons(
         button {
             class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
             "data-delete-set": "true",
-            disabled,
+            disabled: disabled || !can_delete,
             onclick: move |_| on_action.call(SetAction::Delete { set_id: delete_id.clone() }),
             "{text(Key::RecordSetDelete)}"
         }

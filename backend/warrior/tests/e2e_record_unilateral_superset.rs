@@ -18,8 +18,8 @@ const UNILATERAL_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000018";
 const BENCH_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
 const UNILATERAL_NAME: &str = "ワンハンドダンベルロウ";
 const BENCH_NAME: &str = "ベンチプレス";
-const SERVER_PORT: u16 = 8836;
-const PROVIDER_PORT: u16 = 8837;
+const SERVER_PORT: u16 = 8840;
+const PROVIDER_PORT: u16 = 8841;
 
 #[tokio::test]
 async fn records_a_unilateral_superset_and_starts_the_timer_on_the_last_member() {

@@ -10,7 +10,7 @@ use warrior_core::set_calc::{
     estimated_one_rep_max, BestKey, PartRole, PersonalBest, RecordMode, SetKind, SetRecord,
     SetSegment,
 };
-use warrior_core::set_rules::{drop_set_allowed, drop_set_positions_valid};
+use warrior_core::set_rules::drop_set_positions_valid;
 
 fn key() -> BestKey {
     BestKey {
@@ -56,16 +56,58 @@ fn drop_record(segments: Vec<SetSegment>) -> SetRecord {
     .expect("a valid drop set")
 }
 
+fn valid_kinds() -> impl Strategy<Value = Vec<SetKind>> {
+    prop::collection::vec(kind(), 0..=8).prop_map(|kinds| {
+        let mut valid = Vec::with_capacity(kinds.len());
+        for kind in kinds {
+            let previous = valid.last().copied();
+            let kind = if kind == SetKind::Drop
+                && !matches!(previous, Some(SetKind::Normal | SetKind::Drop))
+            {
+                SetKind::Normal
+            } else {
+                kind
+            };
+            valid.push(kind);
+        }
+        valid
+    })
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
-    fn drop_set_positions_follow_the_previous_kind(kinds in prop::collection::vec(kind(), 0..=8)) {
-        let expected = kinds.iter().enumerate().all(|(index, kind)| {
-            *kind != SetKind::Drop
-                || drop_set_allowed(index.checked_sub(1).map(|previous| kinds[previous]))
-        });
-        prop_assert_eq!(drop_set_positions_valid(&kinds), expected);
+    fn valid_drop_sequences_are_accepted(kinds in valid_kinds()) {
+        prop_assert!(drop_set_positions_valid(&kinds));
+    }
+
+    #[test]
+    fn a_first_drop_set_is_rejected(rest in prop::collection::vec(kind(), 0..=7)) {
+        let mut kinds = vec![SetKind::Drop];
+        kinds.extend(rest);
+        prop_assert!(!drop_set_positions_valid(&kinds));
+    }
+
+    #[test]
+    fn a_drop_set_after_a_warmup_is_rejected(
+        prefix in prop::collection::vec(kind(), 0..=3),
+        suffix in prop::collection::vec(kind(), 0..=3),
+    ) {
+        let mut kinds = prefix;
+        kinds.push(SetKind::Warmup);
+        kinds.push(SetKind::Drop);
+        kinds.extend(suffix);
+        prop_assert!(!drop_set_positions_valid(&kinds));
+    }
+
+    #[test]
+    fn breaking_one_position_of_a_valid_sequence_is_rejected(
+        kinds in valid_kinds().prop_filter("a non-empty sequence", |kinds| !kinds.is_empty()),
+    ) {
+        let mut broken = kinds;
+        broken[0] = SetKind::Drop;
+        prop_assert!(!drop_set_positions_valid(&broken));
     }
 
     #[test]

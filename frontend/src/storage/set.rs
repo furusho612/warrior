@@ -559,6 +559,8 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
                 && payload.position == segment.position
                 && payload.weight_kg == segment.weight_kg.unwrap_or(0.0)
                 && payload.reps == u32::try_from(segment.reps.unwrap_or(0)).unwrap_or(0)
+                && i64::from(payload.momentum_reps) == segment.momentum_reps
+                && i64::from(payload.assisted_reps) == segment.assisted_reps
                 && payload.duration_seconds
                     == segment
                         .duration_seconds
@@ -567,22 +569,29 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
                     payload.left.as_ref(),
                     segment.left_weight_kg,
                     segment.left_reps,
+                    segment.left_duration_seconds,
                 )
                 && same_side(
                     payload.right.as_ref(),
                     segment.right_weight_kg,
                     segment.right_reps,
+                    segment.right_duration_seconds,
                 )
         })
 }
 
 fn same_side(
     side: Option<&warrior_core::sync::SetSidePayload>,
-    weight: Option<f64>,
+    weight_kg: Option<f64>,
     reps: Option<i64>,
+    duration_seconds: Option<i64>,
 ) -> bool {
     match side {
-        None => weight.is_none() && reps.is_none(),
-        Some(side) => weight == side.weight_kg && reps == Some(i64::from(side.reps)),
+        None => weight_kg.is_none() && reps.is_none() && duration_seconds.is_none(),
+        Some(side) => {
+            weight_kg == side.weight_kg
+                && reps == Some(i64::from(side.reps))
+                && duration_seconds == side.duration_seconds.map(i64::from)
+        }
     }
 }

@@ -7,7 +7,7 @@
 //! 段の重量は、自重種目ではセットごとの加重を表す。記録した時点の体重は `sets` が持つ。
 
 use serde::Deserialize;
-use warrior_core::exercise::{Laterality, RecordMode};
+use warrior_core::exercise::{is_lateral, ExerciseSnapshot, Laterality, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::sql::{SqlStatement, SqlValue};
@@ -26,11 +26,13 @@ use crate::sync::{
 use crate::training_session_exercise::{ownership_condition, ExerciseOwnership};
 
 mod bindings;
+mod validation;
 
 use bindings::{
     applied_exists, grip_json, optional_real, ownership_condition_placeholder, segment_bindings,
     AppliedCondition,
 };
+use validation::{completed_set_has_values, completed_set_is_valid};
 
 /// 種目の記録方式と左右の指定。
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -43,8 +45,8 @@ struct ExerciseRules {
 
 impl ExerciseRules {
     /// 左右の列を使う種目か。時間で記録する種目は左右の列を使わない。
-    fn is_lateral(self) -> bool {
-        self.laterality == Laterality::Unilateral && self.record_mode != RecordMode::Time
+    fn lateral(self) -> bool {
+        is_lateral(self.laterality, self.record_mode)
     }
 }
 
@@ -55,6 +57,8 @@ struct SetRow {
     completed: i64,
     /// セットを持つ種目の行の ID。
     training_exercise_id: String,
+    /// 記録した時点の種目の内容。
+    snapshot: String,
 }
 
 /// セットの ID とセット種別。
@@ -77,16 +81,7 @@ struct SetOwnerRow {
     training_id: String,
 }
 
-/// 段のある値の件数。
-#[derive(Debug, Deserialize)]
-struct SetValueRow {
-    /// 段の件数。
-    segments: i64,
-    /// 完了に必要な値を持つ段の件数。
-    ready: i64,
-}
-
-/// 行の件数。
+/// 段の件数。
 #[derive(Debug, Deserialize)]
 struct CountRow {
     /// 件数。
@@ -131,6 +126,7 @@ pub(crate) async fn set_batch(
             "the training is being edited on another terminal",
         )));
     };
+
     let rules = payload_rules(
         db,
         user_id,
@@ -150,6 +146,7 @@ pub(crate) async fn set_batch(
             "resource not found",
         )));
     }
+
     if let Some(rejection) = precheck(db, user_id, validated, rules).await? {
         return Ok(BatchOutcome::Reject(rejection));
     }
@@ -159,7 +156,7 @@ pub(crate) async fn set_batch(
         }
         OwnerCondition::Finished => ExerciseOwnership::Finished,
     };
-    let Some(data) = set_statements(user_id, validated, ownership, now, rules) else {
+    let Some(data) = set_statements(user_id, validated, ownership, now) else {
         return Ok(BatchOutcome::Reject(response(
             ErrorCode::BadRequest,
             "operation is invalid",
@@ -253,11 +250,11 @@ async fn precheck_create(
         db,
         user_id,
         &payload.training_exercise_id,
-        Some(SetChange {
+        SetChange {
             set_id: &payload.set_id,
             position: payload.position,
             kind: payload.kind,
-        }),
+        },
     )
     .await?
     {
@@ -279,33 +276,32 @@ async fn precheck_update(
     if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
         return Ok(Some(rejection));
     }
-    if payload.completed {
-        let lateral = rules.is_lateral();
-        if payload.to_record("", rules.record_mode).is_err()
-            || !payload
-                .segments
-                .iter()
-                .all(|segment| segment.has_completion_values(rules.record_mode, lateral))
-        {
-            return Ok(Some(response(
-                ErrorCode::BadRequest,
-                "the set has no values to complete",
-            )));
-        }
-    }
     if !drop_positions_allowed(
         db,
         user_id,
         &row.training_exercise_id,
-        Some(SetChange {
+        SetChange {
             set_id: &payload.set_id,
             position: payload.position,
             kind: payload.kind,
-        }),
+        },
     )
     .await?
     {
         return Ok(Some(drop_position_rejection()));
+    }
+    if payload.completed {
+        let snapshot = parse_snapshot(&row.snapshot)?;
+        if payload
+            .to_record(&snapshot.exercise_id, snapshot.record_mode)
+            .is_err()
+            || !payload
+                .segments
+                .iter()
+                .all(|segment| segment.has_completion_values(rules.record_mode, rules.lateral()))
+        {
+            return Ok(Some(invalid_completion()));
+        }
     }
     Ok(None)
 }
@@ -316,11 +312,11 @@ async fn precheck_delete(
     training_id: &str,
     payload: &SetDeletePayload,
 ) -> Result<Option<Response>> {
-    if set_row(db, user_id, training_id, &payload.set_id)
-        .await?
-        .is_none()
-    {
+    let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    };
+    if !delete_positions_allowed(db, user_id, &row.training_exercise_id, &payload.set_id).await? {
+        return Ok(Some(delete_before_drop_rejection()));
     }
     Ok(None)
 }
@@ -353,19 +349,24 @@ async fn precheck_complete(
     user_id: &str,
     training_id: &str,
     payload: &SetCompletePayload,
-    rules: ExerciseRules,
+    _rules: ExerciseRules,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    if payload.completed
-        && row.completed == 0
-        && !completed_set_has_values(db, user_id, &payload.set_id, rules).await?
-    {
-        return Ok(Some(response(
-            ErrorCode::BadRequest,
-            "the set has no values to complete",
-        )));
+    if payload.completed && row.completed == 0 {
+        if !completed_set_has_values(db, user_id, training_id, &payload.set_id).await? {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "the set has an incomplete segment",
+            )));
+        }
+        if !completed_set_is_valid(db, user_id, training_id, &payload.set_id).await? {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "the set is not valid for completion",
+            )));
+        }
     }
     Ok(None)
 }
@@ -375,7 +376,6 @@ fn set_statements(
     validated: &ValidatedOperation,
     ownership: ExerciseOwnership<'_>,
     now: &str,
-    rules: Option<ExerciseRules>,
 ) -> Option<SetData> {
     let operation = &validated.operation;
     let training_id = &operation.training_id;
@@ -394,7 +394,7 @@ fn set_statements(
             ),
         }),
         ValidatedPayload::SetUpdate(payload) => Some(SetData {
-            main: update_set_statement(user_id, training_id, payload, ownership, now, rules),
+            main: update_set_statement(user_id, training_id, payload, ownership, now),
             children: segment_replace_statements(
                 user_id,
                 training_id,
@@ -483,16 +483,9 @@ fn update_set_statement(
     payload: &SetUpdatePayload,
     ownership: ExerciseOwnership<'_>,
     now: &str,
-    rules: Option<ExerciseRules>,
 ) -> SqlStatement {
     let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
-    let completed = payload.completed
-        && rules.is_some_and(|rules| {
-            payload
-                .segments
-                .iter()
-                .all(|segment| segment.has_completion_values(rules.record_mode, rules.is_lateral()))
-        });
+    let completed = payload.completed;
     let mut bindings = vec![
         SqlValue::Integer(payload.position),
         SqlValue::Text(payload.kind.as_str().to_owned()),
@@ -728,7 +721,7 @@ async fn set_row(
     set_id: &str,
 ) -> Result<Option<SetRow>> {
     db.first(&SqlStatement::new(
-        "SELECT s.completed, s.training_exercise_id FROM sets s \
+        "SELECT s.completed, s.training_exercise_id, te.snapshot FROM sets s \
          JOIN training_exercises te ON te.id = s.training_exercise_id \
          WHERE s.id = ? AND s.user_id = ? AND te.training_id = ? AND te.user_id = ?",
         vec![
@@ -787,22 +780,20 @@ async fn drop_positions_allowed(
     db: &Db,
     user_id: &str,
     training_exercise_id: &str,
-    change: Option<SetChange<'_>>,
+    change: SetChange<'_>,
 ) -> Result<bool> {
     let mut rows = set_kind_rows(db, user_id, training_exercise_id).await?;
-    if let Some(change) = change {
-        let kind = change.kind.as_str().to_owned();
-        match rows.iter_mut().find(|row| row.id == change.set_id) {
-            Some(row) => {
-                row.position = change.position;
-                row.kind = kind;
-            }
-            None => rows.push(SetKindRow {
-                id: change.set_id.to_owned(),
-                position: change.position,
-                kind,
-            }),
+    let kind = change.kind.as_str().to_owned();
+    match rows.iter_mut().find(|row| row.id == change.set_id) {
+        Some(row) => {
+            row.position = change.position;
+            row.kind = kind;
         }
+        None => rows.push(SetKindRow {
+            id: change.set_id.to_owned(),
+            position: change.position,
+            kind,
+        }),
     }
     rows.sort_by(|left, right| {
         left.position
@@ -811,6 +802,26 @@ async fn drop_positions_allowed(
     });
     let kinds = parse_kinds(rows.iter().map(|row| row.kind.as_str()))?;
     Ok(set_rules::drop_set_positions_valid(&kinds))
+}
+
+async fn delete_positions_allowed(
+    db: &Db,
+    user_id: &str,
+    training_exercise_id: &str,
+    set_id: &str,
+) -> Result<bool> {
+    let rows = set_kind_rows(db, user_id, training_exercise_id).await?;
+    let Some(index) = rows.iter().position(|row| row.id == set_id) else {
+        return Ok(false);
+    };
+    let next = rows.get(index + 1).map(|row| row.kind.as_str());
+    let next = match next {
+        None => None,
+        Some(kind) => Some(SetKind::parse(kind).ok_or_else(|| {
+            worker::Error::RustError("the stored set kind is invalid".to_owned())
+        })?),
+    };
+    Ok(set_rules::delete_set_allowed(next))
 }
 
 fn ordered_drop_positions_allowed(rows: &[SetKindRow], ordered_ids: &[String]) -> Result<bool> {
@@ -836,74 +847,46 @@ fn parse_kinds<'a>(kinds: impl Iterator<Item = &'a str>) -> Result<Vec<SetKind>>
         .collect()
 }
 
-fn drop_position_rejection() -> Response {
-    response(
-        ErrorCode::BadRequest,
-        "a drop set cannot be first or follow a warmup set",
-    )
+fn parse_snapshot(snapshot: &str) -> Result<ExerciseSnapshot> {
+    serde_json::from_str(snapshot).map_err(|error| {
+        worker::Error::RustError(format!("the stored exercise snapshot is invalid: {error}"))
+    })
 }
 
-async fn completed_set_has_values(
+fn parse_rules(snapshot: &str) -> Result<ExerciseRules> {
+    serde_json::from_str(snapshot).map_err(|error| {
+        worker::Error::RustError(format!("the stored exercise snapshot is invalid: {error}"))
+    })
+}
+
+/// 操作の対象の種目の記録方式と左右の指定を返す。
+async fn payload_rules(
     db: &Db,
     user_id: &str,
-    set_id: &str,
-    rules: ExerciseRules,
-) -> Result<bool> {
-    let condition = completed_segment_condition(rules);
-    let row = db
-        .first::<SetValueRow>(&SqlStatement::new(
-            format!(
-                "SELECT COUNT(*) AS segments, \
-                 COALESCE(SUM(CASE WHEN {condition} THEN 1 ELSE 0 END), 0) AS ready \
-                 FROM set_segments WHERE set_id = ? AND user_id = ?"
-            ),
-            vec![
-                SqlValue::Text(set_id.to_owned()),
-                SqlValue::Text(user_id.to_owned()),
-            ],
-        ))
-        .await?;
-    Ok(row.is_some_and(|row| row.segments > 0 && row.ready == row.segments))
-}
-
-/// 完了した段が値を持つ条件。種目の記録方式と左右の指定で決まる。
-fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
-    if rules.is_lateral() {
-        return match rules.record_mode {
-            RecordMode::Time => "left_duration_seconds > 0 AND right_duration_seconds > 0",
-            RecordMode::WeightAndReps => {
-                "left_weight_kg IS NOT NULL AND left_reps > 0 \
-                 AND right_weight_kg IS NOT NULL AND right_reps > 0"
-            }
-            RecordMode::BodyweightAndReps => "left_reps > 0 AND right_reps > 0",
-        };
-    }
-    match rules.record_mode {
-        RecordMode::Time => "duration_seconds > 0",
-        RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-            "left_weight_kg IS NULL AND left_reps IS NULL \
-             AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
-             AND right_reps IS NULL AND right_duration_seconds IS NULL AND reps > 0"
+    training_id: &str,
+    payload: &ValidatedPayload,
+) -> Result<Option<ExerciseRules>> {
+    match payload {
+        ValidatedPayload::SetCreate(payload) => {
+            exercise_rules(db, user_id, training_id, &payload.training_exercise_id).await
         }
+        ValidatedPayload::SetUpdate(payload) => {
+            set_rules_for_set(db, user_id, training_id, &payload.set_id).await
+        }
+        ValidatedPayload::SetComplete(payload) => {
+            set_rules_for_set(db, user_id, training_id, &payload.set_id).await
+        }
+        ValidatedPayload::Create(_)
+        | ValidatedPayload::Update(_)
+        | ValidatedPayload::ExerciseCreate(_)
+        | ValidatedPayload::ExerciseDelete(_)
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SetDelete(_)
+        | ValidatedPayload::SetReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => Ok(None),
     }
-}
-
-/// 段の形が種目の左右の指定と一致するか。
-fn segments_shape_rejection(
-    segments: &[SetSegmentPayload],
-    rules: ExerciseRules,
-) -> Option<Response> {
-    let lateral = rules.is_lateral();
-    if segments
-        .iter()
-        .all(|segment| segment.has_matching_sides(lateral))
-    {
-        return None;
-    }
-    Some(response(
-        ErrorCode::BadRequest,
-        "the set does not match the exercise laterality",
-    ))
 }
 
 async fn exercise_rules(
@@ -929,8 +912,7 @@ async fn exercise_rules(
     parse_rules(&row.snapshot).map(Some)
 }
 
-/// 操作の対象のセットが属する種目の記録方式と左右の指定を返す。
-async fn set_exercise_rules(
+async fn set_rules_for_set(
     db: &Db,
     user_id: &str,
     training_id: &str,
@@ -955,39 +937,40 @@ async fn set_exercise_rules(
     parse_rules(&row.snapshot).map(Some)
 }
 
-/// セットの操作の対象の種目の記録方式と左右の指定を返す。
-async fn payload_rules(
-    db: &Db,
-    user_id: &str,
-    training_id: &str,
-    payload: &ValidatedPayload,
-) -> Result<Option<ExerciseRules>> {
-    match payload {
-        ValidatedPayload::SetCreate(payload) => {
-            exercise_rules(db, user_id, training_id, &payload.training_exercise_id).await
-        }
-        ValidatedPayload::SetUpdate(payload) => {
-            set_exercise_rules(db, user_id, training_id, &payload.set_id).await
-        }
-        ValidatedPayload::SetComplete(payload) => {
-            set_exercise_rules(db, user_id, training_id, &payload.set_id).await
-        }
-        ValidatedPayload::Create(_)
-        | ValidatedPayload::Update(_)
-        | ValidatedPayload::ExerciseCreate(_)
-        | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_)
-        | ValidatedPayload::SetDelete(_)
-        | ValidatedPayload::SetReorder(_)
-        | ValidatedPayload::SupersetCreate(_)
-        | ValidatedPayload::SupersetDelete(_)
-        | ValidatedPayload::SupersetReorder(_) => Ok(None),
+/// 段の形が種目の左右の指定と一致するか。
+fn segments_shape_rejection(
+    segments: &[SetSegmentPayload],
+    rules: ExerciseRules,
+) -> Option<Response> {
+    let lateral = rules.lateral();
+    if segments
+        .iter()
+        .all(|segment| segment.has_matching_sides(lateral))
+    {
+        return None;
     }
+    Some(response(
+        ErrorCode::BadRequest,
+        "the set does not match the exercise laterality",
+    ))
 }
 
-fn parse_rules(snapshot: &str) -> Result<ExerciseRules> {
-    serde_json::from_str::<ExerciseRules>(snapshot)
-        .map_err(|_| worker::Error::RustError("the stored exercise snapshot is invalid".to_owned()))
+fn drop_position_rejection() -> Response {
+    response(
+        ErrorCode::BadRequest,
+        "a drop set cannot be first or follow a warmup set",
+    )
+}
+
+fn delete_before_drop_rejection() -> Response {
+    response(
+        ErrorCode::BadRequest,
+        "the next drop set must be deleted first",
+    )
+}
+
+fn invalid_completion() -> Response {
+    response(ErrorCode::BadRequest, "the set is not valid for completion")
 }
 
 fn same_set_ids(current: &[String], ordered: &[String]) -> bool {

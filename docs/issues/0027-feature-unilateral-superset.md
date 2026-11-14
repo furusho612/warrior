@@ -90,4 +90,4 @@
 
 計画のファイルを分けた理由は、`backend/warrior/src/set.rs` と `frontend/src/screens/record/sets.rs` が code-style の 1000 行の閾値に達したためである。`backend/warrior/src/set/bindings.rs` に SQL のバインド値と操作 ID の条件を、`frontend/src/screens/record/set_table.rs` にセットの表の描画を移した。
 
-再レビューで、スーパーセットの並べ替えが組の種目を変えないことをサーバーで検証し、`superset_members` の `(user_id, training_exercise_id)` に一意索引を追加した (`migrations/0012_superset_member_unique.sql`)。main の 0025 最終版を取り込み、0077 は main の 1 つに統合した。0026 の取り込み後は `set_calc` が 1202 行になるため、0077 の範囲に含める。
+再レビューで、スーパーセットの並べ替えが組の種目を変えないことをサーバーで検証し、`superset_members` の `(user_id, training_exercise_id)` に一意索引を追加した (`migrations/0012_superset_member_unique.sql`)。main の 0025/0026 最終版を取り込み、0077 は main の 1 つに統合した。`set_calc` は 1168 行で、0077 の範囲に含める。
