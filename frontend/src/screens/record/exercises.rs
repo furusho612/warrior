@@ -1,12 +1,14 @@
 //! 記録の種目の一覧、追加、並べ替え、削除と、前回の記録の表示、コピー、差。
 //!
-//! 対応する要求: `REQ-REC-002`、`REQ-REC-003`、`REQ-REC-004`、`REQ-SET-001`、`REQ-SET-002`。
+//! 対応する要求: `REQ-REC-002`、`REQ-REC-003`、`REQ-REC-004`、`REQ-SET-001`、`REQ-SET-002`、
+//! `REQ-SET-010`。
 //! 種目の行とセットの行は端末内の IndexedDB に保存し、送信待ちの列を通す (ADR-002)。
 //! セットの入力は画面へすぐ反映し、端末内の保存は入力の版が変わるたびに行う。
 //! セットの完了は `SetCompleted` を 1 回発行する。前回の選択と差の計算は
 //! `warrior_core::previous` の純粋な関数を使う。
 
 use dioxus::prelude::*;
+use warrior_core::duration;
 use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
 use warrior_core::previous::{
     DurationDifference, ExerciseDifference, PreviousExercise, PreviousTraining,
@@ -594,6 +596,7 @@ fn EmptySetTable() -> Element {
 fn previous_set_text(index: usize, set: &warrior_core::previous::PreviousSet) -> String {
     let segment = set.segments.first();
     let value = match segment {
+        Some(segment) if segment.longest_duration_seconds() > 0 => previous_duration_text(segment),
         Some(segment) => {
             let side_text = |side: &warrior_core::set_calc::SideValue| {
                 format!("{} kg x {}", format_number(side.weight_kg), side.reps)
@@ -606,19 +609,29 @@ fn previous_set_text(index: usize, set: &warrior_core::previous::PreviousSet) ->
                     text(Key::RecordSetRight),
                     side_text(right)
                 ),
-                _ => {
-                    let duration = segment.longest_duration_seconds();
-                    if duration > 0 && segment.weight_kg == 0.0 && segment.reps == 0 {
-                        format!("{duration}{}", text(Key::RecordSeconds))
-                    } else {
-                        format!("{} kg x {}", format_number(segment.weight_kg), segment.reps)
-                    }
-                }
+                _ => format!("{} kg x {}", format_number(segment.weight_kg), segment.reps),
             }
         }
         None => String::new(),
     };
     format!("{} {} ({})", index + 1, value, set_kind_text(set.kind))
+}
+
+fn previous_duration_text(segment: &warrior_core::set_calc::SetSegment) -> String {
+    let side_duration = |side: &warrior_core::set_calc::SideValue| {
+        side.duration_seconds
+            .map_or_else(|| "00:00".to_owned(), duration::format)
+    };
+    match (segment.left.as_ref(), segment.right.as_ref()) {
+        (Some(left), Some(right)) => format!(
+            "{} {} / {} {}",
+            text(Key::RecordSetLeft),
+            side_duration(left),
+            text(Key::RecordSetRight),
+            side_duration(right)
+        ),
+        _ => duration::format(segment.longest_duration_seconds()),
+    }
 }
 
 fn signed_weight(value: f64) -> String {

@@ -31,6 +31,7 @@ mod set_drawer;
 mod set_events;
 mod set_inputs;
 mod sets;
+mod stopwatch;
 mod superset_panel;
 
 use exercises::ExerciseSection;

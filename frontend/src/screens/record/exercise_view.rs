@@ -58,7 +58,7 @@ pub(super) struct ExerciseView {
 }
 
 fn is_lateral(snapshot: &ExerciseSnapshot) -> bool {
-    snapshot.laterality == Laterality::Unilateral && snapshot.record_mode != RecordMode::Time
+    snapshot.laterality == Laterality::Unilateral
 }
 
 /// セットの保存が同時に走らないようにする印。
@@ -163,8 +163,10 @@ pub(super) fn update_set_input(
         Field::Duration => segment.duration = value,
         Field::LeftWeight => segment.left_weight = value,
         Field::LeftReps => segment.left_reps = value,
+        Field::LeftDuration => segment.left_duration = value,
         Field::RightWeight => segment.right_weight = value,
         Field::RightReps => segment.right_reps = value,
+        Field::RightDuration => segment.right_duration = value,
     }
     if set.completed() && !set.values(lateral).is_complete() {
         set.record.completed = 0;
@@ -254,6 +256,7 @@ pub(super) fn append_segment(
     let side = lateral.then_some(SegmentSideValues {
         weight_kg: 0.0,
         reps: 0,
+        duration_seconds: None,
     });
     set.record.completed = 0;
     set.segments.push(SegmentView {
@@ -284,8 +287,10 @@ pub(super) fn append_segment(
         duration: String::new(),
         left_weight: String::new(),
         left_reps: String::new(),
+        left_duration: String::new(),
         right_weight: String::new(),
         right_reps: String::new(),
+        right_duration: String::new(),
     });
     set.bump();
     views.set(list);
@@ -348,6 +353,7 @@ pub(super) async fn add_set(
     let side = is_lateral(&view.snapshot).then_some(SegmentSideValues {
         weight_kg: 0.0,
         reps: 0,
+        duration_seconds: None,
     });
     let values = SetValues {
         kind: SetKind::Normal,

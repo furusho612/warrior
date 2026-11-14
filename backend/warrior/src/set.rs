@@ -616,22 +616,39 @@ fn segment_bindings(
     segment: &SetSegmentPayload,
     now: &str,
 ) -> Vec<SqlValue> {
+    let is_time = is_time_segment(segment);
     let mut bindings = vec![
         SqlValue::Text(segment.segment_id.clone()),
         SqlValue::Text(user_id.to_owned()),
         SqlValue::Text(set_id.to_owned()),
         SqlValue::Integer(segment.position),
-        SqlValue::Real(segment.weight_kg),
-        SqlValue::Integer(i64::from(segment.reps)),
-        SqlValue::Integer(i64::from(segment.momentum_reps)),
-        SqlValue::Integer(i64::from(segment.assisted_reps)),
+        optional_real((!is_time).then_some(segment.weight_kg)),
+        optional_integer((!is_time).then(|| i64::from(segment.reps))),
+        SqlValue::Integer(if is_time {
+            0
+        } else {
+            i64::from(segment.momentum_reps)
+        }),
+        SqlValue::Integer(if is_time {
+            0
+        } else {
+            i64::from(segment.assisted_reps)
+        }),
         optional_integer(segment.duration_seconds.map(i64::from)),
     ];
     for side in [segment.left.as_ref(), segment.right.as_ref()] {
-        bindings.push(side.map_or(SqlValue::Null, |side| SqlValue::Real(side.weight_kg)));
-        bindings.push(side.map_or(SqlValue::Null, |side| {
-            SqlValue::Integer(i64::from(side.reps))
-        }));
+        let weight = if is_time {
+            None
+        } else {
+            side.map(|side| side.weight_kg)
+        };
+        let reps = if is_time {
+            None
+        } else {
+            side.map(|side| i64::from(side.reps))
+        };
+        bindings.push(optional_real(weight));
+        bindings.push(optional_integer(reps));
         bindings.push(optional_integer(
             side.and_then(|side| side.duration_seconds).map(i64::from),
         ));
@@ -639,6 +656,19 @@ fn segment_bindings(
     bindings.push(SqlValue::Text(now.to_owned()));
     bindings.push(SqlValue::Text(now.to_owned()));
     bindings
+}
+
+/// 時間の列を持つ段か。時間で記録する段は重量と回数を保存しない。
+fn is_time_segment(segment: &SetSegmentPayload) -> bool {
+    segment.duration_seconds.is_some()
+        || segment
+            .left
+            .as_ref()
+            .is_some_and(|side| side.duration_seconds.is_some())
+        || segment
+            .right
+            .as_ref()
+            .is_some_and(|side| side.duration_seconds.is_some())
 }
 
 /// 操作 ID を保存したことを表す条件。

@@ -4,7 +4,8 @@
 //! 保存する (ADR-002)。記録した時点の体重はセットの行に持ち、段の重量は自重種目では
 //! セットごとの加重とする。ドロップセットは 1 つのセットに複数の段を持つ。
 //! 段は反動と補助の回数を持ち、セットは RPE を持つ。RPE と回数の内訳は
-//! `warrior_core::rpe` の規則で検証する。
+//! `warrior_core::rpe` の規則で検証する。時間で記録する段は時間を持ち、重量と回数を
+//! 保存しない。
 //! 操作の ID と順序は保存のときに `frontend/src/storage` が決める。
 
 use warrior_core::exercise::GripSelection;
@@ -25,6 +26,8 @@ pub struct SegmentSideValues {
     pub weight_kg: f64,
     /// 回数。
     pub reps: u32,
+    /// 時間で記録する場合の秒数。
+    pub duration_seconds: Option<u32>,
 }
 
 /// セットの 1 つの段の入力の値。
@@ -49,10 +52,14 @@ pub struct SetSegmentValues {
 impl SetSegmentValues {
     /// 段が完了に必要な値を持つか。
     ///
-    /// 左右別の段は左右の両方に回数があることを求める。
+    /// 左右別の段は左右の両方に回数または時間があることを求める。
     pub fn is_complete(&self) -> bool {
         match (self.left.as_ref(), self.right.as_ref()) {
-            (Some(left), Some(right)) => left.reps > 0 && right.reps > 0,
+            (Some(left), Some(right)) => {
+                (left.reps > 0 && right.reps > 0)
+                    || (left.duration_seconds.is_some_and(|duration| duration > 0)
+                        && right.duration_seconds.is_some_and(|duration| duration > 0))
+            }
             (None, None) => {
                 self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
             }
@@ -287,21 +294,22 @@ fn segment_record(
     values: &SetSegmentValues,
     now: &str,
 ) -> SetSegmentRecord {
+    let fields = segment_fields(values);
     SetSegmentRecord {
         id: segment_id.to_owned(),
         set_id: set_id.to_owned(),
         position,
-        weight_kg: Some(values.weight_kg),
-        reps: Some(i64::from(values.reps)),
-        momentum_reps: i64::from(values.momentum_reps),
-        assisted_reps: i64::from(values.assisted_reps),
-        duration_seconds: values.duration_seconds.map(i64::from),
-        left_weight_kg: values.left.map(|side| side.weight_kg),
-        left_reps: values.left.map(|side| i64::from(side.reps)),
-        left_duration_seconds: None,
-        right_weight_kg: values.right.map(|side| side.weight_kg),
-        right_reps: values.right.map(|side| i64::from(side.reps)),
-        right_duration_seconds: None,
+        weight_kg: fields.weight_kg,
+        reps: fields.reps,
+        momentum_reps: fields.momentum_reps,
+        assisted_reps: fields.assisted_reps,
+        duration_seconds: fields.duration_seconds,
+        left_weight_kg: fields.left_weight_kg,
+        left_reps: fields.left_reps,
+        left_duration_seconds: fields.left_duration_seconds,
+        right_weight_kg: fields.right_weight_kg,
+        right_reps: fields.right_reps,
+        right_duration_seconds: fields.right_duration_seconds,
         created_at: now.to_owned(),
         updated_at: now.to_owned(),
     }
@@ -313,22 +321,96 @@ fn updated_segment_record(
     values: &SetSegmentValues,
     now: &str,
 ) -> SetSegmentRecord {
+    let fields = segment_fields(values);
     SetSegmentRecord {
         position,
-        weight_kg: Some(values.weight_kg),
-        reps: Some(i64::from(values.reps)),
-        momentum_reps: i64::from(values.momentum_reps),
-        assisted_reps: i64::from(values.assisted_reps),
-        duration_seconds: values.duration_seconds.map(i64::from),
-        left_weight_kg: values.left.map(|side| side.weight_kg),
-        left_reps: values.left.map(|side| i64::from(side.reps)),
-        left_duration_seconds: None,
-        right_weight_kg: values.right.map(|side| side.weight_kg),
-        right_reps: values.right.map(|side| i64::from(side.reps)),
-        right_duration_seconds: None,
+        weight_kg: fields.weight_kg,
+        reps: fields.reps,
+        momentum_reps: fields.momentum_reps,
+        assisted_reps: fields.assisted_reps,
+        duration_seconds: fields.duration_seconds,
+        left_weight_kg: fields.left_weight_kg,
+        left_reps: fields.left_reps,
+        left_duration_seconds: fields.left_duration_seconds,
+        right_weight_kg: fields.right_weight_kg,
+        right_reps: fields.right_reps,
+        right_duration_seconds: fields.right_duration_seconds,
         updated_at: now.to_owned(),
         ..segment.clone()
     }
+}
+
+/// 端末に保存する段の値。時間で記録する段は重量と回数を持たない。
+struct SegmentFields {
+    weight_kg: Option<f64>,
+    reps: Option<i64>,
+    momentum_reps: i64,
+    assisted_reps: i64,
+    duration_seconds: Option<i64>,
+    left_weight_kg: Option<f64>,
+    left_reps: Option<i64>,
+    left_duration_seconds: Option<i64>,
+    right_weight_kg: Option<f64>,
+    right_reps: Option<i64>,
+    right_duration_seconds: Option<i64>,
+}
+
+fn segment_fields(values: &SetSegmentValues) -> SegmentFields {
+    let is_time = is_time_segment(values);
+    SegmentFields {
+        weight_kg: (!is_time).then_some(values.weight_kg),
+        reps: (!is_time).then(|| i64::from(values.reps)),
+        momentum_reps: if is_time {
+            0
+        } else {
+            i64::from(values.momentum_reps)
+        },
+        assisted_reps: if is_time {
+            0
+        } else {
+            i64::from(values.assisted_reps)
+        },
+        duration_seconds: values.duration_seconds.map(i64::from),
+        left_weight_kg: if is_time {
+            None
+        } else {
+            values.left.map(|side| side.weight_kg)
+        },
+        left_reps: if is_time {
+            None
+        } else {
+            values.left.map(|side| i64::from(side.reps))
+        },
+        left_duration_seconds: values
+            .left
+            .and_then(|side| side.duration_seconds)
+            .map(i64::from),
+        right_weight_kg: if is_time {
+            None
+        } else {
+            values.right.map(|side| side.weight_kg)
+        },
+        right_reps: if is_time {
+            None
+        } else {
+            values.right.map(|side| i64::from(side.reps))
+        },
+        right_duration_seconds: values
+            .right
+            .and_then(|side| side.duration_seconds)
+            .map(i64::from),
+    }
+}
+
+/// 時間の値を持つ段か。端末の行は時間の段に重量と回数を保存しない。
+fn is_time_segment(values: &SetSegmentValues) -> bool {
+    values.duration_seconds.is_some()
+        || values
+            .left
+            .is_some_and(|side| side.duration_seconds.is_some())
+        || values
+            .right
+            .is_some_and(|side| side.duration_seconds.is_some())
 }
 
 fn payload_segments(segment_ids: &[String], values: &[SetSegmentValues]) -> Vec<SetSegmentPayload> {
@@ -354,7 +436,7 @@ fn side_payload(values: SegmentSideValues) -> warrior_core::set_calc::SideValue 
     warrior_core::set_calc::SideValue {
         weight_kg: values.weight_kg,
         reps: values.reps,
-        duration_seconds: None,
+        duration_seconds: values.duration_seconds,
     }
 }
 

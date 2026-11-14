@@ -1,9 +1,11 @@
 //! セット詳細の drawer。セット番号を押すと開き、回数の内訳と RPE を編集する。
+//! 時間で記録するセットは RPE だけを編集する。
 //!
-//! 対応する要求: `REQ-SET-006`、`REQ-SET-007`。
+//! 対応する要求: `REQ-SET-006`、`REQ-SET-007`、`REQ-SET-010`。
 //! ドロップセットは段ごとに反動と補助の回数を持ち、RPE は親セットに 1 つ持つ。
 
 use dioxus::prelude::*;
+use warrior_core::duration;
 use warrior_core::exercise::RecordMode;
 
 use super::set_inputs::Field;
@@ -181,11 +183,18 @@ fn summary_text(set: &SetView, mode: RecordMode) -> String {
         return kind.to_owned();
     };
     let detail = match mode {
-        RecordMode::Time => format!(
-            "{} {}",
-            text_or_zero(&segment.duration),
-            text(Key::RecordSeconds)
-        ),
+        RecordMode::Time
+            if !segment.left_duration.is_empty() || !segment.right_duration.is_empty() =>
+        {
+            format!(
+                "{} {} / {} {}",
+                text(Key::RecordSetLeft),
+                duration_or_zero(&segment.left_duration),
+                text(Key::RecordSetRight),
+                duration_or_zero(&segment.right_duration)
+            )
+        }
+        RecordMode::Time => duration_or_zero(&segment.duration),
         RecordMode::WeightAndReps | RecordMode::BodyweightAndReps
             if !segment.left_weight.is_empty() && !segment.right_weight.is_empty() =>
         {
@@ -214,4 +223,8 @@ fn text_or_zero(value: &str) -> String {
     } else {
         value.to_owned()
     }
+}
+
+fn duration_or_zero(value: &str) -> String {
+    duration::parse(value).map_or_else(|| "00:00".to_owned(), duration::format)
 }
