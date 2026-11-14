@@ -90,6 +90,7 @@ text_keys! {
     RecordSetLoadFailed => "セットを読み込めませんでした。",
     RecordSetSaveFailed => "セットを保存できませんでした。",
     RecordSetRestoreFailed => "セットの復元に失敗しました。",
+    RecordRestoreDeferred => "新しい未送信の変更があるため、復元を見送りました。",
     RecordSetInputInvalid => "重量と回数を入力してください。",
     RecordSetTimeInvalid => "時間を入力してください。",
     RecordSetDropInvalid => "ドロップセットは先頭とウォームアップの直後に置けません。",

@@ -16,6 +16,7 @@ pub(crate) const TERMINAL_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5520";
 pub(crate) const OTHER_TERMINAL_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5521";
 pub(crate) const BENCH_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5530";
 pub(crate) const BODYWEIGHT_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5531";
+pub(crate) const TIME_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5534";
 pub(crate) const FINISHED_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5532";
 pub(crate) const OTHER_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5533";
 pub(crate) const BENCH_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5540";
@@ -32,6 +33,7 @@ pub(crate) const FINISHED_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c55
 pub(crate) const OTHER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5555";
 pub(crate) const BENCH_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5560";
 pub(crate) const BODYWEIGHT_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5561";
+pub(crate) const TIME_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5562";
 pub(crate) const ORIGIN: &str = "http://localhost:8787";
 
 pub(crate) fn seed_base(
@@ -123,6 +125,20 @@ pub(crate) fn seed_base(
     record_common::seed_exercise(
         server,
         record_common::ExerciseSeed {
+            row_id: TIME_ROW_ID,
+            user_id: USER_ID,
+            training_id: TRAINING_ID,
+            exercise_id: TIME_EXERCISE_ID,
+            name: "プランク",
+            body_part: "abs",
+            muscle: "rectus_abdominis_upper",
+            record_mode: "time",
+            position: 3,
+        },
+    );
+    record_common::seed_exercise(
+        server,
+        record_common::ExerciseSeed {
             row_id: FINISHED_ROW_ID,
             user_id: USER_ID,
             training_id: FINISHED_TRAINING_ID,
@@ -150,12 +166,15 @@ pub(crate) fn seed_base(
     );
     record_common::seed_set(
         server,
-        FINISHED_SET_ID,
-        USER_ID,
-        FINISHED_ROW_ID,
-        1,
-        "normal",
-        1,
+        record_common::SetSeed {
+            set_id: FINISHED_SET_ID,
+            user_id: USER_ID,
+            training_exercise_id: FINISHED_ROW_ID,
+            position: 1,
+            kind: "normal",
+            completed: 1,
+            grip: None,
+        },
     );
     record_common::seed_segment(
         server,
@@ -171,12 +190,15 @@ pub(crate) fn seed_base(
     );
     record_common::seed_set(
         server,
-        OTHER_SET_ID,
-        OTHER_USER_ID,
-        OTHER_ROW_ID,
-        1,
-        "normal",
-        1,
+        record_common::SetSeed {
+            set_id: OTHER_SET_ID,
+            user_id: OTHER_USER_ID,
+            training_exercise_id: OTHER_ROW_ID,
+            position: 1,
+            kind: "normal",
+            completed: 1,
+            grip: None,
+        },
     );
     record_common::seed_segment(
         server,
@@ -206,6 +228,24 @@ pub(crate) fn segment(
         "momentum_reps": 0,
         "assisted_reps": 0,
         "duration_seconds": null,
+        "left": null,
+        "right": null
+    })
+}
+
+pub(crate) fn time_segment(
+    segment_id: &str,
+    position: i64,
+    duration_seconds: i64,
+) -> serde_json::Value {
+    json!({
+        "segment_id": segment_id,
+        "position": position,
+        "weight_kg": 0.0,
+        "reps": 0,
+        "momentum_reps": 0,
+        "assisted_reps": 0,
+        "duration_seconds": duration_seconds,
         "left": null,
         "right": null
     })
