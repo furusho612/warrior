@@ -1,8 +1,9 @@
 # 記録中のトレーニングの編集権と引き継ぎを実装する
 
-- Requirements: REQ-NFR-015, REQ-NFR-006
+- Requirements: REQ-NFR-015, REQ-NFR-006, REQ-NFR-010
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-session-ownership
 
@@ -63,6 +64,7 @@ API の応答とログには出さない。
 - [ ] 端末トークンが HttpOnly、Secure、SameSite=Lax の Cookie で渡され、D1 にはハッシュだけが保存される。
 - [ ] ログアウトの後に同じ利用者でログインし直すと、記録中のトレーニングの編集権に再接続できる。
 - [ ] 別のアカウントに切り替えると、前の利用者の端末トークンが使えなくなる。
+- [ ] 端末トークンの行が、アカウントの削除の対象に含まれる。これは REQ-NFR-010 の受入基準に対応する。
 - [ ] 同じアカウントでログインした別の端末から、サーバーに保存済みの記録を閲覧できる。これは REQ-NFR-006 の受入基準のうち、複数の端末から同じ記録を見られることを満たす。
 - [ ] E2E で、2 つのブラウザのプロファイルを起動し、開始した端末だけが編集できること、ほかの端末が閲覧のみになること、引き継ぎの後に元の端末が編集できなくなることを確かめる。
 - [ ] 結合テストで、編集権を持たない端末の書き込みが 403 になること、終了後の同時編集が後勝ちになることを確かめる。
@@ -78,3 +80,23 @@ API の応答とログには出さない。
 `frontend/src/screens/record.rs` に、閲覧のみの表示と引き継ぎの確認を置く。
 `backend/warrior/tests/e2e_ownership.rs` に E2E を追加する。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `terminal_tokens` を追加する。
+
+## 結果
+
+記録中のトレーニングは開始した端末だけが編集でき、ほかの端末はサーバーに保存済みの内容を閲覧できる。ほかの端末からの更新と終了は 403 になり、画面は閲覧のみに切り替わる。
+引き継ぎは `POST /api/trainings/:id/takeover` で行い、保存済みの内容を返した後に編集権をこの端末へ移す。引き継ぎの後に元の端末から書き込むと 403 になる。
+端末トークンは `warrior_terminal` Cookie で渡し、HttpOnly、Secure、SameSite=Lax を付ける。D1 には SHA-256 のハッシュだけを保存し、ログアウト後の再ログインでは同じ利用者の端末トークンに再接続する。アカウントの削除では `terminal_tokens` の行も消す。
+終了したトレーニングは編集権を外し、同じアカウントのどの端末からでも編集できる。終了後の編集はサーバーの受理時刻で後勝ちにし、終了済みの記録を閲覧のみの端末が読み直したときは、閲覧のみの印を消す。
+同期の適用は、書き込みを batch の先頭に置き、`INSERT ... SELECT ... WHERE changes() > 0` で操作 ID を書く。書き込みが 0 行なら操作 ID を残さず、同じ操作の再送が成功として扱われないようにした。`GET /api/trainings/:id` で保存済みの記録を返す。
+`ReplacePurpose` で読み直しと引き継ぎの置換を分け、引き継ぎと終了済みの読み直しだけが閲覧のみの印を消す。
+TLA+ の `TrainingOwnership` は、編集権、引き継ぎ、終了後の編集をモデル化し、後勝ちはサーバーの上書きとして表す。
+
+設計との差分は次のとおり。
+
+- `frontend/src/storage/terminal.rs` は作らず、端末トークンは HttpOnly Cookie のためアプリから読まない。端末の識別はサーバーの応答と Cookie に任せる。
+- `training_sessions.updated_at` は 0006 に既にあり、追加の migration は `terminal_tokens` と `owner_terminal_id` の 0008 だけにした。
+- 引き継ぎの状態変更は 409 ではなく 403 で返し、終了済みの 409 と分ける。画面は 403 に「記録の状態が変わりました。読み直してください。」を出す。
+- フロントエンドの HTTP クライアントは、0048 の `frontend/src/http.rs` と 0023 の `frontend/src/training_session.rs` が並存している。統合は 0076 で行う。
+- 403 の原因（状態変更と Origin 拒否）をクライアントで区別するのは 0076 で行う。
+
+検証は、`wrangler_ownership` 6 件、`wrangler_sync` 2 件、`wrangler_training_session` 2 件、`wrangler_calendar` 1 件、`account_deletion_tables` 1 件、`wrangler_account_deletion` 1 件、`e2e_ownership`、`e2e_calendar`、`e2e_training_session`、`e2e_offline`、`mise run formal` の 4 モデルを通した。Safari の E2E はローカルの remote automation が無効なため未実行で、CI で確認する。
