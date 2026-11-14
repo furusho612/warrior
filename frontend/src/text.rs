@@ -103,6 +103,7 @@ text_keys! {
     RecordSetLeft => "左",
     RecordSetRight => "右",
     RecordSetDetail => "セット詳細",
+    RecordSetDetailOpen => "の詳細を開く",
     RecordSetDetailClose => "閉じる",
     RecordSetBreakdownLabel => "回数の内訳 (任意)",
     RecordSetBreakdownNote => "反動の回数は総重量に含め、補助の回数は含めません。",

@@ -9,7 +9,9 @@ use warrior_core::training_record::SetSegmentRecord;
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
-use super::{parse_count_or_zero, previous_values, set_numbers, SegmentView, SetView};
+use super::{
+    detail_open_label, parse_count_or_zero, previous_values, set_numbers, SegmentView, SetView,
+};
 use crate::text::Key;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -145,6 +147,16 @@ fn req_set_007_the_drawer_formats_and_validates_rpe() {
     assert_eq!(view.validation_error(false), Some(Key::RecordSetRpeInvalid));
     view.rpe = String::new();
     assert_eq!(view.validation_error(false), None);
+}
+
+#[wasm_bindgen_test]
+fn set_detail_open_labels_include_the_set_number() {
+    assert_eq!(detail_open_label("1", false), "セット 1 の詳細を開く");
+    assert_eq!(detail_open_label("2", false), "セット 2 の詳細を開く");
+    assert_eq!(
+        detail_open_label("D", true),
+        "ドロップセット D の詳細を開く"
+    );
 }
 
 #[wasm_bindgen_test]

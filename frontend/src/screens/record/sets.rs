@@ -558,6 +558,7 @@ fn SetRow(
     let kind = set.kind();
     let is_drop = kind == SetKind::Drop;
     let number_text = number.map_or_else(|| "D".to_owned(), |number| number.to_string());
+    let open_label = detail_open_label(&number_text, is_drop);
     let first_segment = set.segments.first().cloned();
     let buttons = RowButtonState {
         set_id: set.record.id.clone(),
@@ -584,9 +585,9 @@ fn SetRow(
             div {
                 class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
                 button {
-                    class: "w-4 shrink-0 text-left text-[11px] text-text-sub",
+                    class: "min-h-11 min-w-11 shrink-0 text-left text-[11px] text-text-sub",
                     "data-set-open": "true",
-                    "aria-label": "{text(Key::RecordSetDetail)}",
+                    "aria-label": "{open_label}",
                     onclick: move |_| selected_set.0.set(Some(open_id.clone())),
                     "{number_text}"
                 }
@@ -851,6 +852,20 @@ fn move_candidate_valid(kinds: &[SetKind], index: usize, delta: i32) -> bool {
 pub(super) fn move_allowed(rows: &[SetView], index: usize, delta: i32) -> bool {
     let kinds = rows.iter().map(SetView::kind).collect::<Vec<_>>();
     move_candidate_valid(&kinds, index, delta)
+}
+
+fn detail_open_label(number_text: &str, is_drop: bool) -> String {
+    let prefix = if is_drop {
+        format!("{}{}", text(Key::RecordSetKindDrop), text(Key::RecordSets))
+    } else {
+        text(Key::RecordSets).to_owned()
+    };
+    format!(
+        "{} {} {}",
+        prefix,
+        number_text,
+        text(Key::RecordSetDetailOpen)
+    )
 }
 
 /// セット種別の文言。

@@ -9,7 +9,7 @@
 
 mod support;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use support::browser::{self, Browser};
 use support::record_common;
@@ -70,6 +70,7 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
     browser::add_exercise(&driver, BENCH_EXERCISE_ID).await;
 
     let first_set = add_set(&driver).await;
+    let first_label = assert_open_button(&driver, &first_set, "セット 1 の詳細を開く").await;
     browser::set_input(&driver, &weight_selector(&first_set), "100").await;
     browser::set_input(&driver, &reps_selector(&first_set), "10").await;
     open_drawer(&driver, &first_set).await;
@@ -87,11 +88,7 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
 
     driver.refresh().await.expect("the page must reload");
     browser::wait_for_route(&driver, "/record/:training_id").await;
-    browser::wait_for_present(
-        &driver,
-        &format!("[data-set-id=\"{first_set}\"] [data-set-open]"),
-    )
-    .await;
+    browser::wait_for_present(&driver, &open_selector(&first_set)).await;
     open_drawer(&driver, &first_set).await;
     browser::wait_for_value(&driver, &momentum_selector(), "3").await;
     browser::wait_for_value(&driver, &assisted_selector(), "1").await;
@@ -100,6 +97,8 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
     browser::wait_for_absent(&driver, "[data-set-drawer]").await;
 
     let second_set = add_set(&driver).await;
+    let second_label = assert_open_button(&driver, &second_set, "セット 2 の詳細を開く").await;
+    assert_ne!(first_label, second_label);
     browser::set_input(&driver, &weight_selector(&second_set), "80").await;
     browser::set_input(&driver, &reps_selector(&second_set), "8").await;
     open_drawer(&driver, &second_set).await;
@@ -111,6 +110,8 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
     .await;
 
     let empty_rpe_set = add_set(&driver).await;
+    let third_label = assert_open_button(&driver, &empty_rpe_set, "セット 3 の詳細を開く").await;
+    assert_ne!(second_label, third_label);
     browser::set_input(&driver, &weight_selector(&empty_rpe_set), "60").await;
     browser::set_input(&driver, &reps_selector(&empty_rpe_set), "5").await;
     browser::click(&driver, &complete_selector(&empty_rpe_set)).await;
@@ -176,12 +177,36 @@ async fn add_set(driver: &WebDriver) -> String {
 }
 
 async fn open_drawer(driver: &WebDriver, set_id: &str) {
-    browser::click(
+    browser::click(driver, &open_selector(set_id)).await;
+    browser::wait_for_present(driver, "[data-set-drawer]").await;
+}
+
+async fn assert_open_button(driver: &WebDriver, set_id: &str, expected_label: &str) -> String {
+    let selector = open_selector(set_id);
+    let label = browser::attribute(driver, &selector, "aria-label").await;
+    assert_eq!(label, expected_label, "the open button label");
+    let rect = browser::eval_json(
         driver,
-        &format!("[data-set-id=\"{set_id}\"] [data-set-open]"),
+        "const done = arguments[arguments.length - 1]; \
+         const element = document.querySelector(arguments[0]); \
+         const rect = element.getBoundingClientRect(); \
+         done(JSON.stringify({width: rect.width, height: rect.height}));",
+        vec![json!(selector)],
     )
     .await;
-    browser::wait_for_present(driver, "[data-set-drawer]").await;
+    assert!(
+        rect["width"].as_f64().unwrap_or_default() >= 44.0,
+        "the open button width must be at least 44px: {rect:?}"
+    );
+    assert!(
+        rect["height"].as_f64().unwrap_or_default() >= 44.0,
+        "the open button height must be at least 44px: {rect:?}"
+    );
+    label
+}
+
+fn open_selector(set_id: &str) -> String {
+    format!("[data-set-id=\"{set_id}\"] [data-set-open]")
 }
 
 async fn set_ids(driver: &WebDriver) -> Vec<String> {
