@@ -3,6 +3,7 @@
 - Requirements: REQ-SET-011, REQ-LIB-011
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-grip-attachment
 
@@ -74,8 +75,22 @@
 `frontend/src/screens/record/sets.rs` に、既定の選択と選択肢の組み立てを置く。
 `frontend/src/screens/record/exercise_view/operations/grip.rs` に、選択の保存と前回の記録の取り直しを置く。
 `frontend/src/screens/record/exercise_view/operations/set_io.rs` に、セットの追加、保存、削除、コピー、復元を置く。
-`frontend/src/calendar_view.rs` に、グリップとアタッチメントの表示文言を集約し、記録画面とカレンダーとサマリーが共有する。
+`frontend/src/grip_text.rs` に、グリップとアタッチメントの表示文言と文字列キーの変換を集約し、記録画面とカレンダーとサマリーが共有する。
 履歴とグラフの絞り込みのクエリと API は 0049 が担う。
 `CHANGES.md` の `## develop` に、利用者に見える変更としてグリップの選択を追記する。
 `backend/warrior/tests/e2e_grip.rs` に E2E を追加する。
 `backend/pbt/tests/grip.rs` に性質テストを置く。
+
+## 結果
+
+記録画面のセット詳細に、種目に応じた握り方、手幅、アタッチメントの選択を追加した。既定の選択は、その種目の直近のセットの選択とし、直近が無いときと選択肢に無いときは選択肢の先頭にした。選択の変更はそのセットのグリップとして保存し、同じキーで前回の記録を取り直す。前回の取得は、現在の選択の比較のキーを `GET /api/trainings/:id/previous` に渡す。
+
+セットの作成と更新で、種目スナップショットの `grip_mode` と `grip_options` に合わないグリップを 400 で拒否する。拒否した操作は、セットの行も操作 ID も残さない。グリップを選ぶ種目は選択肢を 1 つ以上持つことを `Exercise::validate` と `ExerciseSnapshot::validate` の不変条件にし、スナップショットの保存経路で検証する。
+
+表示の文言と文字列キーの変換を `frontend/src/grip_text.rs` に集約し、記録画面、カレンダー、サマリーが共有する。`CHANGES.md` の `## develop` に、利用者に見える変更としてグリップの選択を追記した。
+
+履歴とグラフのグリップとアタッチメントによる絞り込みのクエリと API は 0049 が担う。0049 の `Requirements` に `REQ-SET-011` を足し、絞り込みの条件と完了条件を記録した。
+
+レビューで、`wrangler_personal_best` の種目の seed がグリップ種目に対応していないことを見つけ、`ExerciseSeed` に `grip_mode` と `grip_options` を足した。E2E は、完了の応答の `updated` と、同じ操作の再送の `held` が、選んだグリップのキーだけを持つことを確かめる。自己ベストの保持の意味は 0029 のままにした。
+
+検証は、`cargo test -p warrior --lib` の 93 件、`cargo test -p warrior_core` の 315 件、`cargo test -p warrior_pbt` の 114 件、`mise run test-browser` の 115 件、`wrangler_personal_best` の 4 件、`wrangler_record_set` と `wrangler_record_reps_rpe` と `wrangler_record_time` と `wrangler_training_session` の 9 件、`e2e_grip` の 1 件が通過した。`mise run fmt`、`mise run lint`、`mise run build` も通過した。
