@@ -19,8 +19,10 @@
 
 ## 現状
 
-0019 で種目ごとのグリップの選択肢を表せるようにし、0024 で前回の記録、0029 で自己ベストを実装する。
-しかし、記録時のグリップの選択、セットへの保存、比較のキー、履歴とグラフの絞り込みがない。
+0019 で種目ごとのグリップの選択肢を表せるようにし、0024 で前回の記録、0029 で自己ベストを実装した。
+`migrations/0006_training_sessions.sql` の `sets.grip`、`backend/warrior/src/set.rs` の保存、`backend/warrior_core/src/exercise.rs` の比較のキー、前回と自己ベストをキーで絞り込む処理は既にある。
+しかし、記録画面でグリップを選ぶ入力が無く、セットの追加は常にグリップ無しを送っていた。前回の記録も、グリップを指定せずに取得していた。
+履歴とグラフの絞り込みは 0049 が担う。
 
 ## 設計方針
 
@@ -55,7 +57,7 @@
 - [ ] 前回の記録と自己ベストが、同じグリップと同じアタッチメントの記録だけを対象にする。これは REQ-SET-011 の受入基準に対応する。
 - [ ] 握り方と手幅の両方が一致することを、比較の条件にする。
 - [ ] アタッチメントと順手か逆手かの両方が一致することを、比較の条件にする。
-- [ ] 履歴とグラフをグリップとアタッチメントで絞り込めるクエリと API がある。画面は 0049 が担う。
+- [ ] 履歴とグラフをグリップとアタッチメントで絞り込むクエリと API は 0049 が担う。この issue は、絞り込みに使う比較のキーと、セットごとのグリップの保存を提供する。
 - [ ] セットのコピーと前回の表示が、グリップとアタッチメントもコピーする。
 - [ ] 種目の選択肢にない値を拒否する。
 - [ ] PBT で、グリップとアタッチメントの比較のキーが、同じ値の組だけを一致させ、違う値の組を一致させないことを確かめる。
@@ -64,11 +66,12 @@
 
 ## 解決方法
 
-`migrations/` の `sets` にグリップの選択の列を追加する。値は種別と、握り方、手幅、アタッチメント、順手か逆手かを持つ。
-`backend/warrior_core/src/grip.rs` に、選択の型、選択肢の検証、比較のキーの作成を置く。
-比較のキーは 0022 が `backend/warrior_core/src/exercise.rs` の `GripSelection::comparison_key` に置いた。0031 はこの表現を `grip.rs` へ移すか拡張し、`sets.grip` の JSON の形と揃える。
-`backend/warrior/src/set.rs` にグリップの保存を追加する。
-`backend/warrior/src/history.rs` に、グリップとアタッチメントの絞り込みのクエリを置く。
-`frontend/src/screens/record.rs` にグリップの選択を置く。
+`sets.grip` の列は `migrations/0006_training_sessions.sql` にあり、値は `GripSelection` の JSON とする。migration は追加しない。
+グリップの選択の型、選択肢の検証、比較のキーは 0019 と 0022 が `backend/warrior_core/src/exercise.rs` に置いた。0031 はこの表現をそのまま使う。
+`backend/warrior/src/set/validation.rs` に、セットの作成と更新で、種目スナップショットの `grip_mode` と `grip_options` に合わないグリップを拒否する検証を置く。
+`frontend/src/screens/record/set_drawer.rs` と `frontend/src/screens/record/set_table.rs` に、グリップの選択と表示を置く。
+`frontend/src/screens/record/sets.rs` に、既定の選択と選択肢の組み立てを置く。
+`frontend/src/screens/record/exercise_view/operations/grip.rs` に、選択の保存と前回の記録の取り直しを置く。
+履歴とグラフの絞り込みのクエリと API は 0049 が担う。
 `backend/warrior/tests/e2e_grip.rs` に E2E を追加する。
 `backend/pbt/tests/grip.rs` に性質テストを置く。
