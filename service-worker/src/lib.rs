@@ -1,16 +1,18 @@
-//! Service Worker のキャッシュ。
+//! Service Worker のキャッシュとプッシュ通知 (REQ-TMR-008、ADR-020)。
 //!
 //! イベントの接続はローダーの JavaScript が `service_worker_start` を呼ぶ。
 //! キャッシュの版と対象の判定は `warrior_core::pwa` の純粋な関数を使う。
+//! プッシュの本文は固定の文言を使い、記録の内容を含めない (ADR-008)。
 
 use js_sys::{Array, Promise};
+use warrior_core::push::{NOTIFICATION_BODY, NOTIFICATION_TITLE};
 use warrior_core::pwa::{cache_name, is_cacheable_path};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::{future_to_promise, JsFuture};
 use web_sys::{
-    Cache, CacheStorage, Event, ExtendableEvent, FetchEvent, Request, Response,
-    ServiceWorkerGlobalScope,
+    Cache, CacheStorage, Client, ClientQueryOptions, ClientType, Clients, Event, ExtendableEvent,
+    FetchEvent, NotificationOptions, Request, Response, ServiceWorkerGlobalScope, WindowClient,
 };
 
 /// Service Worker のキャッシュの版。wasm と JS のビルドごとに更新する。
@@ -36,6 +38,8 @@ pub fn service_worker_start() {
     connect_activate(&scope);
     connect_fetch(&scope);
     connect_message(&scope);
+    connect_push(&scope);
+    connect_notification_click(&scope);
 }
 
 #[wasm_bindgen]
@@ -116,6 +120,84 @@ fn connect_message(scope: &ServiceWorkerGlobalScope) {
     });
     let _ = scope.add_event_listener_with_callback("message", closure.as_ref().unchecked_ref());
     closure.forget();
+}
+
+fn connect_push(scope: &ServiceWorkerGlobalScope) {
+    let scope_for_push = scope.clone();
+    let closure = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+        let Ok(event) = event.dyn_into::<ExtendableEvent>() else {
+            return;
+        };
+        let scope = scope_for_push.clone();
+        let promise = future_to_promise(async move {
+            if let Err(error) = show_rest_finished(&scope).await {
+                worker_log(&format!("push failed: {error:?}"));
+            }
+            Ok(JsValue::UNDEFINED)
+        });
+        if let Err(error) = event.wait_until(&promise) {
+            worker_log(&format!("push wait_until failed: {error:?}"));
+        }
+    });
+    let _ = scope.add_event_listener_with_callback("push", closure.as_ref().unchecked_ref());
+    closure.forget();
+}
+
+fn connect_notification_click(scope: &ServiceWorkerGlobalScope) {
+    let scope_for_click = scope.clone();
+    let closure = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+        let Ok(event) = event.dyn_into::<ExtendableEvent>() else {
+            return;
+        };
+        let scope = scope_for_click.clone();
+        let promise = future_to_promise(async move {
+            if let Err(error) = focus_or_open(&scope).await {
+                worker_log(&format!("notificationclick failed: {error:?}"));
+            }
+            Ok(JsValue::UNDEFINED)
+        });
+        if let Err(error) = event.wait_until(&promise) {
+            worker_log(&format!("notificationclick wait_until failed: {error:?}"));
+        }
+    });
+    let _ = scope
+        .add_event_listener_with_callback("notificationclick", closure.as_ref().unchecked_ref());
+    closure.forget();
+}
+
+async fn show_rest_finished(scope: &ServiceWorkerGlobalScope) -> Result<(), JsValue> {
+    let options = NotificationOptions::new();
+    options.set_body(NOTIFICATION_BODY);
+    let registration = scope.registration();
+    let shown = registration.show_notification_with_options(NOTIFICATION_TITLE, &options)?;
+    JsFuture::from(shown).await?;
+    Ok(())
+}
+
+async fn focus_or_open(scope: &ServiceWorkerGlobalScope) -> Result<(), JsValue> {
+    let clients: Clients = scope.clients();
+    let options = ClientQueryOptions::new();
+    options.set_type(ClientType::Window);
+    options.set_include_uncontrolled(true);
+    let windows = JsFuture::from(clients.match_all_with_options(&options))
+        .await?
+        .dyn_into::<Array>()?;
+    let origin = scope.origin();
+    for value in windows.iter() {
+        let client: Client = value.unchecked_into();
+        if !client.url().starts_with(&origin) {
+            continue;
+        }
+        let window: WindowClient = client.unchecked_into();
+        // フォーカスに失敗しても、ほかの画面か新しい画面で開けるか試す。
+        if let Ok(promise) = window.focus() {
+            if JsFuture::from(promise).await.is_ok() {
+                return Ok(());
+            }
+        }
+    }
+    JsFuture::from(clients.open_window("/")).await?;
+    Ok(())
 }
 
 async fn install() -> Result<(), JsValue> {

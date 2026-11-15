@@ -16,6 +16,7 @@ pub mod log;
 pub mod ownership;
 pub mod personal_best;
 pub mod profile;
+pub mod push;
 pub mod random;
 pub mod rate_limit;
 pub mod router;

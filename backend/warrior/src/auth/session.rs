@@ -11,6 +11,8 @@ use worker::{Env, Request, Response, Result};
 use super::{append_cookie, cookie, now_iso};
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
+use crate::ownership;
+use crate::push;
 
 /// 認証済みの利用者。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -66,11 +68,19 @@ pub async fn me(request: Request, context: worker::RouteContext<()>) -> Result<R
 }
 
 /// `POST /api/auth/logout` の応答。
+///
+/// この端末のプッシュ購読を削除してから、セッションを消す。
 pub async fn logout(request: Request, context: worker::RouteContext<()>) -> Result<Response> {
     let env = context.env;
+    let db = Db::new(env.d1("DB")?);
+    if let Some(authenticated) = resolve(&request, &env).await? {
+        if let Some(terminal_id) = ownership::ensure(&db, &request, &authenticated.id).await? {
+            let statement = push::delete_for_terminal_statement(&authenticated.id, &terminal_id);
+            db.run(&statement).await?;
+        }
+    }
     if let Some(token) = cookie(&request, SESSION_COOKIE) {
         if is_valid_opaque_token(&token) {
-            let db = Db::new(env.d1("DB")?);
             let statement = SqlStatement::new(
                 "DELETE FROM auth_sessions WHERE token_hash = ?",
                 vec![SqlValue::Text(hash_session_token(&token))],

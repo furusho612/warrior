@@ -78,18 +78,13 @@ pub fn ios_install_hint() -> bool {
         return false;
     };
     let user_agent = window.navigator().user_agent().unwrap_or_default();
-    let is_ios =
-        user_agent.contains("iPhone") || user_agent.contains("iPad") || user_agent.contains("iPod");
-    if !is_ios {
-        return false;
-    }
     let standalone = window
         .match_media("(display-mode: standalone)")
         .ok()
         .flatten()
         .map(|query| MediaQueryList::matches(&query))
         .unwrap_or(false);
-    !standalone
+    warrior_core::push::needs_install_hint(&user_agent, standalone)
 }
 
 /// PWA の更新と iOS の追加の案内。

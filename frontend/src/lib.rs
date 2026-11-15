@@ -15,6 +15,7 @@ pub mod notification;
 pub mod passkey;
 pub mod previous;
 pub mod profile;
+pub mod push;
 pub mod pwa;
 pub mod record_rail;
 pub mod rest_timer;
