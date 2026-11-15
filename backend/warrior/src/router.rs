@@ -9,6 +9,8 @@ use crate::account;
 use crate::analysis;
 use crate::auth::{oauth, passkey, session};
 use crate::calendar;
+use crate::custom_exercise;
+use crate::exercise_override;
 use crate::history;
 use crate::library;
 use crate::profile;
@@ -44,6 +46,8 @@ pub const EXERCISES_ROUTE_NAME: &str = "exercises";
 pub const EXERCISE_ROUTE_NAME: &str = "exercise";
 /// 種目のお気に入りを更新する経路の名前。
 pub const EXERCISE_FAVORITE_ROUTE_NAME: &str = "exercise_favorite";
+/// マスターの種目の上書きを初期化する経路の名前。
+pub const EXERCISE_RESET_ROUTE_NAME: &str = "exercise_reset";
 /// 種目別の履歴を返す経路の名前。
 pub const EXERCISE_HISTORY_ROUTE_NAME: &str = "exercise_history";
 /// 種目別のグラフを返す経路の名前。
@@ -90,7 +94,11 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/trainings/:id", training_record::get)
         .post_async("/api/trainings/:id/takeover", training_record::takeover)
         .get_async("/api/exercises", library::exercises)
+        .post_async("/api/exercises", custom_exercise::create)
         .get_async("/api/exercises/:id", library::exercise_detail)
+        .put_async("/api/exercises/:id", library::update_exercise)
+        .delete_async("/api/exercises/:id", library::delete_exercise)
+        .post_async("/api/exercises/:id/reset", exercise_override::reset)
         .put_async("/api/exercises/:id/favorite", library::add_favorite)
         .delete_async("/api/exercises/:id/favorite", library::remove_favorite)
         .get_async("/api/exercises/:id/history", history::history)
@@ -127,6 +135,9 @@ pub fn route_name(path: &str) -> &'static str {
     }
     if path.starts_with("/api/exercises/") && path.ends_with("/favorite") {
         return EXERCISE_FAVORITE_ROUTE_NAME;
+    }
+    if path.starts_with("/api/exercises/") && path.ends_with("/reset") {
+        return EXERCISE_RESET_ROUTE_NAME;
     }
     if exercise_id_path(path).is_some() {
         return EXERCISE_ROUTE_NAME;
@@ -166,6 +177,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/push/subscriptions" => PUSH_SUBSCRIPTIONS_ROUTE_NAME,
         "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
         "/api/exercises" => EXERCISES_ROUTE_NAME,
+        "/api/exercises/:id" => EXERCISE_ROUTE_NAME,
         "/api/analysis/body-parts" => ANALYSIS_BODY_PARTS_ROUTE_NAME,
         "/api/calendar" => CALENDAR_MONTH_ROUTE_NAME,
         "/api/me/passkeys" => "passkeys_list",
@@ -208,12 +220,12 @@ fn exercise_id_path(path: &str) -> Option<&str> {
 mod tests {
     use super::ANALYSIS_BODY_PARTS_ROUTE_NAME;
     use super::{
-        route_name, EXERCISES_ROUTE_NAME, EXERCISE_FAVORITE_ROUTE_NAME, EXERCISE_ROUTE_NAME,
-        GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME, LOGOUT_ROUTE_NAME,
-        ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, PROFILE_ROUTE_NAME, PUSH_PUBLIC_KEY_ROUTE_NAME,
-        PUSH_SUBSCRIPTIONS_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME, TRAINING_FINISH_ROUTE_NAME,
-        TRAINING_GET_ROUTE_NAME, TRAINING_PREVIOUS_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
-        TRAINING_TAKEOVER_ROUTE_NAME,
+        route_name, EXERCISES_ROUTE_NAME, EXERCISE_FAVORITE_ROUTE_NAME, EXERCISE_RESET_ROUTE_NAME,
+        EXERCISE_ROUTE_NAME, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME,
+        HEALTH_ROUTE_NAME, LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME,
+        PROFILE_ROUTE_NAME, PUSH_PUBLIC_KEY_ROUTE_NAME, PUSH_SUBSCRIPTIONS_ROUTE_NAME,
+        SYNC_OPERATION_ROUTE_NAME, TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME,
+        TRAINING_PREVIOUS_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
     };
     use super::{
         CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISE_GRAPH_ROUTE_NAME,
@@ -312,6 +324,10 @@ mod tests {
         assert_eq!(
             route_name("/api/exercises/3f2504e0-4f89-41d3-9a0c-0305e82c3301/favorite"),
             EXERCISE_FAVORITE_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/exercises/3f2504e0-4f89-41d3-9a0c-0305e82c3301/reset"),
+            EXERCISE_RESET_ROUTE_NAME
         );
         assert_eq!(route_name("/api/exercises/"), NOT_FOUND_ROUTE_NAME);
     }

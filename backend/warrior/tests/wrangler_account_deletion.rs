@@ -81,6 +81,7 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
     assert_eq!(count(&server, "user_exercises"), 0);
     assert_eq!(count(&server, "user_exercise_muscles"), 0);
     assert_eq!(count(&server, "master_exercise_overrides"), 0);
+    assert_eq!(count(&server, "exercise_operations"), 0);
     assert_eq!(count(&server, "training_sessions"), 0);
     assert_eq!(count(&server, "training_exercises"), 0);
     assert_eq!(count(&server, "sets"), 0);
@@ -179,6 +180,10 @@ fn seed_user(server: &DevServer, session_hash: &str) {
         format!(
             "INSERT INTO master_exercise_overrides (user_id, master_exercise_id, deleted, updated_at) \
              VALUES ('{USER_ID}', 'master-1', 0, '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO exercise_operations (operation_id, user_id, exercise_id, kind, created_at) \
+             VALUES ('operation-1', '{USER_ID}', 'master-1', 'update', '2026-01-01T00:00:00Z')"
         ),
         format!(
             "INSERT INTO training_sessions (id, user_id, date, started_at, memo, created_at, updated_at) \

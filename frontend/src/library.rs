@@ -1,12 +1,15 @@
 //! 種目ライブラリの API と、使用器具の表示の文言。
 //!
 //! 記録への種目の選択は全件を取る。ライブラリの一覧は 1 ページずつ取り、
-//! 絞り込みの条件とカーソルをクエリに載せる。
+//! 絞り込みの条件とカーソルをクエリに載せる。種目の追加、編集、削除、初期化は
+//! 端末内の送信待ちの列へ積んでから送る。
 
-use warrior_core::exercise::{BodyPart, Equipment};
+use warrior_core::exercise::{BodyPart, Equipment, ExerciseInput};
 use warrior_core::library::{ExerciseList, FavoriteState, LibraryExercise};
 
 use crate::http::{self, HttpError};
+use crate::storage::{self, ExerciseChangeKind, StorageError};
+use crate::sync;
 use crate::text::{text, Key};
 
 /// 種目ライブラリの一覧の絞り込み条件。
@@ -61,6 +64,22 @@ pub async fn exercise(exercise_id: &str) -> Result<LibraryExercise, HttpError> {
 pub async fn set_favorite(exercise_id: &str, favorite: bool) -> Result<FavoriteState, HttpError> {
     let method = if favorite { "PUT" } else { "DELETE" };
     http::request_json(method, &format!("/api/exercises/{exercise_id}/favorite")).await
+}
+
+/// 種目の変更を端末内の送信待ちの列へ積み、送れる変更を送る。
+///
+/// 送信待ちの列が空になったときだけ true を返す。通信できないときは false を返し、
+/// 変更は端末に残る。
+pub async fn change(
+    kind: ExerciseChangeKind,
+    exercise_id: Option<String>,
+    input: Option<ExerciseInput>,
+) -> Result<bool, StorageError> {
+    let storage = storage::current().await?;
+    storage
+        .enqueue_exercise_change(kind, exercise_id, input)
+        .await?;
+    Ok(sync::flush_exercise_changes().await)
 }
 
 /// 使用器具の日本語の名前。

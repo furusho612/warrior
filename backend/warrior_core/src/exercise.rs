@@ -71,7 +71,7 @@ impl BodyPart {
 }
 
 /// 使用器具。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Equipment {
     Barbell,
@@ -79,6 +79,7 @@ pub enum Equipment {
     Machine,
     Cable,
     Bodyweight,
+    #[default]
     Other,
 }
 
@@ -126,9 +127,10 @@ impl Equipment {
 }
 
 /// 左右別に行うか。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Laterality {
+    #[default]
     Bilateral,
     Unilateral,
 }
@@ -141,9 +143,10 @@ pub fn is_lateral(laterality: Laterality, _record_mode: RecordMode) -> bool {
 }
 
 /// グリップの指定の種類。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GripMode {
+    #[default]
     None,
     Grip,
     Attachment,
@@ -583,6 +586,98 @@ fn validate_muscles(
         seen.push(assignment.muscle);
     }
     Ok(())
+}
+
+/// 種目の追加と編集で受け取る内容。
+///
+/// 名称、読み、部位区分、記録方式を必須とし、それ以外は省略できる。
+/// ID と並び順はサーバーが決めるため、この型は持たない。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExerciseInput {
+    pub name: String,
+    pub name_kana: String,
+    pub body_part: BodyPart,
+    #[serde(default)]
+    pub equipment: Equipment,
+    pub record_mode: RecordMode,
+    #[serde(default)]
+    pub laterality: Laterality,
+    #[serde(default)]
+    pub grip_mode: GripMode,
+    #[serde(default)]
+    pub other_scope: Option<OtherScope>,
+    #[serde(default)]
+    pub instructions: String,
+    #[serde(default)]
+    pub cautions: String,
+    #[serde(default)]
+    pub tips: String,
+    #[serde(default)]
+    pub muscles: Vec<MuscleAssignment>,
+    #[serde(default)]
+    pub grip_options: Vec<GripSelection>,
+}
+
+impl ExerciseInput {
+    /// 追加の画面の初期値。名称と読みは空で、部位区分は胸、記録方式は重量と回数にする。
+    pub fn blank() -> Self {
+        Self {
+            name: String::new(),
+            name_kana: String::new(),
+            body_part: BodyPart::Chest,
+            equipment: Equipment::Other,
+            record_mode: RecordMode::WeightAndReps,
+            laterality: Laterality::Bilateral,
+            grip_mode: GripMode::None,
+            other_scope: None,
+            instructions: String::new(),
+            cautions: String::new(),
+            tips: String::new(),
+            muscles: Vec::new(),
+            grip_options: Vec::new(),
+        }
+    }
+
+    /// 入力から ID と並び順を決めた種目を組み立てる。
+    pub fn into_exercise(self, id: String, sort_order: i32) -> Exercise {
+        Exercise {
+            id,
+            name: self.name,
+            name_kana: self.name_kana,
+            body_part: self.body_part,
+            equipment: self.equipment,
+            record_mode: self.record_mode,
+            laterality: self.laterality,
+            grip_mode: self.grip_mode,
+            other_scope: self.other_scope,
+            instructions: self.instructions,
+            cautions: self.cautions,
+            tips: self.tips,
+            sort_order,
+            muscles: self.muscles,
+            grip_options: self.grip_options,
+        }
+    }
+
+    /// 種目から入力へ戻す。編集の画面の初期値に使う。
+    pub fn from_exercise(exercise: &Exercise) -> Self {
+        Self {
+            name: exercise.name.clone(),
+            name_kana: exercise.name_kana.clone(),
+            body_part: exercise.body_part,
+            equipment: exercise.equipment,
+            record_mode: exercise.record_mode,
+            laterality: exercise.laterality,
+            grip_mode: exercise.grip_mode,
+            other_scope: exercise.other_scope,
+            instructions: exercise.instructions.clone(),
+            cautions: exercise.cautions.clone(),
+            tips: exercise.tips.clone(),
+            muscles: exercise.muscles.clone(),
+            grip_options: exercise.grip_options.clone(),
+        }
+    }
 }
 
 /// 記録時点の種目の内容。マスターや独自種目を後から変えても過去の記録は変えない。

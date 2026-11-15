@@ -128,6 +128,12 @@ const STORES: &[StoreSpec] = &[
         since: 1,
     },
     StoreSpec {
+        name: "exercise_outbox",
+        key_path: KeyPath::Single("operation_id"),
+        indexes: &[],
+        since: 4,
+    },
+    StoreSpec {
         name: "meta",
         key_path: KeyPath::Single("key"),
         indexes: &[],

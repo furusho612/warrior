@@ -12,12 +12,52 @@ use serde::{Deserialize, Serialize};
 use crate::cursor::{encode_cursor, Cursor};
 use crate::exercise::{BodyPart, Equipment, Exercise};
 
-/// 一覧の 1 件。お気に入りの状態を種目と一緒に運ぶ。
+/// 種目の出典。一覧と詳細で、人体図の例外を適用するかを決める。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExerciseSource {
+    /// 種目マスターの元の内容。
+    #[default]
+    Master,
+    /// 利用者の独自種目。
+    Custom,
+    /// 利用者が編集した種目マスター。
+    Overridden,
+}
+
+impl ExerciseSource {
+    /// DB と API の文字列。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Master => "master",
+            Self::Custom => "custom",
+            Self::Overridden => "overridden",
+        }
+    }
+}
+
+/// 一覧の 1 件。お気に入りの状態と出典を種目と一緒に運ぶ。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryExercise {
     #[serde(flatten)]
     pub exercise: Exercise,
     pub favorite: bool,
+    #[serde(default)]
+    pub source: ExerciseSource,
+    /// 削除の上書きがあるか。詳細だけが削除済みの種目を返すときに真になる。
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+/// 独自種目の追加、編集、削除と、マスターの上書きの初期化の結果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExerciseChange {
+    /// 変更した種目の ID。作成ではサーバーが決めた ID になる。
+    pub id: String,
+    /// 変更後の出典。削除では削除前の出典になる。
+    pub source: ExerciseSource,
+    /// 一覧と詳細から消えたか。
+    pub deleted: bool,
 }
 
 impl LibraryExercise {

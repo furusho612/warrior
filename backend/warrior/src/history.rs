@@ -24,7 +24,6 @@ use worker::{console_error, Request, Response, Result, RouteContext};
 use crate::auth::{self, session};
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
-use crate::exercise;
 use crate::stored_sets::{self, SetSegmentRow, StoredExercise};
 
 /// 履歴の 1 行。トレーニングの日付と終了の時刻を、セットの列に重ねる。
@@ -171,10 +170,7 @@ pub async fn graph(request: Request, context: RouteContext<()>) -> Result<Respon
 }
 
 async fn load_exercise(db: &Db, user_id: &str, exercise_id: &str) -> Result<Option<Exercise>> {
-    if let Some(exercise) = exercise::load_master(db, exercise_id).await? {
-        return Ok(Some(exercise));
-    }
-    exercise::load_user(db, user_id, exercise_id).await
+    crate::library::effective_exercise(db, user_id, exercise_id).await
 }
 
 fn grip_filter(request: &Request) -> Result<GripFilter> {

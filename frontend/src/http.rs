@@ -48,7 +48,7 @@ pub async fn send_json_without_response<B: Serialize>(
 
 /// 同じオリジンへ要求を送り、応答の状態コードを返す。
 pub async fn request_status(method: &str, url: &str) -> Result<u16, HttpError> {
-    Ok(send(method, url, None).await?.status())
+    Ok(send(method, url, None, None).await?.status())
 }
 
 /// 同じオリジンへ JSON の本文を送り、応答の状態コードを返す。
@@ -58,24 +58,56 @@ pub async fn request_status_with_body<B: Serialize>(
     body: &B,
 ) -> Result<u16, HttpError> {
     let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
-    Ok(send(method, url, Some(body)).await?.status())
+    Ok(send(method, url, Some(body), None).await?.status())
+}
+
+/// 操作 ID を添えて JSON の本文を送り、応答の状態コードを返す。
+pub async fn request_status_with_operation<B: Serialize>(
+    method: &str,
+    url: &str,
+    operation_id: &str,
+    body: &B,
+) -> Result<u16, HttpError> {
+    let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
+    Ok(send(method, url, Some(body), Some(operation_id))
+        .await?
+        .status())
+}
+
+/// 操作 ID を添えて本文の無い要求を送り、応答の状態コードを返す。
+pub async fn request_status_for_operation(
+    method: &str,
+    url: &str,
+    operation_id: &str,
+) -> Result<u16, HttpError> {
+    Ok(send(method, url, None, Some(operation_id)).await?.status())
 }
 
 /// 同じオリジンへ要求を送り、成功した応答だけを返す。
 async fn send_ok(method: &str, url: &str, body: Option<String>) -> Result<Response, HttpError> {
-    let response = send(method, url, body).await?;
+    let response = send(method, url, body, None).await?;
     if !response.ok() {
         return Err(HttpError::Rejected);
     }
     Ok(response)
 }
 
-async fn send(method: &str, url: &str, body: Option<String>) -> Result<Response, HttpError> {
+async fn send(
+    method: &str,
+    url: &str,
+    body: Option<String>,
+    operation_id: Option<&str>,
+) -> Result<Response, HttpError> {
     let window = web_sys::window().ok_or(HttpError::Unavailable)?;
     let headers = Headers::new().map_err(|_| HttpError::Unavailable)?;
     headers
         .set("Content-Type", "application/json")
         .map_err(|_| HttpError::Unavailable)?;
+    if let Some(operation_id) = operation_id {
+        headers
+            .set("X-Operation-Id", operation_id)
+            .map_err(|_| HttpError::Unavailable)?;
+    }
     let init = RequestInit::new();
     init.set_method(method);
     init.set_headers(&headers);

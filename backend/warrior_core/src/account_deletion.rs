@@ -83,6 +83,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者ごとのマスター種目の上書き。",
     },
     Table {
+        name: "exercise_operations",
+        class: TableClass::Owned,
+        reason: "利用者の種目の変更の操作。再送の重複を防ぐ鍵を持つ。",
+    },
+    Table {
         name: "exercise_favorites",
         class: TableClass::Owned,
         reason: "利用者の種目のお気に入り。",
@@ -167,6 +172,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "user_exercise_muscles",
     "user_exercises",
     "master_exercise_overrides",
+    "exercise_operations",
     "exercise_favorites",
     "user_rate_limits",
     "elevation_tokens",
@@ -220,6 +226,7 @@ mod tests {
             "user_exercises",
             "user_exercise_muscles",
             "master_exercise_overrides",
+            "exercise_operations",
             "exercise_favorites",
             "training_sessions",
             "training_exercises",
