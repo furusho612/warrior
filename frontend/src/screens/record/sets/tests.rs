@@ -277,8 +277,10 @@ fn segment_view(
         duration: String::new(),
         left_weight: left_weight.to_owned(),
         left_reps: left_reps.to_owned(),
+        left_duration: String::new(),
         right_weight: right_weight.to_owned(),
         right_reps: right_reps.to_owned(),
+        right_duration: String::new(),
     }
 }
 

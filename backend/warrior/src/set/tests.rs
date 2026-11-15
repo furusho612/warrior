@@ -1,9 +1,9 @@
 //! セットの操作の SQL の組み立ての例示テスト。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-010`。
 
 use serde_json::json;
-use warrior_core::set_calc::SetKind;
+use warrior_core::set_calc::{RecordMode, SetKind};
 use warrior_core::sql::SqlValue;
 use warrior_core::sync::{
     Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
@@ -15,6 +15,10 @@ use super::bindings::{applied_exists, ownership_condition_placeholder, segment_b
 use super::{
     delete_set_statement, same_set_ids, set_statements, update_set_statement, ExerciseOwnership,
 };
+
+fn weight_mode() -> RecordMode {
+    RecordMode::WeightAndReps
+}
 
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5301";
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5302";
@@ -81,6 +85,8 @@ fn the_create_statements_scope_the_set_and_the_segments() {
     let data = set_statements(
         USER_ID,
         &validated,
+        Some(weight_mode()),
+        false,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
     )
@@ -184,6 +190,8 @@ fn every_set_statement_uses_the_applied_operation_condition() {
     let data = set_statements(
         USER_ID,
         &create,
+        Some(weight_mode()),
+        false,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
     )
@@ -202,8 +210,15 @@ fn every_set_statement_uses_the_applied_operation_condition() {
             set_id: SET_ID.to_owned(),
         }),
     );
-    let data = set_statements(USER_ID, &delete, ExerciseOwnership::Finished, NOW)
-        .expect("data statements");
+    let data = set_statements(
+        USER_ID,
+        &delete,
+        None,
+        false,
+        ExerciseOwnership::Finished,
+        NOW,
+    )
+    .expect("data statements");
     assert_eq!(data.children.len(), 1);
     assert!(data.children[0]
         .sql()
@@ -224,6 +239,8 @@ fn the_reorder_statement_numbers_the_positions_from_one() {
     let data = set_statements(
         USER_ID,
         &validated,
+        None,
+        false,
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
     )
@@ -254,8 +271,15 @@ fn the_complete_statement_sets_the_completed_flag() {
         OperationKind::SetComplete,
         ValidatedPayload::SetComplete(payload),
     );
-    let data = set_statements(USER_ID, &validated, ExerciseOwnership::Finished, NOW)
-        .expect("data statements");
+    let data = set_statements(
+        USER_ID,
+        &validated,
+        None,
+        false,
+        ExerciseOwnership::Finished,
+        NOW,
+    )
+    .expect("data statements");
     assert!(data.main.sql().contains("UPDATE sets SET completed = ?"));
     assert_eq!(data.main.bindings()[0], SqlValue::Integer(1));
     assert_eq!(data.main.bindings()[2], SqlValue::Text(SET_ID.to_owned()));
@@ -274,23 +298,104 @@ fn set_ids_match_regardless_of_the_input_order() {
 }
 
 #[test]
-fn segment_bindings_keep_the_sides_and_the_durations() {
+fn segment_bindings_keep_the_sides() {
     let mut segment = segment();
     segment.duration_seconds = Some(30);
     segment.left = Some(SetSidePayload {
         weight_kg: Some(10.0),
         reps: 4,
-        duration_seconds: Some(20),
+        duration_seconds: None,
     });
-    let bindings = segment_bindings(USER_ID, SET_ID, &segment, NOW);
-    assert_eq!(bindings[8], SqlValue::Integer(30));
+    segment.right = Some(SetSidePayload {
+        weight_kg: Some(12.0),
+        reps: 3,
+        duration_seconds: None,
+    });
+    let bindings = segment_bindings(
+        USER_ID,
+        SET_ID,
+        &segment,
+        RecordMode::WeightAndReps,
+        true,
+        NOW,
+    );
+    assert_eq!(bindings[4], SqlValue::Real(100.0));
+    assert_eq!(bindings[5], SqlValue::Integer(5));
+    assert_eq!(bindings[8], SqlValue::Null);
     assert_eq!(bindings[9], SqlValue::Real(10.0));
     assert_eq!(bindings[10], SqlValue::Integer(4));
-    assert_eq!(bindings[11], SqlValue::Integer(20));
-    assert_eq!(bindings[12], SqlValue::Null);
-    assert_eq!(bindings[13], SqlValue::Null);
+    assert_eq!(bindings[11], SqlValue::Null);
+    assert_eq!(bindings[12], SqlValue::Real(12.0));
+    assert_eq!(bindings[13], SqlValue::Integer(3));
     assert_eq!(bindings[14], SqlValue::Null);
     assert_eq!(bindings[15], SqlValue::Text(NOW.to_owned()));
+}
+
+#[test]
+fn segment_bindings_store_no_weight_or_reps_for_a_time_segment() {
+    let mut segment = segment();
+    segment.weight_kg = 0.0;
+    segment.reps = 0;
+    segment.duration_seconds = Some(30);
+    let bindings = segment_bindings(USER_ID, SET_ID, &segment, RecordMode::Time, false, NOW);
+    assert_eq!(bindings[4], SqlValue::Null);
+    assert_eq!(bindings[5], SqlValue::Null);
+    assert_eq!(bindings[6], SqlValue::Integer(0));
+    assert_eq!(bindings[7], SqlValue::Integer(0));
+    assert_eq!(bindings[8], SqlValue::Integer(30));
+}
+
+#[test]
+fn segment_bindings_store_a_top_level_duration_only_for_bilateral_time() {
+    let mut segment = segment();
+    segment.weight_kg = 0.0;
+    segment.reps = 0;
+    segment.duration_seconds = Some(30);
+    let lateral = segment_bindings(USER_ID, SET_ID, &segment, RecordMode::Time, true, NOW);
+    assert_eq!(lateral[8], SqlValue::Null);
+    let bilateral = segment_bindings(USER_ID, SET_ID, &segment, RecordMode::Time, false, NOW);
+    assert_eq!(bilateral[8], SqlValue::Integer(30));
+}
+
+#[test]
+fn segment_bindings_store_no_weight_or_reps_for_an_empty_time_segment() {
+    let mut segment = segment();
+    segment.weight_kg = 0.0;
+    segment.reps = 0;
+    segment.duration_seconds = None;
+    let bindings = segment_bindings(USER_ID, SET_ID, &segment, RecordMode::Time, false, NOW);
+    assert_eq!(bindings[4], SqlValue::Null);
+    assert_eq!(bindings[5], SqlValue::Null);
+    assert_eq!(bindings[6], SqlValue::Integer(0));
+    assert_eq!(bindings[7], SqlValue::Integer(0));
+    assert_eq!(bindings[8], SqlValue::Null);
+}
+
+#[test]
+fn segment_bindings_store_no_weight_or_reps_for_a_unilateral_time_segment() {
+    let mut segment = segment();
+    segment.weight_kg = 0.0;
+    segment.reps = 0;
+    segment.left = Some(SetSidePayload {
+        weight_kg: Some(10.0),
+        reps: 4,
+        duration_seconds: Some(30),
+    });
+    segment.right = Some(SetSidePayload {
+        weight_kg: Some(12.0),
+        reps: 3,
+        duration_seconds: Some(40),
+    });
+    let bindings = segment_bindings(USER_ID, SET_ID, &segment, RecordMode::Time, false, NOW);
+    assert_eq!(bindings[4], SqlValue::Null);
+    assert_eq!(bindings[5], SqlValue::Null);
+    assert_eq!(bindings[8], SqlValue::Null);
+    assert_eq!(bindings[9], SqlValue::Null);
+    assert_eq!(bindings[10], SqlValue::Null);
+    assert_eq!(bindings[11], SqlValue::Integer(30));
+    assert_eq!(bindings[12], SqlValue::Null);
+    assert_eq!(bindings[13], SqlValue::Null);
+    assert_eq!(bindings[14], SqlValue::Integer(40));
 }
 
 #[test]

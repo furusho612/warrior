@@ -73,6 +73,7 @@ pub(super) fn SetTable(state: SetTableState, on_action: EventHandler<SetAction>)
                 }
                 for (index, row) in rows.iter().enumerate() {
                     SetRow {
+                        key: "{row.record.id}",
                         row: SetRowState {
                             index,
                             set: row.clone(),
@@ -258,6 +259,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
             }
             for (segment_index, segment) in row.set.segments.iter().enumerate().skip(1) {
                 SegmentRow {
+                    key: "{segment.record.id}",
                     row: SegmentRowState {
                         set_id: set_id.clone(),
                         segment: segment.clone(),

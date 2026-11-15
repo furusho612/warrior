@@ -293,10 +293,7 @@ pub(crate) fn segment_from_row(
     record_mode: RecordMode,
 ) -> SetSegment {
     let lateral = is_lateral(laterality, record_mode);
-    let has_side_durations = record_mode == RecordMode::Time
-        && row.left_duration_seconds.is_some()
-        && row.right_duration_seconds.is_some();
-    if lateral || has_side_durations {
+    if lateral {
         return SetSegment {
             weight_kg: 0.0,
             reps: 0,
@@ -452,14 +449,14 @@ mod tests {
     }
 
     #[test]
-    fn a_unilateral_time_row_keeps_the_top_level_duration() {
+    fn a_unilateral_time_row_keeps_the_side_durations() {
         let exercises =
             build_exercises(vec![unilateral_time_row()]).expect("the unilateral time set is valid");
         let sets = session_sets(&exercises);
         assert_eq!(sets[0].laterality, Laterality::Unilateral);
         assert_eq!(sets[0].record.mode(), RecordMode::Time);
         assert_eq!(sets[0].record.longest_duration_seconds(), Some(60));
-        assert_eq!(sets[0].record.total_duration_seconds(), 60);
+        assert_eq!(sets[0].record.total_duration_seconds(), 90);
     }
 
     #[test]
@@ -627,8 +624,10 @@ mod tests {
             "normal",
             None,
             None,
-            Some(60),
+            None,
         );
+        row.left_duration_seconds = Some(30);
+        row.right_duration_seconds = Some(60);
         row.snapshot = snapshot_json("exercise-side-plank", "time", "unilateral");
         row
     }

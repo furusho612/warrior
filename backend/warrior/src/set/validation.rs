@@ -6,10 +6,12 @@
 use warrior_core::exercise::{ExerciseSnapshot, GripSelection};
 use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord};
 use warrior_core::sql::{SqlStatement, SqlValue};
-use worker::Result;
+use warrior_core::sync::SetSegmentPayload;
+use worker::{Response, Result};
 
 use super::{parse_rules, set_row, CountRow, ExerciseRules};
 use crate::db::Db;
+use crate::error::{response, ErrorCode};
 use crate::stored_sets::{segment_from_row, SetSegmentRow, SET_SEGMENT_COLUMNS};
 
 /// 完了したセットのすべての段に値があるか返す。
@@ -29,11 +31,61 @@ pub(super) async fn completed_set_has_values(
     Ok(total > 0 && total == with_values)
 }
 
+/// 段の形が種目の左右の指定と一致するか。
+pub(super) fn segments_shape_rejection(
+    segments: &[SetSegmentPayload],
+    rules: ExerciseRules,
+) -> Option<Response> {
+    if segments.iter().all(|segment| {
+        segment.has_matching_sides(rules.lateral())
+            && !(rules.lateral()
+                && rules.record_mode == RecordMode::Time
+                && segment.duration_seconds.is_some())
+    }) {
+        return None;
+    }
+    Some(response(
+        ErrorCode::BadRequest,
+        "the set does not match the exercise laterality",
+    ))
+}
+
+/// 時間種目に重量、回数、反動、補助の回数が入っているか。
+pub(super) fn has_non_time_values(segments: &[SetSegmentPayload]) -> bool {
+    segments.iter().any(|segment| {
+        segment.weight_kg != 0.0
+            || segment.reps != 0
+            || segment.momentum_reps != 0
+            || segment.assisted_reps != 0
+            || [segment.left.as_ref(), segment.right.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(|side| side.weight_kg.unwrap_or(0.0) != 0.0 || side.reps != 0)
+    })
+}
+
+/// 時間種目に時間以外の値が入っているときの応答。
+pub(super) fn time_values_rejection(
+    segments: &[SetSegmentPayload],
+    mode: RecordMode,
+) -> Option<Response> {
+    if mode != RecordMode::Time || !has_non_time_values(segments) {
+        return None;
+    }
+    Some(response(
+        ErrorCode::BadRequest,
+        "a time set cannot store weight, reps, momentum, or assisted reps",
+    ))
+}
+
 /// 段が完了に必要な値を持つ条件。
 fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
     if rules.lateral() {
         return match rules.record_mode {
-            RecordMode::Time => "left_duration_seconds > 0 AND right_duration_seconds > 0",
+            RecordMode::Time => {
+                "left_duration_seconds > 0 AND right_duration_seconds > 0 \
+                 AND duration_seconds IS NULL"
+            }
             RecordMode::WeightAndReps => {
                 "left_weight_kg IS NOT NULL AND left_reps > 0 \
                  AND right_weight_kg IS NOT NULL AND right_reps > 0"
@@ -42,7 +94,10 @@ fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
         };
     }
     match rules.record_mode {
-        RecordMode::Time => "duration_seconds > 0",
+        RecordMode::Time => {
+            "duration_seconds > 0 AND left_duration_seconds IS NULL \
+             AND right_duration_seconds IS NULL"
+        }
         RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
             "left_weight_kg IS NULL AND left_reps IS NULL \
              AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \

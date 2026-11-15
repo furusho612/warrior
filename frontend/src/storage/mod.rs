@@ -28,10 +28,12 @@ mod body_weight;
 mod discard;
 mod exercise;
 mod set;
+mod stopwatch;
 mod superset;
 
 pub use indexeddb::request_persistence;
 pub use set::StoredSet;
+pub use stopwatch::StopwatchSide;
 
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
@@ -623,6 +625,34 @@ impl Storage {
         let weight = body_weight::cached(&store).await?;
         transaction.finish().await?;
         Ok(weight)
+    }
+
+    /// ストップウォッチの開始時刻を端末内へ保存する。
+    pub async fn save_stopwatch_started_at(
+        &self,
+        set_id: &str,
+        side: StopwatchSide,
+        started_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        stopwatch::save_started_at(self, set_id, side, started_at_ms).await
+    }
+
+    /// 保存したストップウォッチの開始時刻を返す。無ければ None。
+    pub async fn stopwatch_started_at(
+        &self,
+        set_id: &str,
+        side: StopwatchSide,
+    ) -> Result<Option<i64>, StorageError> {
+        stopwatch::load_started_at(self, set_id, side).await
+    }
+
+    /// 保存したストップウォッチの開始時刻を消す。
+    pub async fn clear_stopwatch_started_at(
+        &self,
+        set_id: &str,
+        side: StopwatchSide,
+    ) -> Result<(), StorageError> {
+        stopwatch::clear_started_at(self, set_id, side).await
     }
 
     /// サーバーに保存済みの記録で、端末の記録と送信待ちの列を置き換える。

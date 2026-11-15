@@ -1,14 +1,16 @@
 //! セットの行の入力欄。
 //!
-//! 時間で記録する種目は時間、左右別の種目は左右の重量と回数、それ以外は重量と回数を
-//! 表示する。入力は画面の状態だけを変え、保存は `frontend/src/screens/record/exercise_view.rs`
-//! が担う。
+//! 時間で記録する種目は時間、左右別の種目は左右の値、それ以外は重量と回数を
+//! 表示する。時間の入力にはストップウォッチを添える。入力は画面の状態だけを変え、
+//! 保存は `frontend/src/screens/record/exercise_view.rs` が担う。
 
 use dioxus::prelude::*;
 use warrior_core::exercise::RecordMode;
 use warrior_core::set_calc::Side;
 
 use super::sets::{SegmentView, SetAction};
+use super::stopwatch::StopwatchControl;
+use crate::storage::StopwatchSide;
 use crate::text::{text, Key};
 
 /// セットの入力の欄。
@@ -32,6 +34,10 @@ pub(super) enum Field {
     RightWeight,
     /// 右の回数。
     RightReps,
+    /// 左の時間。
+    LeftDuration,
+    /// 右の時間。
+    RightDuration,
 }
 
 /// セットの段の入力に必要な状態。
@@ -63,10 +69,34 @@ pub(super) fn SegmentInputs(
         disabled,
     } = state;
     if mode == RecordMode::Time {
+        if lateral {
+            let right_segment = segment.clone();
+            let right_set_id = set_id.clone();
+            return rsx! {
+                TimeInput {
+                    segment,
+                    set_id,
+                    side: StopwatchSide::Left,
+                    field: Field::LeftDuration,
+                    disabled,
+                    on_action,
+                }
+                TimeInput {
+                    segment: right_segment,
+                    set_id: right_set_id,
+                    side: StopwatchSide::Right,
+                    field: Field::RightDuration,
+                    disabled,
+                    on_action,
+                }
+            };
+        }
         return rsx! {
-            DurationInput {
+            TimeInput {
                 segment,
                 set_id,
+                side: StopwatchSide::Whole,
+                field: Field::Duration,
                 disabled,
                 on_action,
             }
@@ -226,30 +256,66 @@ fn SideFields(
 
 /// 時間で記録する種目の入力。
 #[component]
-fn DurationInput(
+fn TimeInput(
     segment: SegmentView,
     set_id: String,
+    side: StopwatchSide,
+    field: Field,
     disabled: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
+    let value = match side {
+        StopwatchSide::Whole => segment.duration.clone(),
+        StopwatchSide::Left => segment.left_duration.clone(),
+        StopwatchSide::Right => segment.right_duration.clone(),
+    };
+    let side_name = match side {
+        StopwatchSide::Whole => "whole",
+        StopwatchSide::Left => "left",
+        StopwatchSide::Right => "right",
+    };
+    let label = match side {
+        StopwatchSide::Whole => text(Key::RecordExerciseDuration).to_owned(),
+        StopwatchSide::Left => format!(
+            "{} {}",
+            text(Key::RecordSetLeft),
+            text(Key::RecordExerciseDuration)
+        ),
+        StopwatchSide::Right => format!(
+            "{} {}",
+            text(Key::RecordSetRight),
+            text(Key::RecordExerciseDuration)
+        ),
+    };
     let duration_id = segment.record.id.clone();
+    let input_set_id = set_id.clone();
+    let stopwatch_segment_id = segment.record.id.clone();
     rsx! {
         input {
-            class: "min-h-8 w-16 shrink-0 border border-line bg-bg px-1 text-[11px]",
-            r#type: "number",
+            class: "min-h-8 w-20 shrink-0 border border-line bg-bg px-1 text-[11px]",
+            r#type: "text",
             inputmode: "numeric",
-            min: "1",
-            step: "1",
-            placeholder: "{text(Key::RecordExerciseDuration)}",
-            "data-set-duration": "true",
-            value: "{segment.duration}",
+            placeholder: "{text(Key::RecordExerciseDurationPlaceholder)}",
+            "data-set-duration": if side == StopwatchSide::Whole { "true" } else { "false" },
+            "data-set-side-duration": if side == StopwatchSide::Whole { "false" } else { "true" },
+            "data-side": "{side_name}",
+            "aria-label": "{label}",
+            value: "{value}",
             disabled,
             oninput: move |event| on_action.call(SetAction::Input {
-                set_id: set_id.clone(),
+                set_id: input_set_id.clone(),
                 segment_id: duration_id.clone(),
-                field: Field::Duration,
+                field,
                 value: event.value(),
             }),
+        }
+        StopwatchControl {
+            set_id,
+            segment_id: stopwatch_segment_id,
+            side,
+            field,
+            disabled,
+            on_action,
         }
     }
 }

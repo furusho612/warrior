@@ -153,7 +153,7 @@ fn unilateral_bodyweight_sets_complete_without_an_added_weight() {
 }
 
 #[test]
-fn unilateral_time_sets_keep_the_top_level_duration() {
+fn unilateral_time_sets_keep_the_side_durations() {
     let server = DevServer::start(TIME_PORT);
     server
         .apply_migrations()
@@ -182,13 +182,27 @@ fn unilateral_time_sets_keep_the_top_level_duration() {
             "reps": 0,
             "momentum_reps": 0,
             "assisted_reps": 0,
-            "duration_seconds": 60,
-            "left": null,
-            "right": null
+            "duration_seconds": null,
+            "left": {"weight_kg": null, "reps": 0, "duration_seconds": 30},
+            "right": {"weight_kg": null, "reps": 0, "duration_seconds": 60}
         })],
     );
     let response = post(&server, &session_cookie, &operation);
     assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!(
+                "SELECT duration_seconds, left_duration_seconds, right_duration_seconds \
+                 FROM set_segments WHERE id = '{TIME_SEGMENT_ID}'"
+            )
+        ),
+        json!({
+            "duration_seconds": Value::Null,
+            "left_duration_seconds": 30,
+            "right_duration_seconds": 60
+        })
+    );
 
     let response = post(
         &server,

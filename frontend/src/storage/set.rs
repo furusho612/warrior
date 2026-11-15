@@ -614,7 +614,7 @@ fn same_side(
         None => weight_kg.is_none() && reps.is_none() && duration_seconds.is_none(),
         Some(side) => {
             weight_kg == side.weight_kg
-                && reps == Some(i64::from(side.reps))
+                && reps.unwrap_or(0) == i64::from(side.reps)
                 && duration_seconds == side.duration_seconds.map(i64::from)
         }
     }

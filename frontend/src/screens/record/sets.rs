@@ -6,6 +6,7 @@
 //! セットの集計は `warrior_core::set_calc` の `SetRecord` に変換して行う。
 
 use dioxus::prelude::*;
+use warrior_core::duration;
 use warrior_core::exercise::{GripSelection, Laterality, RecordMode};
 use warrior_core::previous::PreviousSet;
 use warrior_core::profile::bodyweight_set_weight;
@@ -111,10 +112,14 @@ pub(super) struct SegmentView {
     pub(super) left_weight: String,
     /// 左の回数の入力。
     pub(super) left_reps: String,
+    /// 左の時間の入力。
+    pub(super) left_duration: String,
     /// 右の重量または加重の入力。
     pub(super) right_weight: String,
     /// 右の回数の入力。
     pub(super) right_reps: String,
+    /// 右の時間の入力。
+    pub(super) right_duration: String,
 }
 
 impl SegmentView {
@@ -127,16 +132,19 @@ impl SegmentView {
             duration: duration_text(record.duration_seconds),
             left_weight: side_weight_text(record.left_weight_kg),
             left_reps: count_text(record.left_reps.unwrap_or(0)),
+            left_duration: duration_text(record.left_duration_seconds),
             right_weight: side_weight_text(record.right_weight_kg),
             right_reps: count_text(record.right_reps.unwrap_or(0)),
+            right_duration: duration_text(record.right_duration_seconds),
             record,
         }
     }
 
     fn values(&self, lateral: bool, mode: RecordMode) -> SetSegmentValues {
-        let side = |weight: &str, reps: &str| SegmentSideValues {
+        let side = |weight: &str, reps: &str, duration: &str| SegmentSideValues {
             weight_kg: side_weight_value(weight, mode),
             reps: parse_count(reps).unwrap_or(0),
+            duration_seconds: parse_duration(duration),
         };
         SetSegmentValues {
             weight_kg: parse_number(&self.weight).unwrap_or(0.0),
@@ -144,8 +152,9 @@ impl SegmentView {
             momentum_reps: parse_count_or_zero(&self.momentum).unwrap_or(0),
             assisted_reps: parse_count_or_zero(&self.assisted).unwrap_or(0),
             duration_seconds: parse_duration(&self.duration),
-            left: lateral.then(|| side(&self.left_weight, &self.left_reps)),
-            right: lateral.then(|| side(&self.right_weight, &self.right_reps)),
+            left: lateral.then(|| side(&self.left_weight, &self.left_reps, &self.left_duration)),
+            right: lateral
+                .then(|| side(&self.right_weight, &self.right_reps, &self.right_duration)),
         }
     }
 
@@ -154,7 +163,14 @@ impl SegmentView {
             return false;
         }
         match mode {
-            RecordMode::Time => parse_duration(&self.duration).is_some(),
+            RecordMode::Time => {
+                if lateral {
+                    parse_duration(&self.left_duration).is_some()
+                        && parse_duration(&self.right_duration).is_some()
+                } else {
+                    parse_duration(&self.duration).is_some()
+                }
+            }
             RecordMode::WeightAndReps => {
                 if lateral {
                     parse_count(&self.left_reps).is_some()
@@ -182,6 +198,9 @@ impl SegmentView {
         body_weight_kg: Option<f64>,
         lateral: bool,
     ) -> Option<SetSegment> {
+        if mode == RecordMode::Time {
+            return self.to_time_segment(lateral);
+        }
         let momentum_reps = parse_count_or_zero(&self.momentum)?;
         let assisted_reps = parse_count_or_zero(&self.assisted)?;
         if lateral {
@@ -211,6 +230,39 @@ impl SegmentView {
             left: None,
             right: None,
             duration_seconds: None,
+        })
+    }
+
+    fn to_time_segment(&self, lateral: bool) -> Option<SetSegment> {
+        if lateral {
+            let left = parse_duration(&self.left_duration)?;
+            let right = parse_duration(&self.right_duration)?;
+            return Some(SetSegment {
+                weight_kg: 0.0,
+                reps: 0,
+                momentum_reps: 0,
+                assisted_reps: 0,
+                left: Some(SideValue {
+                    weight_kg: 0.0,
+                    reps: 0,
+                    duration_seconds: Some(left),
+                }),
+                right: Some(SideValue {
+                    weight_kg: 0.0,
+                    reps: 0,
+                    duration_seconds: Some(right),
+                }),
+                duration_seconds: None,
+            });
+        }
+        Some(SetSegment {
+            weight_kg: 0.0,
+            reps: 0,
+            momentum_reps: 0,
+            assisted_reps: 0,
+            left: None,
+            right: None,
+            duration_seconds: Some(parse_duration(&self.duration)?),
         })
     }
 
@@ -247,10 +299,12 @@ impl SegmentView {
     }
 }
 
-/// 種目の記録方式と左右の指定から、左右の列を使うか決める。
+/// 種目の左右の指定から、左右の列を使うか決める。
 ///
-/// 時間で記録する種目の左右は、時間の入力とあわせて実装する。
-pub(super) use warrior_core::exercise::is_lateral;
+/// 時間で記録する種目も左右別の入力を持つ。
+pub(super) fn is_lateral(laterality: Laterality, _mode: RecordMode) -> bool {
+    laterality == Laterality::Unilateral
+}
 
 /// 重量種目は入力した重量を、自重種目は記録した体重に加重を足した値を返す。
 fn bodyweight_weight(mode: RecordMode, body_weight_kg: Option<f64>, weight: f64) -> f64 {
@@ -317,6 +371,7 @@ impl SetView {
     pub(super) fn values(&self, lateral: bool, mode: RecordMode) -> SetValues {
         SetValues {
             kind: self.kind(),
+            mode,
             segments: self
                 .segments
                 .iter()
@@ -376,24 +431,13 @@ impl SetView {
             grip,
             attachment,
         };
-        match mode {
-            RecordMode::Time => {
-                let duration = parse_duration(&self.segments.first()?.duration)?;
-                let rpe = rpe::parse(&self.rpe).ok().flatten();
-                SetRecord::new(key, kind, Vec::new(), rpe, Some(duration), mode).ok()
-            }
-            RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-                let rpe = rpe::parse(&self.rpe).ok().flatten();
-                let segments = self
-                    .segments
-                    .iter()
-                    .map(|segment| {
-                        segment.to_set_segment(mode, self.record.body_weight_kg, lateral)
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                SetRecord::new(key, kind, segments, rpe, None, mode).ok()
-            }
-        }
+        let rpe = rpe::parse(&self.rpe).ok().flatten();
+        let segments = self
+            .segments
+            .iter()
+            .map(|segment| segment.to_set_segment(mode, self.record.body_weight_kg, lateral))
+            .collect::<Option<Vec<_>>>()?;
+        SetRecord::new(key, kind, segments, rpe, None, mode).ok()
     }
 
     /// 入力の版を進める。
@@ -428,11 +472,13 @@ pub(super) fn previous_values(
                 RecordMode::Time => 0.0,
             };
             let duration = match mode {
-                RecordMode::Time => {
+                RecordMode::Time if !lateral => {
                     let duration = segment.longest_duration_seconds();
                     (duration > 0).then_some(duration)
                 }
-                RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => None,
+                RecordMode::Time | RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+                    None
+                }
             };
             let side = |value: Option<&SideValue>| SegmentSideValues {
                 weight_kg: Some(match mode {
@@ -444,6 +490,10 @@ pub(super) fn previous_values(
                     }
                 }),
                 reps: value.map_or(0, |side| side.reps),
+                duration_seconds: match mode {
+                    RecordMode::Time => value.and_then(|side| side.duration_seconds),
+                    RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => None,
+                },
             };
             SetSegmentValues {
                 weight_kg: weight,
@@ -458,6 +508,7 @@ pub(super) fn previous_values(
         .collect();
     Some(SetValues {
         kind: previous.kind,
+        mode,
         segments,
         body_weight_kg,
         rpe: previous.rpe,
@@ -585,8 +636,9 @@ fn count_text(value: i64) -> String {
 
 fn duration_text(value: Option<i64>) -> String {
     value
-        .filter(|value| *value > 0)
-        .map_or_else(String::new, |value| value.to_string())
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| duration::is_valid(*value))
+        .map_or_else(String::new, duration::format)
 }
 
 fn parse_number(text: &str) -> Option<f64> {
@@ -626,8 +678,7 @@ fn rpe_text(value: Option<f64>) -> String {
 }
 
 fn parse_duration(text: &str) -> Option<u32> {
-    let value = text.trim().parse::<u32>().ok()?;
-    (1..=86_400).contains(&value).then_some(value)
+    duration::parse(text)
 }
 
 fn grip_selection(record: &SetRecordRow) -> Option<GripSelection> {

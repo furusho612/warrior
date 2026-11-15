@@ -3,7 +3,7 @@
 //! 種目の行、セットの値、サーバーの記録と操作の組み立てを置く。
 
 use serde_json::json;
-use warrior_core::set_calc::SetKind;
+use warrior_core::set_calc::{RecordMode, SetKind};
 use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload};
 use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 use warrior_frontend::training_set::{SetSegmentValues, SetValues};
@@ -119,6 +119,7 @@ pub fn update_operation(operation_id: &str, memo: &str) -> Operation {
 pub fn set_values(weight_kg: f64, reps: u32) -> SetValues {
     SetValues {
         kind: SetKind::Normal,
+        mode: RecordMode::WeightAndReps,
         segments: vec![SetSegmentValues {
             weight_kg,
             reps,

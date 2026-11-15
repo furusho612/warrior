@@ -215,6 +215,13 @@ pub async fn click_text(driver: &WebDriver, label: &str) {
 
 /// セレクタの要素を押す。
 pub async fn click(driver: &WebDriver, selector: &str) {
+    driver
+        .execute(
+            "document.querySelector(arguments[0]).scrollIntoView({block: 'center', inline: 'center'});",
+            vec![serde_json::json!(selector)],
+        )
+        .await
+        .ok();
     let element = driver
         .find(By::Css(selector))
         .await

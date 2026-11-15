@@ -9,6 +9,7 @@ pub mod cbor;
 pub mod cose;
 pub mod cursor;
 pub mod datetime;
+pub mod duration;
 pub mod exercise;
 pub mod ids;
 pub mod jst;

@@ -250,7 +250,7 @@ async fn check_previous_and_time_difference(driver: &WebDriver, exercise_id: &st
         .await
         .expect("the copy button must be clickable");
     let duration = format!("{detail} [data-set-row-index=\"0\"] [data-set-duration]");
-    browser::wait_for_value(driver, &duration, "60").await;
+    browser::wait_for_value(driver, &duration, "01:00").await;
     wait_for_attribute(
         driver,
         &format!("{detail} [data-exercise-total-duration-diff]"),
