@@ -249,6 +249,10 @@ pub async fn save_exercise(storage: &Storage, row: TrainingExerciseRecord) {
 }
 
 /// レスト終了の音と振動のブラウザの API を差し替え、呼び出しを数える。
+///
+/// web-sys は `AudioContext` のコンストラクタを JS の読み込み時に捕捉するため、
+/// `window.AudioContext` の差し替えは `sound` に届かない。実物のプロトタイプの
+/// 状態と生成を差し替え、音の再生を端末の状態と操作の有無から切り離す。
 pub fn install_sound_stub() {
     js_sys::eval(
         r#"
@@ -268,20 +272,16 @@ pub fn install_sound_stub() {
             constructor() { this.gain = new FakeAudioParam(); }
             connect() {}
         }
-        class FakeAudioContext {
-            constructor() {
-                this.currentTime = 0;
-                this.state = 'running';
-                this.destination = {};
-            }
-            createOscillator() { return new FakeOscillator(); }
-            createGain() { return new FakeGain(); }
-            resume() { this.state = 'running'; return Promise.resolve(); }
-        }
-        Object.defineProperty(window, 'AudioContext', {
+        Object.defineProperty(BaseAudioContext.prototype, 'state', {
             configurable: true,
-            value: FakeAudioContext
+            get: function () { return 'running'; }
         });
+        BaseAudioContext.prototype.createOscillator = function () {
+            return new FakeOscillator();
+        };
+        BaseAudioContext.prototype.createGain = function () {
+            return new FakeGain();
+        };
         Object.defineProperty(navigator, 'vibrate', {
             configurable: true,
             value: function () { window.__restVibrations++; return true; }
