@@ -110,3 +110,4 @@
 ストップウォッチの `Storage` のメソッドは `frontend/src/storage/stopwatch.rs` に置き、`frontend/src/storage/mod.rs` を 1000 行未満に保つ。
 セットの完了の再送は、新しく更新した項目ではなく、そのトレーニングが保持する自己ベストを返す。
 ウォームアップのセットには推定 1RM を表示しない。自己ベストの一覧にはグリップとアタッチメントを表示する。
+推定 1RM の表示は `frontend/src/screens/record/one_rep_max.rs`、更新した自己ベストの表示は `frontend/src/screens/record/personal_bests.rs` に分けた。`record.rs` と `sets.rs` の行数を 1000 行未満に保ち、表示の変更をセットの集計から切り離すためである。

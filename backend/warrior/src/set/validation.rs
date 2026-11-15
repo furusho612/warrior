@@ -8,7 +8,8 @@ use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use worker::Result;
 
-use super::{parse_rules, set_row, CountRow, ExerciseRules};
+use super::precheck::{set_row, CountRow};
+use super::{parse_rules, ExerciseRules};
 use crate::db::Db;
 use crate::stored_sets::{segment_from_row, SetSegmentRow, SET_SEGMENT_COLUMNS};
 
@@ -31,27 +32,20 @@ pub(super) async fn completed_set_has_values(
 
 /// 段が完了に必要な値を持つ条件。
 fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
-    if rules.record_mode == RecordMode::Time {
-        return "duration_seconds > 0 \
-                OR (left_duration_seconds > 0 AND right_duration_seconds > 0)";
-    }
-    if rules.lateral() {
-        return match rules.record_mode {
-            RecordMode::Time => "left_duration_seconds > 0 AND right_duration_seconds > 0",
-            RecordMode::WeightAndReps => {
-                "left_weight_kg IS NOT NULL AND left_reps > 0 \
-                 AND right_weight_kg IS NOT NULL AND right_reps > 0"
-            }
-            RecordMode::BodyweightAndReps => "left_reps > 0 AND right_reps > 0",
-        };
-    }
-    match rules.record_mode {
-        RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+    match (rules.record_mode, rules.lateral()) {
+        (RecordMode::Time, _) => {
+            "duration_seconds > 0 OR (left_duration_seconds > 0 AND right_duration_seconds > 0)"
+        }
+        (RecordMode::WeightAndReps, true) => {
+            "left_weight_kg IS NOT NULL AND left_reps > 0 \
+             AND right_weight_kg IS NOT NULL AND right_reps > 0"
+        }
+        (RecordMode::BodyweightAndReps, true) => "left_reps > 0 AND right_reps > 0",
+        (RecordMode::WeightAndReps | RecordMode::BodyweightAndReps, false) => {
             "left_weight_kg IS NULL AND left_reps IS NULL \
              AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
              AND right_reps IS NULL AND right_duration_seconds IS NULL AND reps > 0"
         }
-        RecordMode::Time => unreachable!(),
     }
 }
 

@@ -21,10 +21,10 @@ use warrior_core::auth::hash_session_token;
 use warrior_core::base64url;
 use warrior_core::set_calc::estimated_one_rep_max;
 
-const MAIN_PORT: u16 = 8843;
-const GRIP_PORT: u16 = 8844;
-const TIME_PORT: u16 = 8845;
-const MIGRATION_PORT: u16 = 8846;
+const MAIN_PORT: u16 = 8852;
+const GRIP_PORT: u16 = 8853;
+const TIME_PORT: u16 = 8854;
+const MIGRATION_PORT: u16 = 8855;
 
 const WARMUP_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5800";
 const WARMUP_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5801";

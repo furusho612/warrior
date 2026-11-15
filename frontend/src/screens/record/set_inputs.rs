@@ -2,7 +2,7 @@
 //!
 //! 時間で記録する種目は時間、左右別の種目は左右の値、それ以外は重量と回数を
 //! 表示する。時間の入力にはストップウォッチを添える。入力は画面の状態だけを変え、
-//! 保存は `frontend/src/screens/record/exercise_view.rs` が担う。
+//! 保存は `frontend/src/screens/record/exercise_view/operations.rs` が担う。
 
 use dioxus::prelude::*;
 use warrior_core::exercise::RecordMode;

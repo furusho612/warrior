@@ -12,6 +12,8 @@ use warrior_core::rpe;
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::superset::rest_timer_starts;
+use warrior_core::sync::Operation;
+use warrior_core::training_record::SetRecordRow;
 
 use super::super::errors::{clear_set_error, set_load_error, set_set_error, RecordErrors};
 use super::super::set_events::{SetCompleted, SetCompletedEvents};
@@ -595,11 +597,8 @@ async fn complete_set(
         }
     };
     if completed {
-        // 保存のループを止めて、実行中の保存を待つ。画面の印も先に付けて、
-        // 待つ間の入力と保存を閉じる。
-        saver.stop(&set_id);
+        // 保存のループを止める前に画面の印を付けて、待つ間の入力を閉じる。
         update_completed(views, &set_id, true);
-        saver.wait_finished(&set_id).await;
     }
     let storage = match storage::current().await {
         Ok(storage) => storage,
@@ -608,25 +607,25 @@ async fn complete_set(
             return;
         }
     };
-    // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
     if completed {
         let values = set.values(lateral, view.snapshot.record_mode);
-        if save_completed_values(&storage, &training_id, &set, &values)
+        if save_completed_set(&storage, &set, &values, &updated, &operation, &saver)
             .await
             .is_err()
         {
             abort_completion(views, &set_id, completed, &saver, error);
             return;
         }
-    }
-    update_completed(views, &set_id, completed);
-    if storage
-        .save_set_complete(&updated, &operation)
-        .await
-        .is_err()
-    {
-        abort_completion(views, &set_id, completed, &saver, error);
-        return;
+    } else {
+        update_completed(views, &set_id, false);
+        if storage
+            .save_set_complete(&updated, &operation)
+            .await
+            .is_err()
+        {
+            abort_completion(views, &set_id, completed, &saver, error);
+            return;
+        }
     }
     clear_set_error(error, &set_id);
     if completed {
@@ -646,6 +645,26 @@ async fn complete_set(
         saver.resume(&set_id);
     }
     sync::flush_in_background();
+}
+
+/// 完了するセットの値の更新と完了を、保存の終わりを待ってこの順に保存する。
+async fn save_completed_set(
+    storage: &storage::Storage,
+    set: &SetView,
+    values: &SetValues,
+    updated: &SetRecordRow,
+    operation: &Operation,
+    saver: &SetSaver,
+) -> Result<(), storage::StorageError> {
+    stop_saving_for_completion(saver, &set.record.id).await;
+    save_completed_values(storage, &operation.training_id, set, values).await?;
+    storage.save_set_complete(updated, operation).await
+}
+
+/// セットの保存のループを止め、実行中の保存が終わるまで待つ。
+async fn stop_saving_for_completion(saver: &SetSaver, set_id: &str) {
+    saver.stop(set_id);
+    saver.wait_finished(set_id).await;
 }
 
 /// 完了するセットの値の更新を端末内へ保存する。
@@ -947,10 +966,15 @@ mod tests {
     use std::pin::pin;
     use std::task::{Context, Waker};
 
+    use warrior_core::exercise::RecordMode;
+    use warrior_core::set_calc::SetKind;
+    use warrior_core::sync::OperationKind;
     use wasm_bindgen_test::wasm_bindgen_test;
     use wasm_bindgen_test::wasm_bindgen_test_configure;
 
-    use super::SetSaver;
+    use super::{save_completed_set, stop_saving_for_completion, SetSaver, SetView};
+    use crate::storage::{Storage, SCHEMA_VERSION};
+    use crate::training_set::{self, SetSegmentValues, SetValues};
 
     wasm_bindgen_test_configure!(run_in_browser);
 
@@ -992,5 +1016,95 @@ mod tests {
         assert!(saver.start("other"));
         saver.finish("set");
         assert!(saver.start("set"));
+    }
+
+    #[wasm_bindgen_test]
+    async fn completing_a_set_waits_for_the_running_save() {
+        let saver = SetSaver::default();
+        assert!(saver.start("set"));
+        let mut waiting = pin!(stop_saving_for_completion(&saver, "set"));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(waiting.as_mut().poll(&mut context).is_pending());
+        assert!(saver.is_stopped("set"));
+        saver.finish("set");
+        assert!(waiting.as_mut().poll(&mut context).is_ready());
+    }
+
+    #[wasm_bindgen_test]
+    async fn completing_a_set_saves_the_values_before_the_completion() {
+        let name = format!(
+            "warrior-test-completion-order-{}",
+            crate::ids::new_uuid().expect("a database name")
+        );
+        let storage = Storage::open_with(&name, SCHEMA_VERSION)
+            .await
+            .expect("the database must open");
+        let values = SetValues {
+            kind: SetKind::Normal,
+            segments: vec![SetSegmentValues {
+                weight_kg: 100.0,
+                reps: 5,
+                momentum_reps: 0,
+                assisted_reps: 0,
+                duration_seconds: None,
+                left: None,
+                right: None,
+            }],
+            completed: false,
+            body_weight_kg: Some(70.0),
+            rpe: None,
+            grip: None,
+        };
+        let (rows, create) =
+            training_set::create("training", "exercise", 1, &values).expect("the set creation");
+        storage
+            .save_set_create(&rows.set, &rows.segments, &create)
+            .await
+            .expect("the set must be saved");
+
+        let set = SetView::from_rows(rows.set.clone(), rows.segments.clone());
+        let values = set.values(false, RecordMode::WeightAndReps);
+        let (updated, complete) =
+            training_set::complete("training", &rows.set, true).expect("the completion");
+        save_completed_set(
+            &storage,
+            &set,
+            &values,
+            &updated,
+            &complete,
+            &SetSaver::default(),
+        )
+        .await
+        .expect("the completion must be saved");
+
+        let kinds = storage
+            .outbox_entries()
+            .await
+            .expect("the outbox")
+            .into_iter()
+            .map(|entry| entry.operation.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                OperationKind::SetCreate,
+                OperationKind::SetUpdate,
+                OperationKind::SetComplete,
+            ],
+            "the values must be saved before the completion"
+        );
+        let stored = storage
+            .training_sets("exercise")
+            .await
+            .expect("the sets must be readable");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].set.completed, 1);
+        assert_eq!(stored[0].segments[0].weight_kg, Some(100.0));
+        assert_eq!(stored[0].segments[0].reps, Some(5));
+
+        storage
+            .clear_account()
+            .await
+            .expect("the cleanup must work");
     }
 }

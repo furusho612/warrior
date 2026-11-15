@@ -18,8 +18,8 @@ use warrior_core::set_calc::estimated_one_rep_max;
 
 const BENCH_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
 const PLANK_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-00000000005d";
-const SERVER_PORT: u16 = 8841;
-const PROVIDER_PORT: u16 = 8842;
+const SERVER_PORT: u16 = 8850;
+const PROVIDER_PORT: u16 = 8851;
 
 #[tokio::test]
 async fn shows_the_estimated_one_rep_max_and_the_updated_personal_bests() {

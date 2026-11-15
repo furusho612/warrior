@@ -12,9 +12,8 @@ use warrior_core::sync::{
 };
 
 use super::bindings::{applied_exists, ownership_condition_placeholder, segment_bindings};
-use super::{
-    delete_set_statement, same_set_ids, set_statements, update_set_statement, ExerciseOwnership,
-};
+use super::precheck::same_set_ids;
+use super::{delete_set_statement, set_statements, update_set_statement, ExerciseOwnership};
 
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5301";
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5302";

@@ -1,7 +1,7 @@
 //! 記録のセットの表と、セットの行の状態。
 //!
 //! セットの行は端末内の保存の行と入力を一緒に持つ。入力は画面へすぐ反映し、
-//! 保存は `frontend/src/screens/record/exercise_view.rs` が端末内の保存へ送る。
+//! 保存は `frontend/src/screens/record/exercise_view/operations.rs` が端末内の保存へ送る。
 //! セットの表は `frontend/src/screens/record/set_table.rs` が描く。
 //! セットの集計は `warrior_core::set_calc` の `SetRecord` に変換して行う。
 
