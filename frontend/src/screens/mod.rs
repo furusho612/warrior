@@ -1,4 +1,4 @@
-//! 画面の部品。
+//! 画面と共通の枠。
 //!
 //! 画面の本体は経路ごとの module が持ち、この module は共通の枠と、
 //! 画面をまたいで使う部品を公開する。
@@ -9,6 +9,7 @@ pub mod account;
 pub mod analysis;
 pub mod calendar;
 pub mod exercise;
+pub mod exercise_history;
 pub mod home;
 pub mod library;
 pub mod login;
@@ -24,6 +25,7 @@ pub use account::AccountSettings;
 pub use analysis::AnalysisScreen;
 pub use calendar::CalendarScreen;
 pub use exercise::ExerciseScreen;
+pub use exercise_history::ExerciseHistoryScreen;
 pub use home::HomeScreen;
 pub use library::{ExerciseSelectScreen, LibraryScreen};
 pub use login::LoginScreen;

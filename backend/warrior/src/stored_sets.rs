@@ -20,26 +20,26 @@ use crate::db::Db;
 /// 種目、セット、段を結合した 1 行。
 #[derive(Debug, Deserialize)]
 pub(crate) struct SetSegmentRow {
-    training_id: String,
-    training_exercise_id: String,
+    pub(crate) training_id: String,
+    pub(crate) training_exercise_id: String,
     pub(crate) snapshot: String,
-    set_id: String,
+    pub(crate) set_id: String,
     pub(crate) kind: String,
     pub(crate) set_rpe: Option<f64>,
     pub(crate) grip: Option<String>,
     pub(crate) body_weight_kg: Option<f64>,
     pub(crate) segment_id: Option<String>,
-    weight_kg: Option<f64>,
-    reps: Option<i64>,
-    momentum_reps: Option<i64>,
-    assisted_reps: Option<i64>,
-    duration_seconds: Option<i64>,
-    left_weight_kg: Option<f64>,
-    left_reps: Option<i64>,
-    left_duration_seconds: Option<i64>,
-    right_weight_kg: Option<f64>,
-    right_reps: Option<i64>,
-    right_duration_seconds: Option<i64>,
+    pub(crate) weight_kg: Option<f64>,
+    pub(crate) reps: Option<i64>,
+    pub(crate) momentum_reps: Option<i64>,
+    pub(crate) assisted_reps: Option<i64>,
+    pub(crate) duration_seconds: Option<i64>,
+    pub(crate) left_weight_kg: Option<f64>,
+    pub(crate) left_reps: Option<i64>,
+    pub(crate) left_duration_seconds: Option<i64>,
+    pub(crate) right_weight_kg: Option<f64>,
+    pub(crate) right_reps: Option<i64>,
+    pub(crate) right_duration_seconds: Option<i64>,
 }
 
 /// トレーニング 1 つ分の種目と、その種目のセットの記録。
@@ -133,7 +133,7 @@ fn invalid_stored_data(error: BuildSetsError) -> Error {
 
 /// 保存した行を、セットの記録に変換できない理由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BuildSetsError {
+pub(crate) enum BuildSetsError {
     /// 種目のスナップショットを復元できない。
     UnreadableSnapshot,
     /// セット種別の文字列が既知の値でない。
@@ -185,7 +185,7 @@ fn build_exercises(
     Ok(exercises)
 }
 
-fn build_training(
+pub(crate) fn build_training(
     training_id: &str,
     rows: Vec<SetSegmentRow>,
 ) -> std::result::Result<Vec<StoredExercise>, BuildSetsError> {

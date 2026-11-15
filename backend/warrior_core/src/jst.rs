@@ -211,6 +211,17 @@ impl JstDate {
         Self::new(year, month, day)
     }
 
+    /// 月を引いた日。引いた先の月に同じ日が無い場合は、その月の末日にする。
+    ///
+    /// 表現できる範囲の外に出るときは None。
+    pub fn subtract_months(self, months: u32) -> Option<Self> {
+        let total = i64::from(self.month) - 1 - i64::from(months);
+        let year = i64::from(self.year) + total.div_euclid(12);
+        let month = u32::try_from(total.rem_euclid(12) + 1).ok()?;
+        let last_day = datetime::days_in_month(year, month)?;
+        Self::new(year, month, u32::from(self.day).min(last_day))
+    }
+
     /// その日を含む週。月曜 0 時に始まり、日曜 23:59:59 で終わる。
     pub fn week(self) -> JstWeek {
         let days = datetime::days_from_civil(
@@ -431,6 +442,35 @@ mod tests {
     #[test]
     fn leap_day_is_valid_in_a_leap_year() {
         assert_eq!(JstDate::parse("2024-02-29"), JstDate::new(2024, 2, 29));
+    }
+
+    #[test]
+    fn subtract_months_keeps_the_day_or_moves_to_the_month_end() {
+        let march_first = JstDate::new(2026, 3, 1).unwrap();
+        assert_eq!(march_first.subtract_months(1), JstDate::new(2026, 2, 1));
+        let march_thirty_first = JstDate::new(2026, 3, 31).unwrap();
+        assert_eq!(
+            march_thirty_first.subtract_months(1),
+            JstDate::new(2026, 2, 28)
+        );
+        let leap_march_thirty_first = JstDate::new(2024, 3, 31).unwrap();
+        assert_eq!(
+            leap_march_thirty_first.subtract_months(1),
+            JstDate::new(2024, 2, 29)
+        );
+        assert_eq!(
+            JstDate::new(2026, 11, 12).unwrap().subtract_months(12),
+            JstDate::new(2025, 11, 12)
+        );
+        assert_eq!(
+            JstDate::new(2026, 1, 31).unwrap().subtract_months(2),
+            JstDate::new(2025, 11, 30)
+        );
+        assert_eq!(
+            JstDate::new(0, 1, 1).unwrap().subtract_months(1),
+            None,
+            "a date before year zero is not representable"
+        );
     }
 
     #[test]
