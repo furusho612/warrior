@@ -5,7 +5,7 @@ use warrior_core::profile::Profile;
 
 use crate::profile::{self as profile_api, ProfileForm};
 use crate::screens::profile_form::{ProfileFields, ProfileSummary, SafetyNoticePanel};
-use crate::screens::AccountSettings;
+use crate::screens::AccountSection;
 use crate::text::{text, Key};
 
 #[component]
@@ -17,7 +17,7 @@ pub fn MyPageScreen() -> Element {
             h1 { class: "text-lg font-bold", "{text(Key::MyPageTitle)}" }
             p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::MyPageDescription)}" }
             ProfileSettings {}
-            AccountSettings {}
+            AccountSection {}
         }
     }
 }

@@ -51,6 +51,24 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
     );
     assert_eq!(deleted.status, 204);
     assert!(deleted.body.is_empty());
+    let cookies = deleted
+        .headers
+        .iter()
+        .filter(|(name, _)| name == "set-cookie")
+        .map(|(_, value)| value.as_str())
+        .collect::<Vec<_>>();
+    for cookie in [
+        "warrior_session=;",
+        "warrior_elevation=;",
+        "warrior_terminal=;",
+    ] {
+        assert!(
+            cookies
+                .iter()
+                .any(|value| value.contains(cookie) && value.contains("Max-Age=0")),
+            "the cookie {cookie} must be cleared: {cookies:?}"
+        );
+    }
 
     assert_eq!(count(&server, "users"), 0);
     assert_eq!(count(&server, "auth_sessions"), 0);

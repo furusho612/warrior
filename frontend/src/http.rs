@@ -23,7 +23,7 @@ pub enum HttpError {
 
 /// 同じオリジンへ要求を送り、応答の JSON を復元する。
 pub async fn request_json<T: DeserializeOwned>(method: &str, url: &str) -> Result<T, HttpError> {
-    read_json(send(method, url, None).await?).await
+    read_json(send_ok(method, url, None).await?).await
 }
 
 /// 同じオリジンへ JSON の本文を送り、応答の JSON を復元する。
@@ -33,7 +33,7 @@ pub async fn request_json_with_body<T: DeserializeOwned, B: Serialize>(
     body: &B,
 ) -> Result<T, HttpError> {
     let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
-    read_json(send(method, url, Some(body)).await?).await
+    read_json(send_ok(method, url, Some(body)).await?).await
 }
 
 /// 同じオリジンへ JSON の本文を送り、応答の本文を読まない。
@@ -43,7 +43,31 @@ pub async fn send_json_without_response<B: Serialize>(
     body: &B,
 ) -> Result<(), HttpError> {
     let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
-    send(method, url, Some(body)).await.map(|_| ())
+    send_ok(method, url, Some(body)).await.map(|_| ())
+}
+
+/// 同じオリジンへ要求を送り、応答の状態コードを返す。
+pub async fn request_status(method: &str, url: &str) -> Result<u16, HttpError> {
+    Ok(send(method, url, None).await?.status())
+}
+
+/// 同じオリジンへ JSON の本文を送り、応答の状態コードを返す。
+pub async fn request_status_with_body<B: Serialize>(
+    method: &str,
+    url: &str,
+    body: &B,
+) -> Result<u16, HttpError> {
+    let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
+    Ok(send(method, url, Some(body)).await?.status())
+}
+
+/// 同じオリジンへ要求を送り、成功した応答だけを返す。
+async fn send_ok(method: &str, url: &str, body: Option<String>) -> Result<Response, HttpError> {
+    let response = send(method, url, body).await?;
+    if !response.ok() {
+        return Err(HttpError::Rejected);
+    }
+    Ok(response)
 }
 
 async fn send(method: &str, url: &str, body: Option<String>) -> Result<Response, HttpError> {
@@ -62,11 +86,7 @@ async fn send(method: &str, url: &str, body: Option<String>) -> Result<Response,
     let response = JsFuture::from(window.fetch_with_request(&request))
         .await
         .map_err(|_| HttpError::Unavailable)?;
-    let response: Response = response.dyn_into().map_err(|_| HttpError::Unavailable)?;
-    if !response.ok() {
-        return Err(HttpError::Rejected);
-    }
-    Ok(response)
+    response.dyn_into().map_err(|_| HttpError::Unavailable)
 }
 
 async fn read_json<T: DeserializeOwned>(response: Response) -> Result<T, HttpError> {

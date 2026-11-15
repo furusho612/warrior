@@ -31,6 +31,7 @@ async fn wrangler_frontend_smoke_opens_every_route_and_the_record_shell() {
         ("/analysis", "/analysis"),
         ("/routines", "/routines"),
         ("/mypage", "/mypage"),
+        ("/account", "/account"),
     ] {
         open_route(&driver, &server, path, expected).await;
     }

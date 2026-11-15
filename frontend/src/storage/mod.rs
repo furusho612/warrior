@@ -24,6 +24,7 @@ use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 pub mod indexeddb;
 pub mod outbox;
 
+mod account;
 mod body_weight;
 mod discard;
 mod exercise;
@@ -33,6 +34,7 @@ mod set;
 mod stopwatch;
 mod superset;
 
+pub use account::clear_after_deletion;
 pub use indexeddb::request_persistence;
 pub use set::StoredSet;
 pub use stopwatch::StopwatchSide;

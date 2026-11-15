@@ -1,12 +1,13 @@
 //! アカウントと利用者に属するデータの削除。
 //!
 //! R2 の 2 つの接頭辞を先に削除し、成功したら D1 の行を 1 つの batch で削除する。
+//! 成功時はセッション、再認証、端末トークンの Cookie を失効させる。
 //! 2 回目の要求はセッションが消えているため 401 になる。削除の対象の一覧は
 //! `warrior_core::account_deletion` が持つ。
 
 use serde::Deserialize;
 use warrior_core::account_deletion::{r2_prefixes, USER_OWNED_TABLES};
-use warrior_core::auth::{clear_elevation_cookie, clear_session_cookie};
+use warrior_core::auth::{clear_elevation_cookie, clear_session_cookie, clear_terminal_cookie};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use worker::{Env, Request, Response, Result, RouteContext};
 
@@ -55,7 +56,8 @@ pub async fn delete(mut request: Request, context: RouteContext<()>) -> Result<R
 
     let mut response = Response::empty()?.with_status(204);
     response = append_cookie(response, &clear_session_cookie())?;
-    append_cookie(response, &clear_elevation_cookie())
+    response = append_cookie(response, &clear_elevation_cookie())?;
+    append_cookie(response, &clear_terminal_cookie())
 }
 
 async fn delete_r2_objects(env: &Env, user_id: &str) -> Result<()> {

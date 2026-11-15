@@ -5,9 +5,9 @@ use dioxus_router::Routable;
 
 use crate::layout::AppShell;
 use crate::screens::{
-    AnalysisScreen, CalendarScreen, ExerciseHistoryScreen, ExerciseScreen, ExerciseSelectScreen,
-    HistoryScreen, HomeScreen, LibraryScreen, LoginScreen, MyPageScreen, NotFoundScreen,
-    RecordScreen, RecordSessionScreen, RoutinesScreen, SummaryScreen,
+    AccountScreen, AnalysisScreen, CalendarScreen, ExerciseHistoryScreen, ExerciseScreen,
+    ExerciseSelectScreen, HistoryScreen, HomeScreen, LibraryScreen, LoginScreen, MyPageScreen,
+    NotFoundScreen, RecordScreen, RecordSessionScreen, RoutinesScreen, SummaryScreen,
 };
 use crate::text::Key;
 
@@ -28,7 +28,7 @@ const fn route(pattern: &'static str) -> AppRoute {
 }
 
 /// 画面の経路の台帳。
-pub const APP_ROUTES: [AppRoute; 15] = [
+pub const APP_ROUTES: [AppRoute; 16] = [
     route("/login"),
     route("/login/error"),
     route("/"),
@@ -44,6 +44,7 @@ pub const APP_ROUTES: [AppRoute; 15] = [
     route("/routines"),
     route("/summary/:training_id"),
     route("/mypage"),
+    route("/account"),
 ];
 
 /// 画面の経路。
@@ -95,6 +96,9 @@ pub enum Route {
     /// マイページ。
     #[route("/mypage", MyPageScreen)]
     MyPage {},
+    /// アカウントの管理。
+    #[route("/account", AccountScreen)]
+    Account {},
     /// 未知の経路。
     #[route("/:..segments", NotFoundScreen)]
     NotFound { segments: Vec<String> },
@@ -117,6 +121,7 @@ pub fn screen_key(route: &Route) -> Key {
         Route::Routines {} => Key::RoutinesTitle,
         Route::Summary { .. } => Key::SummaryTitle,
         Route::MyPage {} => Key::MyPageTitle,
+        Route::Account {} => Key::AccountTitle,
         Route::NotFound { .. } => Key::NotFoundTitle,
     }
 }
@@ -139,6 +144,7 @@ pub fn route_name(route: &Route) -> &'static str {
         Route::Routines {} => "/routines",
         Route::Summary { .. } => "/summary/:training_id",
         Route::MyPage {} => "/mypage",
+        Route::Account {} => "/account",
         Route::NotFound { .. } => "/:..segments",
     }
 }
@@ -199,7 +205,7 @@ pub fn tab_is_active(current: &Route, tab: Tab) -> bool {
             Route::Library {} | Route::Exercise { .. } | Route::ExerciseHistory { .. }
         ),
         Tab::Analysis => matches!(current, Route::Analysis {}),
-        Tab::MyPage => matches!(current, Route::MyPage {}),
+        Tab::MyPage => matches!(current, Route::MyPage {} | Route::Account {}),
     }
 }
 
@@ -244,6 +250,7 @@ mod tests {
             "/routines",
             "/summary/:training_id",
             "/mypage",
+            "/account",
         ];
         assert_eq!(APP_ROUTES.len(), patterns.len());
         for (index, pattern) in patterns.iter().enumerate() {
@@ -364,6 +371,7 @@ mod tests {
         }
         assert_eq!(tab_route(Tab::Home), Route::Home {});
         assert_eq!(tab_route(Tab::MyPage), Route::MyPage {});
+        assert!(tab_is_active(&Route::Account {}, Tab::MyPage));
     }
 
     #[test]
