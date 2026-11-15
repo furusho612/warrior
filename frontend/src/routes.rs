@@ -36,8 +36,8 @@ pub const APP_ROUTES: [AppRoute; 13] = [
     route("/record/:training_id"),
     route("/record/:training_id/exercises"),
     route("/calendar"),
-    route("/library"),
-    route("/library/:exercise_id"),
+    route("/exercises"),
+    route("/exercises/:exercise_id"),
     route("/analysis"),
     route("/routines"),
     route("/summary/:training_id"),
@@ -70,10 +70,10 @@ pub enum Route {
     #[route("/calendar", CalendarScreen)]
     Calendar {},
     /// 種目ライブラリ。
-    #[route("/library", LibraryScreen)]
+    #[route("/exercises", LibraryScreen)]
     Library {},
     /// 種目詳細。
-    #[route("/library/:exercise_id", ExerciseScreen)]
+    #[route("/exercises/:exercise_id", ExerciseScreen)]
     Exercise { exercise_id: String },
     /// 分析。
     #[route("/analysis", AnalysisScreen)]
@@ -121,8 +121,8 @@ pub fn route_name(route: &Route) -> &'static str {
         Route::RecordSession { .. } => "/record/:training_id",
         Route::RecordExerciseSelect { .. } => "/record/:training_id/exercises",
         Route::Calendar {} => "/calendar",
-        Route::Library {} => "/library",
-        Route::Exercise { .. } => "/library/:exercise_id",
+        Route::Library {} => "/exercises",
+        Route::Exercise { .. } => "/exercises/:exercise_id",
         Route::Analysis {} => "/analysis",
         Route::Routines {} => "/routines",
         Route::Summary { .. } => "/summary/:training_id",
@@ -221,8 +221,8 @@ mod tests {
             "/record/:training_id",
             "/record/:training_id/exercises",
             "/calendar",
-            "/library",
-            "/library/:exercise_id",
+            "/exercises",
+            "/exercises/:exercise_id",
             "/analysis",
             "/routines",
             "/summary/:training_id",
@@ -272,7 +272,7 @@ mod tests {
             }
         );
         assert_eq!(
-            Route::from_str("/library/abc").unwrap(),
+            Route::from_str("/exercises/abc").unwrap(),
             Route::Exercise {
                 exercise_id: "abc".to_owned()
             }

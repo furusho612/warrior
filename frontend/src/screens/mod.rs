@@ -1,6 +1,7 @@
 //! 画面の部品。
 //!
-//! 画面の中身は後続の変更で実装する。このモジュールは共通の枠と、経路ごとの空の画面を持つ。
+//! 画面の本体は経路ごとの module が持ち、この module は共通の枠と、
+//! 画面をまたいで使う部品を公開する。
 
 use dioxus::prelude::*;
 
@@ -43,6 +44,23 @@ pub fn ScreenFrame(title: String, description: String, action: Option<Element>) 
             if let Some(action) = action {
                 {action}
             }
+        }
+    }
+}
+
+/// お気に入りの登録の状態を示す星。
+#[component]
+pub fn FavoriteIcon(filled: bool) -> Element {
+    rsx! {
+        svg {
+            class: "h-[22px] w-[22px]",
+            view_box: "0 0 24 24",
+            fill: if filled { "currentColor" } else { "none" },
+            stroke: "currentColor",
+            stroke_width: "1.6",
+            stroke_linejoin: "round",
+            "aria-hidden": "true",
+            path { d: "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" }
         }
     }
 }

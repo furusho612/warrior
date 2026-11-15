@@ -83,6 +83,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者ごとのマスター種目の上書き。",
     },
     Table {
+        name: "exercise_favorites",
+        class: TableClass::Owned,
+        reason: "利用者の種目のお気に入り。",
+    },
+    Table {
         name: "training_sessions",
         class: TableClass::Owned,
         reason: "利用者のトレーニング。",
@@ -157,6 +162,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "user_exercise_muscles",
     "user_exercises",
     "master_exercise_overrides",
+    "exercise_favorites",
     "user_rate_limits",
     "elevation_tokens",
     "passkeys",
@@ -208,6 +214,7 @@ mod tests {
             "user_exercises",
             "user_exercise_muscles",
             "master_exercise_overrides",
+            "exercise_favorites",
             "training_sessions",
             "training_exercises",
             "sets",

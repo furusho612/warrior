@@ -37,6 +37,10 @@ pub const TRAINING_GET_ROUTE_NAME: &str = "training_get";
 pub const TRAINING_PREVIOUS_ROUTE_NAME: &str = "training_previous";
 /// 種目ライブラリの一覧を返す経路の名前。
 pub const EXERCISES_ROUTE_NAME: &str = "exercises";
+/// 種目ライブラリの種目の詳細を返す経路の名前。
+pub const EXERCISE_ROUTE_NAME: &str = "exercise";
+/// 種目のお気に入りを更新する経路の名前。
+pub const EXERCISE_FAVORITE_ROUTE_NAME: &str = "exercise_favorite";
 /// トレーニングの編集権を引き継ぐ経路の名前。
 pub const TRAINING_TAKEOVER_ROUTE_NAME: &str = "training_takeover";
 /// カレンダーの月を返す経路の名前。
@@ -70,6 +74,9 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/trainings/:id", training_record::get)
         .post_async("/api/trainings/:id/takeover", training_record::takeover)
         .get_async("/api/exercises", library::exercises)
+        .get_async("/api/exercises/:id", library::exercise_detail)
+        .put_async("/api/exercises/:id/favorite", library::add_favorite)
+        .delete_async("/api/exercises/:id/favorite", library::remove_favorite)
         .get_async("/api/calendar", calendar::month)
         .get_async("/api/calendar/:date", calendar::day)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
@@ -98,6 +105,12 @@ pub fn build_router() -> Router<'static, ()> {
 pub fn route_name(path: &str) -> &'static str {
     if path.starts_with("/api/me/passkeys/") {
         return "passkeys_delete";
+    }
+    if path.starts_with("/api/exercises/") && path.ends_with("/favorite") {
+        return EXERCISE_FAVORITE_ROUTE_NAME;
+    }
+    if exercise_id_path(path).is_some() {
+        return EXERCISE_ROUTE_NAME;
     }
     if path.starts_with("/api/trainings/") && path.ends_with("/finish") {
         return TRAINING_FINISH_ROUTE_NAME;
@@ -154,15 +167,25 @@ fn training_id_path(path: &str) -> Option<&str> {
     Some(rest)
 }
 
+/// `/api/exercises/:id` の形の経路から、種目の ID の部分を取り出す。
+fn exercise_id_path(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api/exercises/")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(rest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        route_name, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME,
-        LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, PROFILE_ROUTE_NAME,
-        SYNC_OPERATION_ROUTE_NAME, TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME,
-        TRAINING_PREVIOUS_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
+        route_name, EXERCISES_ROUTE_NAME, EXERCISE_FAVORITE_ROUTE_NAME, EXERCISE_ROUTE_NAME,
+        GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME, LOGOUT_ROUTE_NAME,
+        ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, PROFILE_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
+        TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_PREVIOUS_ROUTE_NAME,
+        TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
     };
-    use super::{CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISES_ROUTE_NAME};
+    use super::{CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME};
 
     #[test]
     fn names_the_health_route() {
@@ -235,8 +258,17 @@ mod tests {
     }
 
     #[test]
-    fn names_the_exercise_list_route() {
+    fn names_the_exercise_routes() {
         assert_eq!(route_name("/api/exercises"), EXERCISES_ROUTE_NAME);
+        assert_eq!(
+            route_name("/api/exercises/3f2504e0-4f89-41d3-9a0c-0305e82c3301"),
+            EXERCISE_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/exercises/3f2504e0-4f89-41d3-9a0c-0305e82c3301/favorite"),
+            EXERCISE_FAVORITE_ROUTE_NAME
+        );
+        assert_eq!(route_name("/api/exercises/"), NOT_FOUND_ROUTE_NAME);
     }
 
     #[test]
