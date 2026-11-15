@@ -2,6 +2,7 @@
 
 - Requirements: なし (Fuzzing の整備は ADR-024 の判断であり、PRD の要求 ID を持たない)
 - Priority: Medium
+- Completed: 2026-11-15
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-fuzzing-harness
