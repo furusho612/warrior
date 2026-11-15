@@ -1,0 +1,1 @@
+{"type":"webauthn.create","challenge":"fuzz-challenge","origin":"https://warrior.example.workers.dev","crossOrigin":false}

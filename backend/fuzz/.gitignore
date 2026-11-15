@@ -1,0 +1,3 @@
+# Fuzzing が見つけたクラッシュと作業用の出力はコミットしない。
+artifacts
+coverage

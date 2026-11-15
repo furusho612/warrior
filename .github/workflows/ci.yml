@@ -3,17 +3,34 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    # Fuzzing を毎晩実行する (ADR-024)。18:00 UTC は日本時間の 3:00。
+    - cron: "0 18 * * *"
 
 jobs:
   check:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
+      # cargo-fuzz は sanitizer を使うため nightly を要求する。
+      - run: rustup toolchain install nightly --profile minimal
       - run: mise run check
 
+  fuzz-check:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: rustup toolchain install nightly --profile minimal
+      - run: mise run fuzz:check
+
   safari:
+    if: github.event_name != 'schedule'
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -22,3 +39,20 @@ jobs:
       - run: sudo safaridriver --enable
       - run: mise run test-browser-safari
       - run: mise run e2e-safari
+
+  fuzz:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: rustup toolchain install nightly --profile minimal
+      # corpus はリポジトリの初期値を復元し、実行で増えた入力を次の実行へ引き継ぐ (ADR-024)。
+      - uses: actions/cache@v4
+        with:
+          path: backend/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+      - run: mise run fuzz

@@ -4,6 +4,7 @@ members = [
     "backend/warrior",
     "backend/warrior_core",
     "backend/pbt",
+    "backend/fuzz",
     "frontend",
     "service-worker",
     "tools/token-gen",
