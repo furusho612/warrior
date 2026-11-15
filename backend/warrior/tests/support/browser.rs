@@ -100,28 +100,55 @@ impl Drop for DriverProcess {
 /// WebDriver のセッションを開く。
 pub async fn open(browser: Browser, driver: &DriverProcess) -> WebDriver {
     let capabilities: thirtyfour::Capabilities = match browser {
-        Browser::Chrome => {
-            let mut capabilities = DesiredCapabilities::chrome();
-            capabilities
-                .set_browser_log_level(LoggingPrefsLogLevel::Info)
-                .expect("browser logging");
-            for argument in [
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--window-size=390,844",
-                "--remote-allow-origins=*",
-            ] {
-                capabilities.add_arg(argument).unwrap_or_else(|error| {
-                    panic!("the chrome argument {argument} must be set: {error}")
-                });
-            }
-            capabilities.into()
-        }
+        Browser::Chrome => chrome_capabilities().into(),
         Browser::Safari => DesiredCapabilities::safari().into(),
     };
+    open_session(browser, driver, capabilities).await
+}
 
+/// 通知の許可とポップアップを許可した Chrome のセッションを開く。
+///
+/// 通知の許可はブラウザの設定の既定値で与える。ヘッドレスの Chrome には許可を求める
+/// 画面が無いため、テストの間は通知を常に許可した状態にする。
+pub async fn open_with_notification_permission(driver: &DriverProcess) -> WebDriver {
+    let mut capabilities = chrome_capabilities();
+    capabilities
+        .add_experimental_option(
+            "prefs",
+            serde_json::json!({"profile.default_content_setting_values.notifications": 1}),
+        )
+        .expect("the notification preference must be set");
+    capabilities
+        .add_arg("--disable-popup-blocking")
+        .expect("the popup blocker must be disabled");
+    open_session(Browser::Chrome, driver, capabilities.into()).await
+}
+
+fn chrome_capabilities() -> thirtyfour::ChromeCapabilities {
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities
+        .set_browser_log_level(LoggingPrefsLogLevel::Info)
+        .expect("browser logging");
+    for argument in [
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--window-size=390,844",
+        "--remote-allow-origins=*",
+    ] {
+        capabilities
+            .add_arg(argument)
+            .unwrap_or_else(|error| panic!("the chrome argument {argument} must be set: {error}"));
+    }
+    capabilities
+}
+
+async fn open_session(
+    browser: Browser,
+    driver: &DriverProcess,
+    capabilities: thirtyfour::Capabilities,
+) -> WebDriver {
     let session = WebDriver::new(driver.url(), capabilities)
         .await
         .unwrap_or_else(|error| panic!("the WebDriver session must open: {error}"));

@@ -23,6 +23,8 @@ pub struct RestTimerState {
     pub timer: Signal<Option<ActiveRestTimer>>,
     /// 画面の消灯防止を有効にするか。
     pub wake_lock_enabled: Signal<bool>,
+    /// レストの終了をブラウザ通知で知らせる設定。
+    pub notification_enabled: Signal<bool>,
 }
 
 impl RestTimerState {

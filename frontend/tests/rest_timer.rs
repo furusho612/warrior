@@ -17,7 +17,7 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 mod support;
 
-use support::{database_name, open};
+use support::{counter, database_name, install_sound_stub, open};
 
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5801";
 const EXERCISE_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5802";
@@ -246,48 +246,6 @@ fn install_wake_lock_stub() {
     .expect("the wake lock stub must be installed");
 }
 
-fn install_sound_stub() {
-    js_sys::eval(
-        r#"
-        window.__restAudioStarts = 0;
-        window.__restVibrations = 0;
-        class FakeAudioParam {
-            constructor() { this.value = 0; }
-            setValueAtTime(value) { this.value = value; return this; }
-        }
-        class FakeOscillator {
-            constructor() { this.frequency = new FakeAudioParam(); }
-            connect() {}
-            start() { window.__restAudioStarts++; }
-            stop() {}
-        }
-        class FakeGain {
-            constructor() { this.gain = new FakeAudioParam(); }
-            connect() {}
-        }
-        class FakeAudioContext {
-            constructor() {
-                this.currentTime = 0;
-                this.state = 'running';
-                this.destination = {};
-            }
-            createOscillator() { return new FakeOscillator(); }
-            createGain() { return new FakeGain(); }
-            resume() { this.state = 'running'; return Promise.resolve(); }
-        }
-        Object.defineProperty(window, 'AudioContext', {
-            configurable: true,
-            value: FakeAudioContext
-        });
-        Object.defineProperty(navigator, 'vibrate', {
-            configurable: true,
-            value: function () { window.__restVibrations++; return true; }
-        });
-        "#,
-    )
-    .expect("the sound stub must be installed");
-}
-
 fn set_visibility(value: &str) {
     js_sys::eval(&format!("window.__visibility = '{value}';")).expect("the visibility must be set");
 }
@@ -300,13 +258,6 @@ fn set_released(value: bool) {
 fn dispatch_visibility_change() {
     js_sys::eval("document.dispatchEvent(new Event('visibilitychange'));")
         .expect("the visibility change must be dispatched");
-}
-
-fn counter(name: &str) -> f64 {
-    js_sys::eval(&format!("window.{name} || 0"))
-        .expect("the counter must be readable")
-        .as_f64()
-        .unwrap_or(0.0)
 }
 
 async fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {

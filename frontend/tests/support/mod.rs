@@ -247,3 +247,54 @@ pub async fn save_exercise(storage: &Storage, row: TrainingExerciseRecord) {
         .await
         .expect("the exercise creation must succeed");
 }
+
+/// レスト終了の音と振動のブラウザの API を差し替え、呼び出しを数える。
+pub fn install_sound_stub() {
+    js_sys::eval(
+        r#"
+        window.__restAudioStarts = 0;
+        window.__restVibrations = 0;
+        class FakeAudioParam {
+            constructor() { this.value = 0; }
+            setValueAtTime(value) { this.value = value; return this; }
+        }
+        class FakeOscillator {
+            constructor() { this.frequency = new FakeAudioParam(); }
+            connect() {}
+            start() { window.__restAudioStarts++; }
+            stop() {}
+        }
+        class FakeGain {
+            constructor() { this.gain = new FakeAudioParam(); }
+            connect() {}
+        }
+        class FakeAudioContext {
+            constructor() {
+                this.currentTime = 0;
+                this.state = 'running';
+                this.destination = {};
+            }
+            createOscillator() { return new FakeOscillator(); }
+            createGain() { return new FakeGain(); }
+            resume() { this.state = 'running'; return Promise.resolve(); }
+        }
+        Object.defineProperty(window, 'AudioContext', {
+            configurable: true,
+            value: FakeAudioContext
+        });
+        Object.defineProperty(navigator, 'vibrate', {
+            configurable: true,
+            value: function () { window.__restVibrations++; return true; }
+        });
+        "#,
+    )
+    .expect("the sound stub must be installed");
+}
+
+/// `window` の下の数値のカウンタを読む。
+pub fn counter(name: &str) -> f64 {
+    js_sys::eval(&format!("window.{name} || 0"))
+        .expect("the counter must be readable")
+        .as_f64()
+        .unwrap_or(0.0)
+}
