@@ -5,6 +5,7 @@ use warrior_core::nutrition::MacroTarget;
 use warrior_core::profile::Profile;
 use warrior_core::settings::{DisplayMode, Settings};
 
+use crate::export::{self as export_api, ExportJob};
 use crate::profile::{self as profile_api, choice_class, pressed, ProfileForm};
 use crate::push::PushSubscriptionSetting;
 use crate::screens::profile_form::{ProfileFields, ProfileSummary, SafetyNoticePanel};
@@ -60,10 +61,67 @@ pub fn MyPageScreen() -> Element {
             NutritionSettings { state }
             RecordSettings { state }
             DisplaySettings { state }
-            DataSettings {}
+            DataSection {}
             AccountSection {}
         }
     }
+}
+
+#[component]
+fn DataSection() -> Element {
+    let job = use_signal(|| Option::<ExportJob>::None);
+    let starting = use_signal(|| false);
+    let error = use_signal(|| Option::<String>::None);
+
+    rsx! {
+        div {
+            class: "flex flex-col gap-3 border border-line bg-surface p-3",
+            "data-export-section": "true",
+            h2 { class: "text-sm font-bold", "{text(Key::DataSectionTitle)}" }
+            p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::DataSectionDescription)}" }
+            button {
+                r#type: "button",
+                class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+                "data-export-start": "true",
+                disabled: starting(),
+                onclick: move |_| {
+                    spawn(start_export(job, starting, error));
+                },
+                if starting() {
+                    "{text(Key::ExportStarting)}"
+                } else {
+                    "{text(Key::ExportStart)}"
+                }
+            }
+            if let Some(message) = error() {
+                p { class: "text-[13px] text-primary", "{message}" }
+            }
+            if let Some(job) = job() {
+                p { class: "text-[13px] leading-5", "data-export-ready": "true", "{text(Key::ExportReady)}" }
+                a {
+                    class: "flex min-h-11 items-center justify-center border border-primary px-3 text-[13px] font-bold text-primary",
+                    href: "/api/exports/{job.id}",
+                    download: "warrior-records.csv",
+                    "data-export-download": "true",
+                    "{text(Key::ExportDownload)}"
+                }
+            }
+        }
+    }
+}
+
+async fn start_export(
+    mut job: Signal<Option<ExportJob>>,
+    mut starting: Signal<bool>,
+    mut error: Signal<Option<String>>,
+) {
+    starting.set(true);
+    error.set(None);
+    match export_api::start().await {
+        Ok(created) => job.set(Some(created)),
+        Err(_) => error.set(Some(text(Key::ExportFailed).to_owned())),
+    }
+    starting.set(false);
 }
 
 #[component]

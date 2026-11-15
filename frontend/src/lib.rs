@@ -7,6 +7,7 @@ pub mod app;
 pub mod body_figure;
 pub mod calendar;
 pub mod calendar_view;
+pub mod export;
 pub mod generated;
 pub mod graph;
 pub mod grip_text;

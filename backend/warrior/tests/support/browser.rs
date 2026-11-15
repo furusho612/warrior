@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -121,6 +122,24 @@ pub async fn open_with_notification_permission(driver: &DriverProcess) -> WebDri
     capabilities
         .add_arg("--disable-popup-blocking")
         .expect("the popup blocker must be disabled");
+    open_session(Browser::Chrome, driver, capabilities.into()).await
+}
+
+/// ダウンロード先を固定した Chrome のセッションを開く。
+///
+/// 書き出した CSV をブラウザに保存させ、テストがファイルとして読むために使う。
+pub async fn open_with_download_dir(driver: &DriverProcess, directory: &Path) -> WebDriver {
+    let mut capabilities = chrome_capabilities();
+    capabilities
+        .add_experimental_option(
+            "prefs",
+            serde_json::json!({
+                "download.default_directory": directory.to_string_lossy(),
+                "download.prompt_for_download": false,
+                "download.directory_upgrade": true,
+            }),
+        )
+        .expect("the download preference must be set");
     open_session(Browser::Chrome, driver, capabilities.into()).await
 }
 

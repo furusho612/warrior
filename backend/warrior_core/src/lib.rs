@@ -8,6 +8,7 @@ pub mod body_part_analysis;
 pub mod calendar;
 pub mod cbor;
 pub mod cose;
+pub mod csv;
 pub mod cursor;
 pub mod datetime;
 pub mod duration;
