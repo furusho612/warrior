@@ -117,7 +117,11 @@ async fn precheck(
         | ValidatedPayload::SetUpdate(_)
         | ValidatedPayload::SetDelete(_)
         | ValidatedPayload::SetReorder(_)
-        | ValidatedPayload::SetComplete(_) => return Ok(None),
+        | ValidatedPayload::SetComplete(_)
+        | ValidatedPayload::RoutineCreate(_)
+        | ValidatedPayload::RoutineUpdate(_)
+        | ValidatedPayload::RoutineDelete(_)
+        | ValidatedPayload::RoutineCopy(_) => return Ok(None),
     };
     if !members_in_training(db, user_id, training_id, member_ids).await? {
         return Ok(Some(response(
@@ -287,7 +291,11 @@ fn superset_statements(
         | ValidatedPayload::SetUpdate(_)
         | ValidatedPayload::SetDelete(_)
         | ValidatedPayload::SetReorder(_)
-        | ValidatedPayload::SetComplete(_) => None,
+        | ValidatedPayload::SetComplete(_)
+        | ValidatedPayload::RoutineCreate(_)
+        | ValidatedPayload::RoutineUpdate(_)
+        | ValidatedPayload::RoutineDelete(_)
+        | ValidatedPayload::RoutineCopy(_) => None,
     }
 }
 

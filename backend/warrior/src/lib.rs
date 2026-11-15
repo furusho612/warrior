@@ -22,6 +22,7 @@ pub mod push;
 pub mod random;
 pub mod rate_limit;
 pub mod router;
+pub mod routine;
 pub mod scheduled;
 pub mod security;
 pub mod set;

@@ -10,6 +10,7 @@ use crate::datetime;
 use crate::exercise::ExerciseSnapshot;
 use crate::ids::is_valid_uuid_v4;
 use crate::jst::JstDate;
+use crate::routine::{validate as validate_routine, RoutineError, RoutineExerciseInput};
 use crate::training_session::{PersonalBestItem, SessionSource};
 
 pub use crate::memo::MEMO_MAX_CHARS;
@@ -55,6 +56,14 @@ pub enum OperationKind {
     SupersetDelete,
     /// スーパーセットの組の種目の並べ替え。
     SupersetReorder,
+    /// ルーティンの作成。
+    RoutineCreate,
+    /// ルーティンの更新。
+    RoutineUpdate,
+    /// ルーティンの削除。
+    RoutineDelete,
+    /// ルーティンの複製。
+    RoutineCopy,
 }
 
 impl OperationKind {
@@ -78,6 +87,10 @@ impl OperationKind {
             Self::SupersetCreate => "superset_create",
             Self::SupersetDelete => "superset_delete",
             Self::SupersetReorder => "superset_reorder",
+            Self::RoutineCreate => "routine_create",
+            Self::RoutineUpdate => "routine_update",
+            Self::RoutineDelete => "routine_delete",
+            Self::RoutineCopy => "routine_copy",
         }
     }
 
@@ -101,8 +114,20 @@ impl OperationKind {
             "superset_create" => Some(Self::SupersetCreate),
             "superset_delete" => Some(Self::SupersetDelete),
             "superset_reorder" => Some(Self::SupersetReorder),
+            "routine_create" => Some(Self::RoutineCreate),
+            "routine_update" => Some(Self::RoutineUpdate),
+            "routine_delete" => Some(Self::RoutineDelete),
+            "routine_copy" => Some(Self::RoutineCopy),
             _ => None,
         }
+    }
+
+    /// ルーティンを対象とする操作か。
+    pub fn is_routine(self) -> bool {
+        matches!(
+            self,
+            Self::RoutineCreate | Self::RoutineUpdate | Self::RoutineDelete | Self::RoutineCopy
+        )
     }
 }
 
@@ -111,9 +136,9 @@ impl OperationKind {
 pub struct Operation {
     /// 操作の UUID v4。
     pub operation_id: String,
-    /// 操作が対象とするトレーニングの UUID v4。
+    /// 操作が対象とするトレーニングまたはルーティンの UUID v4。
     pub training_id: String,
-    /// 同じトレーニングの中での順序。1 以上。
+    /// 同じ対象の中での順序。1 以上。
     pub sequence: u64,
     /// 操作の種別。
     pub kind: OperationKind,
@@ -405,6 +430,74 @@ pub struct SupersetReorderPayload {
     pub member_ids: Vec<String>,
 }
 
+/// ルーティンの 1 種目の入力。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutineExercisePayload {
+    /// 種目の行の UUID v4。
+    pub routine_exercise_id: String,
+    /// 種目の ID。
+    pub exercise_id: String,
+    /// 保存する時点の種目の内容。
+    pub snapshot: crate::exercise::ExerciseSnapshot,
+    /// ルーティンの中での並び順。1 以上。
+    pub position: i64,
+    /// 種目ごとの目標。
+    pub target: crate::routine::RoutineTarget,
+}
+
+/// ルーティンの作成の本文。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutineCreatePayload {
+    /// ルーティンの UUID v4。操作の `training_id` と一致する。
+    pub routine_id: String,
+    /// 名称。
+    pub name: String,
+    /// 一覧の中での並び順。
+    pub position: i64,
+    /// 順序を持つ種目。
+    pub exercises: Vec<RoutineExercisePayload>,
+}
+
+/// ルーティンの更新の本文。種目は全置換である。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutineUpdatePayload {
+    /// ルーティンの UUID v4。操作の `training_id` と一致する。
+    pub routine_id: String,
+    /// 名称。
+    pub name: String,
+    /// 一覧の中での並び順。
+    pub position: i64,
+    /// 順序を持つ種目。
+    pub exercises: Vec<RoutineExercisePayload>,
+}
+
+/// ルーティンの削除の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutineDeletePayload {
+    /// 削除するルーティンの UUID v4。操作の `training_id` と一致する。
+    pub routine_id: String,
+}
+
+/// ルーティンの複製の本文。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutineCopyPayload {
+    /// 複製元のルーティンの UUID v4。
+    pub routine_id: String,
+    /// 複製後のルーティンの UUID v4。操作の `training_id` と一致する。
+    pub new_routine_id: String,
+    /// 複製後の名称。
+    pub name: String,
+    /// 複製後の一覧の中での並び順。
+    pub position: i64,
+    /// 複製後の順序を持つ種目。
+    pub exercises: Vec<RoutineExercisePayload>,
+}
+
 /// 端末とサーバーが持つトレーニングの行。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionRecord {
@@ -497,6 +590,14 @@ pub enum ValidatedPayload {
     SupersetDelete(SupersetDeletePayload),
     /// スーパーセットの組の種目の並べ替えの本文。
     SupersetReorder(SupersetReorderPayload),
+    /// ルーティンの作成の本文。
+    RoutineCreate(RoutineCreatePayload),
+    /// ルーティンの更新の本文。
+    RoutineUpdate(RoutineUpdatePayload),
+    /// ルーティンの削除の本文。
+    RoutineDelete(RoutineDeletePayload),
+    /// ルーティンの複製の本文。
+    RoutineCopy(RoutineCopyPayload),
 }
 
 /// 検証済みの操作。
@@ -565,6 +666,12 @@ pub enum SyncError {
     EmptySuperset,
     /// 組の種目の ID が重複している、または UUID v4 でない。
     InvalidSupersetMembers,
+    /// ルーティンの名称が空、または長すぎる。
+    InvalidRoutineName,
+    /// ルーティンの種目の ID、位置、スナップショットが不正である。
+    InvalidRoutineExercise,
+    /// ルーティンの種目の目標が不正である。
+    InvalidRoutineTarget,
 }
 
 impl SyncError {
@@ -598,6 +705,9 @@ impl SyncError {
             Self::InvalidSupersetId => "invalid_superset_id",
             Self::EmptySuperset => "empty_superset",
             Self::InvalidSupersetMembers => "invalid_superset_members",
+            Self::InvalidRoutineName => "invalid_routine_name",
+            Self::InvalidRoutineExercise => "invalid_routine_exercise",
+            Self::InvalidRoutineTarget => "invalid_routine_target",
         }
     }
 }
@@ -726,12 +836,94 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
                 .map_err(|_| SyncError::InvalidPayload)?;
             crate::sync_superset::validate_reorder(operation, payload)?
         }
+        OperationKind::RoutineCreate => {
+            let payload: RoutineCreatePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            if payload.routine_id != operation.training_id {
+                return Err(SyncError::PayloadIdMismatch);
+            }
+            if payload.position < 0 {
+                return Err(SyncError::InvalidRoutineExercise);
+            }
+            validate_routine_payload(&payload.name, &payload.exercises)?;
+            ValidatedPayload::RoutineCreate(payload)
+        }
+        OperationKind::RoutineUpdate => {
+            let payload: RoutineUpdatePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            if payload.routine_id != operation.training_id {
+                return Err(SyncError::PayloadIdMismatch);
+            }
+            if payload.position < 0 {
+                return Err(SyncError::InvalidRoutineExercise);
+            }
+            validate_routine_payload(&payload.name, &payload.exercises)?;
+            ValidatedPayload::RoutineUpdate(payload)
+        }
+        OperationKind::RoutineDelete => {
+            let payload: RoutineDeletePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            if payload.routine_id != operation.training_id {
+                return Err(SyncError::PayloadIdMismatch);
+            }
+            ValidatedPayload::RoutineDelete(payload)
+        }
+        OperationKind::RoutineCopy => {
+            let payload: RoutineCopyPayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            if payload.new_routine_id != operation.training_id {
+                return Err(SyncError::PayloadIdMismatch);
+            }
+            if !is_valid_uuid_v4(&payload.routine_id)
+                || payload.routine_id == payload.new_routine_id
+            {
+                return Err(SyncError::InvalidRoutineExercise);
+            }
+            if payload.position < 0 {
+                return Err(SyncError::InvalidRoutineExercise);
+            }
+            validate_routine_payload(&payload.name, &payload.exercises)?;
+            ValidatedPayload::RoutineCopy(payload)
+        }
     };
 
     Ok(ValidatedOperation {
         operation: operation.clone(),
         payload,
     })
+}
+
+fn validate_routine_payload(
+    name: &str,
+    exercises: &[RoutineExercisePayload],
+) -> Result<(), SyncError> {
+    let inputs = exercises
+        .iter()
+        .map(|exercise| RoutineExerciseInput {
+            id: exercise.routine_exercise_id.clone(),
+            exercise_id: exercise.exercise_id.clone(),
+            snapshot: exercise.snapshot.clone(),
+            position: exercise.position,
+            target: exercise.target.clone(),
+        })
+        .collect::<Vec<_>>();
+    validate_routine(name, &inputs).map_err(routine_error)
+}
+
+fn routine_error(error: RoutineError) -> SyncError {
+    match error {
+        RoutineError::EmptyName | RoutineError::NameTooLong => SyncError::InvalidRoutineName,
+        RoutineError::InvalidId | RoutineError::InvalidPosition | RoutineError::InvalidSnapshot => {
+            SyncError::InvalidRoutineExercise
+        }
+        RoutineError::InvalidSetCount
+        | RoutineError::InvalidWeight
+        | RoutineError::InvalidReps
+        | RoutineError::InvalidDuration
+        | RoutineError::InvalidTarget
+        | RoutineError::InvalidGrip
+        | RoutineError::InvalidRest => SyncError::InvalidRoutineTarget,
+    }
 }
 
 fn validate_source_ids(payload: &SessionCreatePayload) -> Result<(), SyncError> {
@@ -940,15 +1132,23 @@ pub fn pending_exercise_memo<'a>(
 }
 
 /// 同じトレーニングの未解決の作成操作を返す。
+/// 同じ対象の未解決の作成操作を返す。
+///
+/// ルーティンの複製は新しいルーティンの作成として扱い、後続の編集を複製の完了まで待たせる。
 pub fn unresolved_create<'a>(
     entries: &'a [OutboxEntry],
-    training_id: &str,
+    target_id: &str,
 ) -> Option<&'a OutboxEntry> {
     entries
         .iter()
         .filter(|entry| {
-            entry.operation.training_id == training_id
-                && entry.operation.kind == OperationKind::TrainingSessionCreate
+            entry.operation.training_id == target_id
+                && matches!(
+                    entry.operation.kind,
+                    OperationKind::TrainingSessionCreate
+                        | OperationKind::RoutineCreate
+                        | OperationKind::RoutineCopy
+                )
                 && matches!(
                     entry.state,
                     OutboxState::Pending

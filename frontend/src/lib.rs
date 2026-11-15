@@ -24,6 +24,7 @@ pub mod pwa;
 pub mod record_rail;
 pub mod rest_timer;
 pub mod routes;
+pub mod routine;
 pub mod screens;
 pub mod sound;
 pub mod storage;

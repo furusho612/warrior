@@ -33,6 +33,7 @@ mod one_rep_max;
 mod ownership;
 mod personal_bests;
 mod rest_timer;
+mod routine_start;
 mod set_drawer;
 mod set_events;
 mod set_inputs;
@@ -47,6 +48,7 @@ use memo_save::{run_save_loop, MemoSaveState};
 use ownership::RecordOwnership;
 use personal_bests::RecordPersonalBests;
 pub(crate) use rest_timer::{RecordWakeLock, RestSettingsPanel, RestTimerBar, RestTimerEvents};
+use routine_start::RoutineStart;
 use set_events::{SetCompleted, SetCompletedEvents};
 
 #[component]
@@ -90,6 +92,7 @@ pub fn RecordScreen() -> Element {
                     "{text(Key::RecordRetry)}"
                 }
             }
+            RoutineStart {}
         }
     }
 }
@@ -717,7 +720,13 @@ async fn read_record_state(training_id: &str) -> RecordState {
     let Ok(storage) = storage::current().await else {
         return RecordState::default();
     };
-    let entries = storage.outbox_entries().await.unwrap_or_default();
+    let entries = storage
+        .outbox_entries()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| !entry.operation.kind.is_routine())
+        .collect::<Vec<_>>();
     let session = storage.session(training_id).await.ok().flatten();
     let confirmed = session
         .as_ref()
@@ -929,6 +938,10 @@ fn operation_label(kind: OperationKind) -> &'static str {
         OperationKind::SupersetCreate => text(Key::RecordOperationSupersetCreate),
         OperationKind::SupersetDelete => text(Key::RecordOperationSupersetDelete),
         OperationKind::SupersetReorder => text(Key::RecordOperationSupersetReorder),
+        OperationKind::RoutineCreate => text(Key::RoutinesOperationCreate),
+        OperationKind::RoutineUpdate => text(Key::RoutinesOperationUpdate),
+        OperationKind::RoutineDelete => text(Key::RoutinesOperationDelete),
+        OperationKind::RoutineCopy => text(Key::RoutinesOperationCopy),
     }
 }
 

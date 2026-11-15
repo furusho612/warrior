@@ -30,6 +30,7 @@ mod discard;
 mod exercise;
 mod personal_best;
 mod rest_timer;
+mod routine;
 mod set;
 mod stopwatch;
 mod superset;
@@ -42,7 +43,7 @@ pub use stopwatch::StopwatchSide;
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
 /// スキーマの版。
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// 端末内の保存の誤り。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +145,8 @@ pub enum Store {
     Meta,
     /// 身体情報の体重のキャッシュ。
     BodyWeight,
+    /// ルーティン。
+    Routines,
 }
 
 impl Store {
@@ -159,6 +162,7 @@ impl Store {
             Self::Outbox => "outbox",
             Self::Meta => "meta",
             Self::BodyWeight => "body_weight",
+            Self::Routines => "routines",
         }
     }
 }
@@ -1031,7 +1035,11 @@ fn session_payload_memo(operation: &Operation) -> Result<String, StorageError> {
         | OperationKind::SupersetDelete
         | OperationKind::SupersetReorder
         | OperationKind::TrainingSessionBackfill
-        | OperationKind::TrainingSessionDelete => Err(StorageError::InvalidOperation(
+        | OperationKind::TrainingSessionDelete
+        | OperationKind::RoutineCreate
+        | OperationKind::RoutineUpdate
+        | OperationKind::RoutineDelete
+        | OperationKind::RoutineCopy => Err(StorageError::InvalidOperation(
             "the operation has no session memo".to_owned(),
         )),
     }
