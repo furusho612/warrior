@@ -3,6 +3,7 @@
 - Requirements: REQ-TMR-008, REQ-NFR-008
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-push-subscription
 
@@ -82,3 +83,7 @@ iOS でホーム画面に追加していない場合、プッシュ通知が届�
 `backend/warrior/tests/e2e_push.rs` に E2E を追加する。
 `backend/pbt/tests/push.rs` に endpoint の性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `push_subscriptions` を追加する。
+
+## 結果
+
+プッシュ通知の購読と Service Worker の通知表示を実装した。`push_subscriptions` を追加し、endpoint は HTTPS かつ `web.push.apple.com` か `fcm.googleapis.com` のときだけ受理する。ログアウトで端末の購読を消し、アカウントの削除で利用者の購読を消す。実際の配信は 0067 と 0038 で確かめる。

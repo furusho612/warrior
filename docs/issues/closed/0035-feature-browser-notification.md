@@ -3,6 +3,7 @@
 - Requirements: REQ-TMR-007, REQ-NFR-008
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-browser-notification
 
@@ -68,3 +69,7 @@
 `frontend/tests/notification.rs` にブラウザのテストを追加する。
 `backend/warrior/tests/e2e_notification.rs` に E2E を追加する。
 `backend/pbt/tests/notification.rs` に表示の条件の性質テストを置く。
+
+## 結果
+
+レスト終了のブラウザ通知を実装した。通知の許可は利用者が設定を有効にしたときだけ求め、通知の本文は固定文言で記録の内容を含めない。可視のときは通知を出さず音を鳴らし、拒否や API の不在でもタイマーの終了処理を止めない。通知を押したときは既存の画面へフォーカスする。

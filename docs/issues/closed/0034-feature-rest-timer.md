@@ -3,6 +3,7 @@
 - Requirements: REQ-TMR-001, REQ-TMR-002, REQ-TMR-003, REQ-TMR-004, REQ-TMR-005, REQ-TMR-006, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-rest-timer
 
@@ -84,3 +85,7 @@ ADR-007 は、セットの完了時にレストの終了予定時刻を決めて
 `frontend/tests/rest_timer.rs` にブラウザのテストを追加する。
 `backend/warrior/tests/e2e_rest_timer.rs` に E2E を追加する。
 `backend/pbt/tests/rest_timer.rs` に性質テストを置く。
+
+## 結果
+
+レストタイマーと画面の消灯防止を実装した。終了予定時刻を端末内に保存し、残り時間は表示のたびに現在時刻との差から計算する (ADR-007)。既定値は 90 秒で、種目ごととセットごとの指定を優先する。延長、短縮、スキップ、音と振動、Wake Lock の取り直しを実装した。終了予定時刻のサーバー保存は、0066 のレスト通知の予約と二重管理になるため行わず、端末内を正本にした。

@@ -3,6 +3,7 @@
 - Requirements: REQ-LIB-002, REQ-LIB-006, REQ-LIB-007, REQ-LIB-008
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-library-ui
 
@@ -75,3 +76,7 @@
 `backend/warrior/tests/e2e_library.rs` に E2E を追加する。
 `backend/pbt/tests/library.rs` に性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `exercise_favorites` を追加する。
+
+## 結果
+
+種目ライブラリの一覧、詳細、検索、お気に入りを実装した。一覧は部位区分、使用器具、種目名の五十音順で並び、カーソル方式でページングする。お気に入りは `0014_exercise_favorites.sql` で利用者ごとに保存する。詳細から `/exercises/:id/history` へ入れる。

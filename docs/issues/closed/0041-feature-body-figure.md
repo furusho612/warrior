@@ -3,6 +3,7 @@
 - Requirements: REQ-LIB-003, REQ-LIB-012
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-body-figure
 
@@ -77,3 +78,7 @@ SVG の中の ID は `wfig-` で始める。
 `frontend/tests/body_figure.rs` にブラウザのテストを追加する。
 `backend/pbt/tests/body_figure.rs` に性質テストを置く。
 `backend/warrior/tests/e2e_body_figure.rs` に E2E を追加する。
+
+## 結果
+
+種目の詳細に人体図を置き、主働筋と補助筋を色で区別した。SVG は `docs/design/assets/` の原本から不要なメタデータを除いて埋め込み、ID は `wfig-` で始める。グリップによる色の変更はシーテッドロウの表に限り、ライトとダークの両方で判別できる。画面からグリップを選ぶ経路は 0078 に切り出した。

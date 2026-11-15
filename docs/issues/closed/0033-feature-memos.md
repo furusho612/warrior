@@ -3,6 +3,7 @@
 - Requirements: REQ-REC-007, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-memos
 
@@ -68,3 +69,9 @@
 `frontend/src/screens/record.rs` にメモの入力を置く。
 `backend/warrior/tests/e2e_memo.rs` に E2E を追加する。
 `backend/pbt/tests/memo.rs` に性質テストを置く。
+
+## 結果
+
+トレーニングと種目のメモを実装した。`training_sessions.memo` は既存の列を使い、`training_exercises.memo` を `0015_training_exercise_memos.sql` で足した。2000 文字の上限、改行の保持、テキストとしての表示、AI のコンテキストへの包含を実装した。過去のトレーニングの編集からもメモを編集できる。
+
+統合後に、単体テスト、PBT、ブラウザのテストが通過した。

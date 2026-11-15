@@ -3,6 +3,7 @@
 - Requirements: REQ-MYP-006, REQ-MYP-007, REQ-NFR-010
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-account-settings
 
@@ -66,3 +67,7 @@
 `frontend/src/storage/` に、セッション Cookie、端末トークンの Cookie、設定、Cache API のキャッシュ (アプリシェルを含む) の削除と、0021 の `clear_account` の呼び出しを置く。
 `frontend/src/text.rs` にアカウントの文言と削除の確認の文言を追加する。
 `backend/warrior/tests/e2e_account_settings.rs` に E2E を追加する。
+
+## 結果
+
+アカウントの管理画面を実装した。マイページから `/account` を開き、パスキーの一覧の入口、ログアウト、削除の確認と実行を置いた。削除の確認には利用者に属するデータの一覧、取り消せないこと、バックアップから復元できる可能性を表示する。削除の後は Cookie、設定、Cache API、IndexedDB を消してログインへ移動する。削除の失敗時は再試行を出す。

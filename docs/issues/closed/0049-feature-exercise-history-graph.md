@@ -3,6 +3,7 @@
 - Requirements: REQ-ANL-001, REQ-ANL-002, REQ-ANL-003, REQ-ANL-004, REQ-LIB-008, REQ-SET-006, REQ-SET-011
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-exercise-history-graph
 
@@ -84,3 +85,7 @@
 `frontend/src/graph.rs` に SVG のグラフを置く。
 `backend/warrior/tests/e2e_history.rs` に E2E を追加する。
 `backend/pbt/tests/history.rs` に性質テストを置く。
+
+## 結果
+
+種目別の履歴とグラフを実装した。履歴は日付の新しい順 (同じ日は終了の時刻の新しい順) で、グリップとアタッチメントで絞り込める。グラフは 5 つの期間と指標を切り替え、同じ日の記録を指標に応じてまとめる。画面は `/exercises/:id/history`、API は `GET /api/exercises/:id/history` と `/graph`。

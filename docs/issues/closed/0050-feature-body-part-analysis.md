@@ -3,6 +3,7 @@
 - Requirements: REQ-ANL-005, REQ-ANL-006, REQ-ANL-007
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-body-part-analysis
 
@@ -75,3 +76,7 @@
 `frontend/src/graph.rs` に部位別のグラフを追加する。
 `backend/warrior/tests/e2e_body_part_analysis.rs` に E2E を追加する。
 `backend/pbt/tests/body_part_analysis.rs` に性質テストを置く。
+
+## 結果
+
+部位別のセット数と総重量の分析を実装した。週と月の境界は日本時間で、直前の同じ長さの期間との増減を出す。集計は記録時のスナップショットの部位区分を使い、ウォームアップ、ドロップセット、左右別、時間種目、補助筋の扱いを 0012 の計算に合わせた。画面は `/analysis`。

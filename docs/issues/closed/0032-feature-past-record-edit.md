@@ -3,6 +3,7 @@
 - Requirements: REQ-REC-006, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-15
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-past-record-edit
 
@@ -76,3 +77,9 @@ AI の評価と次回セットの提案は、生成時の記録に基づくた�
 `frontend/src/screens/calendar.rs` に、日付指定の追加の入口を置く。カレンダーの表示は 0048 が担う。
 `backend/warrior/tests/e2e_record_edit.rs` に E2E を追加する。
 `backend/pbt/tests/personal_best_rebuild.rs` に性質テストを置く。
+
+## 結果
+
+終了したトレーニングのセットの編集、削除、日付を指定した追加を実装した。履歴の一覧と編集の入口を `frontend/src/screens/history.rs` に置き、日付指定の追加は開始時刻を持たず所要時間を持つ。編集と削除の後は、影響する種目とグリップの組の自己ベストを、残っている記録から計算し直す。
+
+統合後に、単体テスト、PBT、`wrangler_record_edit`、ブラウザのテストが通過した。
