@@ -24,7 +24,7 @@ use super::exercise_view::{
 use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
 use super::set_table::{SetTable, SetTableState};
-use super::sets::{format_number, set_kind_text, SelectedSet, SetAction, SetView};
+use super::sets::{default_grip, format_number, set_kind_text, SelectedSet, SetAction, SetView};
 use super::superset_panel::{SupersetCandidate, SupersetPanel};
 use super::RecordSignals;
 use crate::previous as previous_api;
@@ -280,6 +280,8 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                     let down_id = view.record.id.clone();
                     let delete_id = view.record.id.clone();
                     let drawer_mode = view.snapshot.record_mode;
+                    let drawer_grip_mode = view.snapshot.grip_mode;
+                    let drawer_grip_options = view.snapshot.grip_options.clone();
                     let drawer_rows = view.sets.clone();
                     rsx! {
                         ExerciseDetail {
@@ -309,6 +311,8 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                         SetDrawer {
                             rows: drawer_rows,
                             mode: drawer_mode,
+                            grip_mode: drawer_grip_mode,
+                            grip_options: drawer_grip_options,
                             disabled: view_only,
                             on_action,
                         }
@@ -369,16 +373,6 @@ async fn load(
         let Ok(snapshot) = serde_json::from_str::<ExerciseSnapshot>(&record.snapshot) else {
             continue;
         };
-        let (previous, previous_error) =
-            match previous_api::fetch(&training_id, &snapshot.exercise_id, None, None).await {
-                Ok(response) => {
-                    if training_previous.is_none() {
-                        training_previous = response.training.clone();
-                    }
-                    (response.exercise, false)
-                }
-                Err(_) => (None, true),
-            };
         let stored_sets = match storage.training_sets(&record.id).await {
             Ok(sets) => sets,
             Err(_) => {
@@ -397,6 +391,25 @@ async fn load(
                 .map_or(loaded_sets, |view| view.sets.clone())
         } else {
             loaded_sets
+        };
+        let latest_grip = sets.last().and_then(SetView::grip);
+        let selection = default_grip(snapshot.grip_mode, &snapshot.grip_options, latest_grip);
+        let (grip, attachment) = previous_api::grip_query(selection);
+        let (previous, previous_error) = match previous_api::fetch(
+            &training_id,
+            &snapshot.exercise_id,
+            grip.as_deref(),
+            attachment.as_deref(),
+        )
+        .await
+        {
+            Ok(response) => {
+                if training_previous.is_none() {
+                    training_previous = response.training.clone();
+                }
+                (response.exercise, false)
+            }
+            Err(_) => (None, true),
         };
         let superset = supersets
             .iter()

@@ -7,7 +7,9 @@
 
 use dioxus::prelude::*;
 use warrior_core::duration;
-use warrior_core::exercise::{GripSelection, Laterality, RecordMode};
+use warrior_core::exercise::{
+    Attachment, GripMode, GripSelection, GripStyle, GripWidth, Laterality, RecordMode,
+};
 use warrior_core::previous::PreviousSet;
 use warrior_core::profile::bodyweight_set_weight;
 use warrior_core::rpe;
@@ -18,6 +20,7 @@ use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 pub(super) use super::set_inputs::Field;
 use crate::storage::StoredSet;
 use crate::text::{text, Key};
+use crate::training_set::grip_json;
 use crate::training_set::{SegmentSideValues, SetSegmentValues, SetValues};
 
 /// セットの表から送る操作。
@@ -50,6 +53,13 @@ pub(super) enum SetAction {
         set_id: String,
         /// 入力の値。
         value: String,
+    },
+    /// グリップを変える。
+    Grip {
+        /// セットの ID。
+        set_id: String,
+        /// 選んだグリップ。
+        grip: GripSelection,
     },
     /// セット種別を変える。
     Kind {
@@ -370,6 +380,17 @@ impl SetView {
     /// 完了しているか。
     pub(super) fn completed(&self) -> bool {
         self.record.completed != 0
+    }
+
+    /// このセットで選んだグリップ。
+    pub(super) fn grip(&self) -> Option<GripSelection> {
+        grip_selection(&self.record)
+    }
+
+    /// このセットのグリップを変える。
+    pub(super) fn set_grip(&mut self, grip: GripSelection) {
+        self.record.grip = grip_json(Some(grip));
+        self.bump();
     }
 
     /// 入力から保存する値を作る。空の回数は 0 とする。
@@ -695,6 +716,271 @@ fn rpe_text(value: Option<f64>) -> String {
 
 fn parse_duration(text: &str) -> Option<u32> {
     duration::parse(text)
+}
+
+/// 新しいセットに使うグリップを返す。
+///
+/// その種目の直近のセットの選択を既定にし、直近が無いときと選択肢に無いときは
+/// 選択肢の先頭にする。グリップを選ばない種目は None を返す。
+pub(super) fn default_grip(
+    mode: GripMode,
+    options: &[GripSelection],
+    latest: Option<GripSelection>,
+) -> Option<GripSelection> {
+    if mode == GripMode::None {
+        return None;
+    }
+    latest
+        .filter(|selection| options.contains(selection))
+        .or_else(|| options.first().copied())
+}
+
+/// 選択肢の中の握り方を、選択肢の順に返す。
+pub(super) fn grip_styles(options: &[GripSelection]) -> Vec<GripStyle> {
+    let mut styles = Vec::new();
+    for option in options {
+        if let GripSelection::Grip { style, .. } = option {
+            if !styles.contains(style) {
+                styles.push(*style);
+            }
+        }
+    }
+    styles
+}
+
+/// 指定した握り方で選べる手幅を、選択肢の順に返す。
+pub(super) fn grip_widths(options: &[GripSelection], style: GripStyle) -> Vec<GripWidth> {
+    let mut widths = Vec::new();
+    for option in options {
+        if let GripSelection::Grip {
+            style: option_style,
+            width,
+        } = option
+        {
+            if *option_style == style && !widths.contains(width) {
+                widths.push(*width);
+            }
+        }
+    }
+    widths
+}
+
+/// 選択肢の中のアタッチメントを、選択肢の順に返す。
+pub(super) fn grip_attachments(options: &[GripSelection]) -> Vec<Attachment> {
+    let mut attachments = Vec::new();
+    for option in options {
+        if let GripSelection::Attachment { attachment, .. } = option {
+            if !attachments.contains(attachment) {
+                attachments.push(*attachment);
+            }
+        }
+    }
+    attachments
+}
+
+/// 指定したアタッチメントで選べる握り方を、選択肢の順に返す。
+pub(super) fn attachment_styles(
+    options: &[GripSelection],
+    attachment: Attachment,
+) -> Vec<GripStyle> {
+    let mut styles = Vec::new();
+    for option in options {
+        if let GripSelection::Attachment {
+            attachment: option_attachment,
+            style: Some(style),
+        } = option
+        {
+            if *option_attachment == attachment && !styles.contains(style) {
+                styles.push(*style);
+            }
+        }
+    }
+    styles
+}
+
+/// 握り方を変えた選択を返す。同じ手幅が無ければ、その握り方の先頭にする。
+pub(super) fn grip_with_style(
+    selection: GripSelection,
+    style: GripStyle,
+    options: &[GripSelection],
+) -> GripSelection {
+    let width = match selection {
+        GripSelection::Grip { width, .. } => Some(width),
+        _ => None,
+    };
+    width
+        .and_then(|width| {
+            options.iter().copied().find(|option| {
+                matches!(
+                    option,
+                    GripSelection::Grip {
+                        style: option_style,
+                        width: option_width,
+                    } if *option_style == style && *option_width == width
+                )
+            })
+        })
+        .or_else(|| {
+            options.iter().copied().find(|option| {
+                matches!(
+                    option,
+                    GripSelection::Grip {
+                        style: option_style,
+                        ..
+                    } if *option_style == style
+                )
+            })
+        })
+        .unwrap_or(selection)
+}
+
+/// 手幅を変えた選択を返す。同じ握り方が無ければ、その手幅の先頭にする。
+pub(super) fn grip_with_width(
+    selection: GripSelection,
+    width: GripWidth,
+    options: &[GripSelection],
+) -> GripSelection {
+    let style = match selection {
+        GripSelection::Grip { style, .. } => Some(style),
+        _ => None,
+    };
+    style
+        .and_then(|style| {
+            options.iter().copied().find(|option| {
+                matches!(
+                    option,
+                    GripSelection::Grip {
+                        style: option_style,
+                        width: option_width,
+                    } if *option_style == style && *option_width == width
+                )
+            })
+        })
+        .or_else(|| {
+            options.iter().copied().find(|option| {
+                matches!(
+                    option,
+                    GripSelection::Grip {
+                        width: option_width,
+                        ..
+                    } if *option_width == width
+                )
+            })
+        })
+        .unwrap_or(selection)
+}
+
+/// アタッチメントを変えた選択を返す。同じ握り方が無ければ、そのアタッチメントの先頭にする。
+pub(super) fn attachment_with(
+    selection: GripSelection,
+    attachment: Attachment,
+    options: &[GripSelection],
+) -> GripSelection {
+    let style = match selection {
+        GripSelection::Attachment { style, .. } => style,
+        _ => None,
+    };
+    options
+        .iter()
+        .copied()
+        .find(|option| {
+            matches!(
+                option,
+                GripSelection::Attachment {
+                    attachment: option_attachment,
+                    style: option_style,
+                } if *option_attachment == attachment && *option_style == style
+            )
+        })
+        .or_else(|| {
+            options.iter().copied().find(|option| {
+                matches!(
+                    option,
+                    GripSelection::Attachment {
+                        attachment: option_attachment,
+                        ..
+                    } if *option_attachment == attachment
+                )
+            })
+        })
+        .unwrap_or(selection)
+}
+
+/// アタッチメントの握り方を変えた選択を返す。
+pub(super) fn attachment_with_style(
+    selection: GripSelection,
+    style: GripStyle,
+    options: &[GripSelection],
+) -> GripSelection {
+    let attachment = match selection {
+        GripSelection::Attachment { attachment, .. } => Some(attachment),
+        _ => None,
+    };
+    attachment
+        .and_then(|attachment| {
+            options.iter().copied().find(|option| {
+                matches!(
+                    option,
+                    GripSelection::Attachment {
+                        attachment: option_attachment,
+                        style: Some(option_style),
+                    } if *option_attachment == attachment && *option_style == style
+                )
+            })
+        })
+        .unwrap_or(selection)
+}
+
+/// グリップの選択を画面に出す文言にする。
+pub(super) fn grip_selection_label(selection: GripSelection) -> String {
+    match selection {
+        GripSelection::None => text(Key::RecordSetGripNone).to_owned(),
+        GripSelection::Grip { style, width } => {
+            format!("{} {}", grip_style_label(style), grip_width_label(width))
+        }
+        GripSelection::Attachment { attachment, style } => match style {
+            Some(style) => format!(
+                "{} / {}",
+                grip_style_label(style),
+                attachment_label(attachment)
+            ),
+            None => attachment_label(attachment).to_owned(),
+        },
+    }
+}
+
+/// 握り方の文言。
+pub(super) fn grip_style_label(style: GripStyle) -> &'static str {
+    match style {
+        GripStyle::Pronated => text(Key::RecordSetGripStylePronated),
+        GripStyle::Supinated => text(Key::RecordSetGripStyleSupinated),
+        GripStyle::Parallel => text(Key::RecordSetGripStyleParallel),
+    }
+}
+
+/// 手幅の文言。
+pub(super) fn grip_width_label(width: GripWidth) -> &'static str {
+    match width {
+        GripWidth::Wide => text(Key::RecordSetGripWidthWide),
+        GripWidth::Medium => text(Key::RecordSetGripWidthMedium),
+        GripWidth::Narrow => text(Key::RecordSetGripWidthNarrow),
+    }
+}
+
+/// アタッチメントの文言。
+pub(super) fn attachment_label(attachment: Attachment) -> &'static str {
+    match attachment {
+        Attachment::WideBar => text(Key::RecordSetAttachmentWideBar),
+        Attachment::StraightBar => text(Key::RecordSetAttachmentStraightBar),
+        Attachment::ParallelGrip => text(Key::RecordSetAttachmentParallelGrip),
+        Attachment::MagNarrowParallel => text(Key::RecordSetAttachmentMagNarrowParallel),
+        Attachment::MagNarrowOver => text(Key::RecordSetAttachmentMagNarrowOver),
+        Attachment::MagNarrowUnder => text(Key::RecordSetAttachmentMagNarrowUnder),
+        Attachment::MagMediumParallel => text(Key::RecordSetAttachmentMagMediumParallel),
+        Attachment::MagMediumOver => text(Key::RecordSetAttachmentMagMediumOver),
+        Attachment::MagMediumUnder => text(Key::RecordSetAttachmentMagMediumUnder),
+        Attachment::MagWideOver => text(Key::RecordSetAttachmentMagWideOver),
+    }
 }
 
 fn grip_selection(record: &SetRecordRow) -> Option<GripSelection> {

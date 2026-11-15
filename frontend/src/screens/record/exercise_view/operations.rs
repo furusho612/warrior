@@ -18,7 +18,8 @@ use warrior_core::training_record::SetRecordRow;
 use super::super::errors::{clear_set_error, set_load_error, set_set_error, RecordErrors};
 use super::super::set_events::{SetCompleted, SetCompletedEvents};
 use super::super::sets::{
-    is_lateral, kind_allowed, move_allowed, previous_values, Field, SegmentView, SetAction, SetView,
+    default_grip, is_lateral, kind_allowed, move_allowed, previous_values, Field, SegmentView,
+    SetAction, SetView,
 };
 use super::view::ExerciseView;
 use crate::ids::{new_uuid, now_iso};
@@ -26,6 +27,8 @@ use crate::storage::{self, StopwatchSide};
 use crate::sync;
 use crate::text::Key;
 use crate::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
+
+mod grip;
 
 /// セットごとの保存の状態。
 #[derive(Default)]
@@ -347,7 +350,11 @@ async fn add_set(
         completed: false,
         body_weight_kg: view.body_weight_kg,
         rpe: None,
-        grip: None,
+        grip: default_grip(
+            view.snapshot.grip_mode,
+            &view.snapshot.grip_options,
+            view.sets.last().and_then(SetView::grip),
+        ),
     };
     let (rows, operation) = match training_set::create(&training_id, &view_id, position, &values) {
         Ok(rows) => rows,
@@ -382,6 +389,9 @@ async fn add_set(
         return;
     }
     sync::flush_in_background();
+    if let Some(grip) = values.grip {
+        grip::refresh_after_add(&training_id, &view_id, &view, grip, views).await;
+    }
 }
 
 /// 入力の最新の値を端末内へ保存する。保存中に新しい入力があれば繰り返す。
@@ -941,6 +951,16 @@ pub(in crate::screens::record) fn dispatch(
         SetAction::Rpe { set_id, value } => {
             update_set_rpe(views, &set_id, value);
             spawn(save_set_loop(training_id, set_id, views, error, saver));
+        }
+        SetAction::Grip { set_id, grip } => {
+            spawn(grip::change_grip(
+                training_id,
+                set_id,
+                grip,
+                views,
+                error,
+                saver,
+            ));
         }
         SetAction::Kind { set_id, kind } => {
             if update_set_kind(views, &set_id, kind, error) {

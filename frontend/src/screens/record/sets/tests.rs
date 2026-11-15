@@ -1,9 +1,11 @@
 //! セットの入力と表のブラウザテスト。
 //!
-//! 対応する要求: `REQ-LIB-004`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-004`、`REQ-SET-006`、
-//! `REQ-SET-007`、`REQ-SET-010`。
+//! 対応する要求: `REQ-LIB-004`、`REQ-LIB-011`、`REQ-PRF-005`、`REQ-SET-003`、`REQ-SET-004`、
+//! `REQ-SET-006`、`REQ-SET-007`、`REQ-SET-010`、`REQ-SET-011`。
 
-use warrior_core::exercise::Laterality;
+use warrior_core::exercise::{
+    Attachment, GripMode, GripSelection, GripStyle, GripWidth, Laterality,
+};
 use warrior_core::previous::PreviousSet;
 use warrior_core::set_calc::{RecordMode, SetKind, SetSegment, SideValue};
 use warrior_core::training_record::SetSegmentRecord;
@@ -11,8 +13,10 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
 use super::{
-    detail_open_label, needs_segment_confirmation, parse_count_or_zero, previous_values,
-    set_numbers, SegmentView, SetView,
+    attachment_styles, attachment_with, attachment_with_style, default_grip, detail_open_label,
+    grip_attachments, grip_styles, grip_widths, grip_with_style, grip_with_width,
+    needs_segment_confirmation, parse_count_or_zero, previous_values, set_numbers, SegmentView,
+    SetView,
 };
 use crate::text::Key;
 
@@ -436,4 +440,167 @@ fn set_view(kind: &str) -> SetView {
         rpe: String::new(),
         revision: 0,
     }
+}
+
+fn grip_options() -> Vec<GripSelection> {
+    let mut options = Vec::new();
+    for style in GripStyle::ALL {
+        for width in GripWidth::ALL {
+            options.push(GripSelection::Grip { style, width });
+        }
+    }
+    options
+}
+
+fn attachment_options() -> Vec<GripSelection> {
+    let mut options = vec![
+        GripSelection::Attachment {
+            attachment: Attachment::WideBar,
+            style: Some(GripStyle::Pronated),
+        },
+        GripSelection::Attachment {
+            attachment: Attachment::WideBar,
+            style: Some(GripStyle::Supinated),
+        },
+        GripSelection::Attachment {
+            attachment: Attachment::StraightBar,
+            style: Some(GripStyle::Pronated),
+        },
+        GripSelection::Attachment {
+            attachment: Attachment::StraightBar,
+            style: Some(GripStyle::Supinated),
+        },
+    ];
+    for attachment in Attachment::ALL {
+        if !attachment.requires_style() {
+            options.push(GripSelection::Attachment {
+                attachment,
+                style: None,
+            });
+        }
+    }
+    options
+}
+
+#[wasm_bindgen_test]
+fn req_set_011_the_default_grip_uses_the_latest_set_selection() {
+    let options = grip_options();
+    let latest = GripSelection::Grip {
+        style: GripStyle::Supinated,
+        width: GripWidth::Narrow,
+    };
+    assert_eq!(
+        default_grip(GripMode::Grip, &options, Some(latest)),
+        Some(latest)
+    );
+}
+
+#[wasm_bindgen_test]
+fn req_set_011_the_default_grip_falls_back_to_the_first_option() {
+    let options = grip_options();
+    assert_eq!(
+        default_grip(GripMode::Grip, &options, None),
+        options.first().copied()
+    );
+    let outside = GripSelection::Attachment {
+        attachment: Attachment::MagWideOver,
+        style: None,
+    };
+    assert_eq!(
+        default_grip(GripMode::Grip, &options, Some(outside)),
+        options.first().copied()
+    );
+}
+
+#[wasm_bindgen_test]
+fn req_set_011_the_default_grip_is_none_for_an_exercise_without_grip() {
+    let options = grip_options();
+    assert_eq!(default_grip(GripMode::None, &options, None), None);
+    assert_eq!(
+        default_grip(GripMode::None, &options, options.first().copied()),
+        None
+    );
+}
+
+#[wasm_bindgen_test]
+fn req_lib_011_the_grip_choices_follow_the_options() {
+    let options = grip_options();
+    assert_eq!(grip_styles(&options), GripStyle::ALL.to_vec());
+    assert_eq!(
+        grip_widths(&options, GripStyle::Supinated),
+        GripWidth::ALL.to_vec()
+    );
+    let attachments = attachment_options();
+    assert_eq!(
+        grip_attachments(&attachments).first().copied(),
+        Some(Attachment::WideBar)
+    );
+    assert_eq!(
+        attachment_styles(&attachments, Attachment::StraightBar),
+        vec![GripStyle::Pronated, GripStyle::Supinated]
+    );
+}
+
+#[wasm_bindgen_test]
+fn req_lib_011_a_style_change_keeps_a_shared_width() {
+    let options = grip_options();
+    let selection = GripSelection::Grip {
+        style: GripStyle::Pronated,
+        width: GripWidth::Medium,
+    };
+    assert_eq!(
+        grip_with_style(selection, GripStyle::Supinated, &options),
+        GripSelection::Grip {
+            style: GripStyle::Supinated,
+            width: GripWidth::Medium,
+        }
+    );
+    assert_eq!(
+        grip_with_width(selection, GripWidth::Narrow, &options),
+        GripSelection::Grip {
+            style: GripStyle::Pronated,
+            width: GripWidth::Narrow,
+        }
+    );
+}
+
+#[wasm_bindgen_test]
+fn req_lib_011_an_attachment_change_keeps_a_shared_style() {
+    let options = attachment_options();
+    let selection = GripSelection::Attachment {
+        attachment: Attachment::WideBar,
+        style: Some(GripStyle::Pronated),
+    };
+    let changed = attachment_with(selection, Attachment::StraightBar, &options);
+    assert_eq!(
+        changed,
+        GripSelection::Attachment {
+            attachment: Attachment::StraightBar,
+            style: Some(GripStyle::Pronated),
+        }
+    );
+    assert_eq!(
+        attachment_with_style(changed, GripStyle::Supinated, &options),
+        GripSelection::Attachment {
+            attachment: Attachment::StraightBar,
+            style: Some(GripStyle::Supinated),
+        }
+    );
+}
+
+#[wasm_bindgen_test]
+fn req_set_011_a_copied_previous_set_keeps_the_grip() {
+    let mut previous = previous_set(None, 80.0);
+    previous.grip = Some(GripSelection::Grip {
+        style: GripStyle::Supinated,
+        width: GripWidth::Narrow,
+    });
+    let values = previous_values(
+        &previous,
+        RecordMode::WeightAndReps,
+        None,
+        Laterality::Bilateral,
+    )
+    .expect("the previous values");
+    assert_eq!(values.grip, previous.grip);
 }
