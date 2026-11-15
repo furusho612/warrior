@@ -303,7 +303,8 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                                 last,
                                 superset_members,
                                 superset_candidates,
-                                memo_revision: (signals.exercise_revision)(),
+                                memo_revision: signals.exercise_revision,
+                                tree_revision: signals.tree_revision,
                             },
                             actions: ExerciseDetailActions {
                                 on_action,
@@ -501,7 +502,9 @@ struct ExerciseDetailState {
     /// 組に加えられる種目。
     superset_candidates: Vec<SupersetCandidate>,
     /// 種目のメモを外部から戻した版。
-    memo_revision: u64,
+    memo_revision: Signal<u64>,
+    /// 記録全体を読み直した版。
+    tree_revision: Signal<u64>,
 }
 
 /// 種目の詳細の操作。
@@ -533,6 +536,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
         superset_members,
         superset_candidates,
         memo_revision,
+        tree_revision,
     } = state;
     let ExerciseDetailActions {
         on_action,
@@ -604,6 +608,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                 record: view.record.clone(),
                 disabled,
                 revision: memo_revision,
+                tree_revision,
             }
             SupersetPanel {
                 view_id: superset_view_id,
@@ -637,7 +642,8 @@ fn ExerciseMemoEditor(
     training_id: String,
     record: TrainingExerciseRecord,
     disabled: bool,
-    revision: u64,
+    revision: Signal<u64>,
+    tree_revision: Signal<u64>,
 ) -> Element {
     let saving = use_signal(|| false);
     let initial = record.memo.clone();
@@ -654,10 +660,12 @@ fn ExerciseMemoEditor(
     let reset_memo = record.memo.clone();
 
     use_effect(move || {
-        let _ = revision;
+        let _ = (revision)();
+        let _ = (tree_revision)();
         *reset_state.draft.borrow_mut() = reset_memo.clone();
     });
 
+    let revision_key = format!("{}-{}", (revision)(), (tree_revision)());
     let memo = record.memo.clone();
     let input_training_id = training_id.clone();
     let input_exercise_id = record.id.clone();
@@ -669,7 +677,7 @@ fn ExerciseMemoEditor(
 
     rsx! {
         div {
-            key: "{revision}",
+            key: "{revision_key}",
             class: "flex flex-col gap-2",
             label { class: "text-[11px] font-bold", r#for: "{field_id}", "{text(Key::RecordExerciseMemoLabel)}" }
             textarea {
