@@ -238,7 +238,11 @@ fn set_statements(
         | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SupersetCreate(_)
         | ValidatedPayload::SupersetDelete(_)
-        | ValidatedPayload::SupersetReorder(_) => None,
+        | ValidatedPayload::SupersetReorder(_)
+        | ValidatedPayload::RoutineCreate(_)
+        | ValidatedPayload::RoutineUpdate(_)
+        | ValidatedPayload::RoutineDelete(_)
+        | ValidatedPayload::RoutineCopy(_) => None,
     }
 }
 
@@ -448,7 +452,11 @@ async fn payload_rules(
         | ValidatedPayload::SetReorder(_)
         | ValidatedPayload::SupersetCreate(_)
         | ValidatedPayload::SupersetDelete(_)
-        | ValidatedPayload::SupersetReorder(_) => Ok(None),
+        | ValidatedPayload::SupersetReorder(_)
+        | ValidatedPayload::RoutineCreate(_)
+        | ValidatedPayload::RoutineUpdate(_)
+        | ValidatedPayload::RoutineDelete(_)
+        | ValidatedPayload::RoutineCopy(_) => Ok(None),
     }
 }
 

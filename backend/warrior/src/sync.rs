@@ -202,6 +202,12 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
             )
             .await?
         }
+        OperationKind::RoutineCreate
+        | OperationKind::RoutineUpdate
+        | OperationKind::RoutineDelete
+        | OperationKind::RoutineCopy => {
+            crate::routine::routine_batch(&db, &authenticated.id, &validated, &now).await?
+        }
     };
     let statements = match statements {
         BatchOutcome::Apply(statements) => statements,
@@ -322,6 +328,10 @@ fn zero_change_outcome(
             Some(session) if session.user_id == user_id => ZeroChangeOutcome::Forbidden,
             _ => ZeroChangeOutcome::NotFound,
         },
+        OperationKind::RoutineCreate
+        | OperationKind::RoutineUpdate
+        | OperationKind::RoutineDelete
+        | OperationKind::RoutineCopy => ZeroChangeOutcome::NotFound,
     }
 }
 
@@ -818,39 +828,49 @@ fn create_statements(
     now: &str,
 ) -> Vec<SqlStatement> {
     vec![
-        SqlStatement::new(
-            "INSERT INTO training_sessions \
-             (id, user_id, date, started_at, memo, source_kind, routine_id, program_day_id, \
-             custom_program_day_id, owner_terminal_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(id) DO UPDATE SET \
-             date = excluded.date, started_at = excluded.started_at, memo = excluded.memo, \
-             source_kind = excluded.source_kind, routine_id = excluded.routine_id, \
-             program_day_id = excluded.program_day_id, \
-             custom_program_day_id = excluded.custom_program_day_id, \
-             owner_terminal_id = COALESCE(training_sessions.owner_terminal_id, excluded.owner_terminal_id), \
-             updated_at = excluded.updated_at \
-             WHERE training_sessions.user_id = excluded.user_id \
-             AND (training_sessions.finished_at IS NOT NULL \
-                  OR training_sessions.owner_terminal_id IS NULL \
-                  OR training_sessions.owner_terminal_id = excluded.owner_terminal_id)",
-            vec![
-                SqlValue::Text(payload.id.clone()),
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(payload.date.clone()),
-                SqlValue::Text(payload.started_at.clone()),
-                SqlValue::Text(payload.memo.clone()),
-                SqlValue::Text(payload.source_kind.as_str().to_owned()),
-                optional_text(&payload.routine_id),
-                optional_text(&payload.program_day_id),
-                optional_text(&payload.custom_program_day_id),
-                SqlValue::Text(terminal_id.to_owned()),
-                SqlValue::Text(now.to_owned()),
-                SqlValue::Text(now.to_owned()),
-            ],
-        ),
+        session_create_statement(user_id, terminal_id, payload, now),
         applied_statement(user_id, operation, now),
     ]
+}
+
+/// トレーニングの作成の文。ルーティンからの開始もこの文を使う。
+pub(crate) fn session_create_statement(
+    user_id: &str,
+    terminal_id: &str,
+    payload: &SessionCreatePayload,
+    now: &str,
+) -> SqlStatement {
+    SqlStatement::new(
+        "INSERT INTO training_sessions \
+         (id, user_id, date, started_at, memo, source_kind, routine_id, program_day_id, \
+         custom_program_day_id, owner_terminal_id, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET \
+         date = excluded.date, started_at = excluded.started_at, memo = excluded.memo, \
+         source_kind = excluded.source_kind, routine_id = excluded.routine_id, \
+         program_day_id = excluded.program_day_id, \
+         custom_program_day_id = excluded.custom_program_day_id, \
+         owner_terminal_id = COALESCE(training_sessions.owner_terminal_id, excluded.owner_terminal_id), \
+         updated_at = excluded.updated_at \
+         WHERE training_sessions.user_id = excluded.user_id \
+         AND (training_sessions.finished_at IS NOT NULL \
+              OR training_sessions.owner_terminal_id IS NULL \
+              OR training_sessions.owner_terminal_id = excluded.owner_terminal_id)",
+        vec![
+            SqlValue::Text(payload.id.clone()),
+            SqlValue::Text(user_id.to_owned()),
+            SqlValue::Text(payload.date.clone()),
+            SqlValue::Text(payload.started_at.clone()),
+            SqlValue::Text(payload.memo.clone()),
+            SqlValue::Text(payload.source_kind.as_str().to_owned()),
+            optional_text(&payload.routine_id),
+            optional_text(&payload.program_day_id),
+            optional_text(&payload.custom_program_day_id),
+            SqlValue::Text(terminal_id.to_owned()),
+            SqlValue::Text(now.to_owned()),
+            SqlValue::Text(now.to_owned()),
+        ],
+    )
 }
 
 /// 直前の適用が変更した行があるときだけ、操作 ID を保存する。

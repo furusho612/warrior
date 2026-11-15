@@ -28,6 +28,7 @@ pub mod push;
 pub mod pwa;
 pub mod rate_limit;
 pub mod rest_timer;
+pub mod routine;
 pub mod rpe;
 pub mod set_calc;
 pub mod set_rules;

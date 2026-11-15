@@ -31,6 +31,7 @@ mod exercise;
 mod library;
 mod personal_best;
 mod rest_timer;
+mod routine;
 mod set;
 mod stopwatch;
 mod superset;
@@ -148,6 +149,8 @@ pub enum Store {
     Meta,
     /// 身体情報の体重のキャッシュ。
     BodyWeight,
+    /// ルーティン。
+    Routines,
 }
 
 impl Store {
@@ -164,6 +167,7 @@ impl Store {
             Self::ExerciseOutbox => "exercise_outbox",
             Self::Meta => "meta",
             Self::BodyWeight => "body_weight",
+            Self::Routines => "routines",
         }
     }
 }
@@ -1036,7 +1040,11 @@ fn session_payload_memo(operation: &Operation) -> Result<String, StorageError> {
         | OperationKind::SupersetDelete
         | OperationKind::SupersetReorder
         | OperationKind::TrainingSessionBackfill
-        | OperationKind::TrainingSessionDelete => Err(StorageError::InvalidOperation(
+        | OperationKind::TrainingSessionDelete
+        | OperationKind::RoutineCreate
+        | OperationKind::RoutineUpdate
+        | OperationKind::RoutineDelete
+        | OperationKind::RoutineCopy => Err(StorageError::InvalidOperation(
             "the operation has no session memo".to_owned(),
         )),
     }

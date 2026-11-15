@@ -113,7 +113,11 @@ pub async fn groups_before_operation(
         | ValidatedPayload::SetReorder(_)
         | ValidatedPayload::SupersetCreate(_)
         | ValidatedPayload::SupersetDelete(_)
-        | ValidatedPayload::SupersetReorder(_) => Vec::new(),
+        | ValidatedPayload::SupersetReorder(_)
+        | ValidatedPayload::RoutineCreate(_)
+        | ValidatedPayload::RoutineUpdate(_)
+        | ValidatedPayload::RoutineDelete(_)
+        | ValidatedPayload::RoutineCopy(_) => Vec::new(),
     };
     groups.dedup();
     Ok(groups)

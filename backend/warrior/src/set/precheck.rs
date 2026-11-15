@@ -110,7 +110,11 @@ pub(super) async fn precheck(
         | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SupersetCreate(_)
         | ValidatedPayload::SupersetDelete(_)
-        | ValidatedPayload::SupersetReorder(_) => Ok(None),
+        | ValidatedPayload::SupersetReorder(_)
+        | ValidatedPayload::RoutineCreate(_)
+        | ValidatedPayload::RoutineUpdate(_)
+        | ValidatedPayload::RoutineDelete(_)
+        | ValidatedPayload::RoutineCopy(_) => Ok(None),
     }
 }
 

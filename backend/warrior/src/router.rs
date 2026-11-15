@@ -15,6 +15,7 @@ use crate::history;
 use crate::library;
 use crate::profile;
 use crate::push;
+use crate::routine;
 use crate::sync;
 use crate::training_record;
 use crate::training_session;
@@ -66,6 +67,10 @@ pub const PROFILE_ROUTE_NAME: &str = "profile";
 pub const PUSH_PUBLIC_KEY_ROUTE_NAME: &str = "push_public_key";
 /// プッシュ通知の購読を登録し、解除する経路の名前。
 pub const PUSH_SUBSCRIPTIONS_ROUTE_NAME: &str = "push_subscriptions";
+/// ルーティンの一覧を返す経路の名前。
+pub const ROUTINES_ROUTE_NAME: &str = "routines";
+/// ルーティンからトレーニングを開始する経路の名前。
+pub const ROUTINE_START_ROUTE_NAME: &str = "routine_start";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -85,6 +90,8 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/me/passkeys", passkey::list)
         .delete_async("/api/account", account::delete)
         .post_async("/api/sync/operations", sync::apply_operation)
+        .get_async("/api/routines", routine::list)
+        .post_async("/api/routines/:id/start", routine::start)
         .post_async("/api/trainings/:id/finish", training_session::finish)
         .get_async("/api/trainings/:id/summary", training_session::summary)
         .get_async(
@@ -142,6 +149,9 @@ pub fn route_name(path: &str) -> &'static str {
     if exercise_id_path(path).is_some() {
         return EXERCISE_ROUTE_NAME;
     }
+    if path.starts_with("/api/routines/") && path.ends_with("/start") {
+        return ROUTINE_START_ROUTE_NAME;
+    }
     if path.starts_with("/api/trainings/") && path.ends_with("/finish") {
         return TRAINING_FINISH_ROUTE_NAME;
     }
@@ -175,6 +185,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/profile" => PROFILE_ROUTE_NAME,
         "/api/push/public-key" => PUSH_PUBLIC_KEY_ROUTE_NAME,
         "/api/push/subscriptions" => PUSH_SUBSCRIPTIONS_ROUTE_NAME,
+        "/api/routines" => ROUTINES_ROUTE_NAME,
         "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
         "/api/exercises" => EXERCISES_ROUTE_NAME,
         "/api/exercises/:id" => EXERCISE_ROUTE_NAME,
@@ -224,8 +235,9 @@ mod tests {
         EXERCISE_ROUTE_NAME, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME,
         HEALTH_ROUTE_NAME, LOGOUT_ROUTE_NAME, ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME,
         PROFILE_ROUTE_NAME, PUSH_PUBLIC_KEY_ROUTE_NAME, PUSH_SUBSCRIPTIONS_ROUTE_NAME,
-        SYNC_OPERATION_ROUTE_NAME, TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME,
-        TRAINING_PREVIOUS_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
+        ROUTINES_ROUTE_NAME, ROUTINE_START_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
+        TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_PREVIOUS_ROUTE_NAME,
+        TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
     };
     use super::{
         CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISE_GRAPH_ROUTE_NAME,
@@ -302,6 +314,20 @@ mod tests {
             route_name("/api/trainings/"),
             NOT_FOUND_ROUTE_NAME,
             "an empty training id is not a route"
+        );
+    }
+
+    #[test]
+    fn names_the_routine_routes() {
+        assert_eq!(route_name("/api/routines"), ROUTINES_ROUTE_NAME);
+        assert_eq!(
+            route_name("/api/routines/3f2504e0-4f89-41d3-9a0c-0305e82c5301/start"),
+            ROUTINE_START_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/routines/"),
+            NOT_FOUND_ROUTE_NAME,
+            "an empty routine path is not a route"
         );
     }
 

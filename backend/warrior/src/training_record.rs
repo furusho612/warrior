@@ -200,7 +200,11 @@ async fn record_response(db: &Db, training_id: &str, user_id: &str) -> Result<Re
     Response::from_json(&record)
 }
 
-async fn load_record(db: &Db, training_id: &str, user_id: &str) -> Result<Option<TrainingRecord>> {
+pub(crate) async fn load_record(
+    db: &Db,
+    training_id: &str,
+    user_id: &str,
+) -> Result<Option<TrainingRecord>> {
     let Some(row) = db
         .first::<SessionRecordRow>(&SqlStatement::new(
             SESSION_QUERY,
