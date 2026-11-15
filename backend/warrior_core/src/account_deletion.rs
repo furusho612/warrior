@@ -138,6 +138,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の端末のプッシュ購読。",
     },
     Table {
+        name: "export_jobs",
+        class: TableClass::Owned,
+        reason: "利用者の記録の CSV の書き出しのメタデータ。",
+    },
+    Table {
         name: "muscles",
         class: TableClass::Master,
         reason: "筋肉の単位。利用者に紐づかない。",
@@ -173,6 +178,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "passkeys",
     "auth_sessions",
     "push_subscriptions",
+    "export_jobs",
     "terminal_tokens",
     "superset_members",
     "set_segments",
@@ -232,6 +238,7 @@ mod tests {
             "oauth_states",
             "profiles",
             "push_subscriptions",
+            "export_jobs",
         ] {
             assert!(classify(name).is_some(), "{name} must be classified");
         }

@@ -9,6 +9,7 @@ use crate::account;
 use crate::analysis;
 use crate::auth::{oauth, passkey, session};
 use crate::calendar;
+use crate::export;
 use crate::history;
 use crate::library;
 use crate::profile;
@@ -28,6 +29,10 @@ pub const GOOGLE_CALLBACK_ROUTE_NAME: &str = "auth_google_callback";
 pub const LOGOUT_ROUTE_NAME: &str = "auth_logout";
 /// 現在の利用者を返す経路の名前。
 pub const ME_ROUTE_NAME: &str = "me";
+/// 記録の CSV の書き出しを作る経路の名前。
+pub const EXPORTS_ROUTE_NAME: &str = "exports";
+/// 記録の CSV をダウンロードする経路の名前。
+pub const EXPORT_DOWNLOAD_ROUTE_NAME: &str = "export_download";
 /// 同期の操作を適用する経路の名前。
 pub const SYNC_OPERATION_ROUTE_NAME: &str = "sync_operation";
 /// トレーニングを終了する経路の名前。
@@ -73,6 +78,8 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/auth/google/callback", oauth::callback)
         .post_async("/api/auth/logout", session::logout)
         .get_async("/api/me", session::me)
+        .post_async("/api/exports", export::create)
+        .get_async("/api/exports/:id", export::download)
         .get_async("/api/profile", profile::get)
         .put_async("/api/profile", profile::update)
         .get_async("/api/push/public-key", push::public_key)
@@ -125,6 +132,9 @@ pub fn route_name(path: &str) -> &'static str {
     if path.starts_with("/api/me/passkeys/") {
         return "passkeys_delete";
     }
+    if export_id_path(path).is_some() {
+        return EXPORT_DOWNLOAD_ROUTE_NAME;
+    }
     if path.starts_with("/api/exercises/") && path.ends_with("/favorite") {
         return EXERCISE_FAVORITE_ROUTE_NAME;
     }
@@ -161,6 +171,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/auth/google/callback" => GOOGLE_CALLBACK_ROUTE_NAME,
         "/api/auth/logout" => LOGOUT_ROUTE_NAME,
         "/api/me" => ME_ROUTE_NAME,
+        "/api/exports" => EXPORTS_ROUTE_NAME,
         "/api/profile" => PROFILE_ROUTE_NAME,
         "/api/push/public-key" => PUSH_PUBLIC_KEY_ROUTE_NAME,
         "/api/push/subscriptions" => PUSH_SUBSCRIPTIONS_ROUTE_NAME,
@@ -204,6 +215,15 @@ fn exercise_id_path(path: &str) -> Option<&str> {
     Some(rest)
 }
 
+/// `/api/exports/:id` の形の経路から、書き出しの ID の部分を取り出す。
+fn export_id_path(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api/exports/")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(rest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::ANALYSIS_BODY_PARTS_ROUTE_NAME;
@@ -219,6 +239,7 @@ mod tests {
         CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISE_GRAPH_ROUTE_NAME,
         EXERCISE_HISTORY_ROUTE_NAME,
     };
+    use super::{EXPORTS_ROUTE_NAME, EXPORT_DOWNLOAD_ROUTE_NAME};
 
     #[test]
     fn names_the_health_route() {
@@ -291,6 +312,16 @@ mod tests {
             NOT_FOUND_ROUTE_NAME,
             "an empty training id is not a route"
         );
+    }
+
+    #[test]
+    fn names_the_export_routes() {
+        assert_eq!(route_name("/api/exports"), EXPORTS_ROUTE_NAME);
+        assert_eq!(
+            route_name("/api/exports/3f2504e0-4f89-41d3-9a0c-0305e82c6601"),
+            EXPORT_DOWNLOAD_ROUTE_NAME
+        );
+        assert_eq!(route_name("/api/exports/"), NOT_FOUND_ROUTE_NAME);
     }
 
     #[test]

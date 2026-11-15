@@ -860,6 +860,7 @@ mod tests {
             segment: crate::stored_sets::SetSegmentRow {
                 training_id: training_id.to_owned(),
                 training_date: None,
+                training_memo: None,
                 training_exercise_id: format!("{training_id}-exercise"),
                 snapshot: serde_json::to_string(&snapshot(&exercise(GripMode::None)))
                     .expect("a serializable snapshot"),

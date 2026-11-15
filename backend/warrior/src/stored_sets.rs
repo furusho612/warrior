@@ -24,6 +24,9 @@ pub(crate) struct SetSegmentRow {
     /// トレーニングの日付 (日本時間)。自己ベストの計算し直しの読み取りだけが持つ。
     #[serde(default)]
     pub(crate) training_date: Option<String>,
+    /// トレーニングのメモ。CSV の書き出しの読み取りだけが持つ。
+    #[serde(default)]
+    pub(crate) training_memo: Option<String>,
     pub(crate) training_exercise_id: String,
     pub(crate) snapshot: String,
     pub(crate) training_exercise_memo: String,
@@ -61,6 +64,18 @@ pub struct StoredExercise {
     pub set_grips: Vec<Option<String>>,
     /// セットごとの記録した時点の体重 (kg)。`sets` と同じ並びである。
     pub set_body_weights: Vec<Option<f64>>,
+}
+
+impl StoredExercise {
+    /// セットのグリップまたはアタッチメントの選択。保存された JSON を復元する。
+    ///
+    /// 保存時に検証した値だけを持つ。復元できない値では None を返す。
+    pub fn grip_selection(&self, index: usize) -> Option<GripSelection> {
+        match self.set_grips.get(index)? {
+            None => Some(GripSelection::None),
+            Some(text) => serde_json::from_str(text).ok(),
+        }
+    }
 }
 
 pub(crate) const SET_SEGMENT_COLUMNS: &str = "te.training_id AS training_id, \
@@ -118,15 +133,17 @@ pub async fn load_day(db: &Db, user_id: &str, date: &str) -> Result<Vec<StoredEx
     build_exercises(rows).map_err(invalid_stored_data)
 }
 
-/// 終了したトレーニング 1 つ分の日付と種目、セット。
+/// トレーニング 1 つ分の日付、メモ、種目、セット。
 ///
-/// 自己ベストの計算し直しは、残っている全ての記録を日付の昇順で読む。
+/// 自己ベストの計算し直しと CSV の書き出しは、日付の昇順で読む。
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredTrainingSets {
     /// トレーニングの ID。
     pub training_id: String,
     /// トレーニングの日付 (日本時間)。
     pub date: String,
+    /// トレーニングのメモ。
+    pub memo: String,
     /// 種目とセットの記録。
     pub exercises: Vec<StoredExercise>,
 }
@@ -170,7 +187,8 @@ pub async fn load_finished_for_exercises(
             .map(|exercise_id| SqlValue::Text(exercise_id.clone())),
     );
     let statement = format!(
-        "SELECT {SET_SEGMENT_COLUMNS}, ts.date AS training_date FROM training_sessions ts \
+        "SELECT {SET_SEGMENT_COLUMNS}, ts.date AS training_date, ts.memo AS training_memo \
+         FROM training_sessions ts \
          JOIN training_exercises te ON te.training_id = ts.id AND te.user_id = ts.user_id \
          JOIN sets s ON s.training_exercise_id = te.id AND s.completed = 1 \
           AND s.user_id = ts.user_id \
@@ -186,32 +204,72 @@ pub async fn load_finished_for_exercises(
     build_training_sets(rows).map_err(invalid_stored_data)
 }
 
+/// 利用者の全てのトレーニングの日付、メモ、種目、セットを読む。
+///
+/// CSV の書き出しは、終了していないトレーニングも含めて記録したセットをすべて読む。
+pub async fn load_all(db: &Db, user_id: &str) -> Result<Vec<StoredTrainingSets>> {
+    let statement = format!(
+        "SELECT {SET_SEGMENT_COLUMNS}, ts.date AS training_date, ts.memo AS training_memo \
+         FROM training_sessions ts \
+         JOIN training_exercises te ON te.training_id = ts.id AND te.user_id = ts.user_id \
+         JOIN sets s ON s.training_exercise_id = te.id AND s.completed = 1 \
+          AND s.user_id = ts.user_id \
+         LEFT JOIN set_segments sg ON sg.set_id = s.id AND sg.user_id = ts.user_id \
+         WHERE ts.user_id = ? \
+         ORDER BY ts.date, ts.created_at, ts.id, te.position, s.position, sg.position"
+    );
+    let rows = db
+        .all(&SqlStatement::new(
+            statement,
+            vec![SqlValue::Text(user_id.to_owned())],
+        ))
+        .await?
+        .results::<SetSegmentRow>()?;
+    build_training_sets(rows).map_err(invalid_stored_data)
+}
+
+struct TrainingRows {
+    training_id: String,
+    date: String,
+    memo: String,
+    rows: Vec<SetSegmentRow>,
+}
+
 fn build_training_sets(
     rows: Vec<SetSegmentRow>,
 ) -> std::result::Result<Vec<StoredTrainingSets>, BuildSetsError> {
-    let mut groups = Vec::<(String, String, Vec<SetSegmentRow>)>::new();
+    let mut groups = Vec::<TrainingRows>::new();
     for row in rows {
         let Some(date) = row.training_date.clone() else {
             return Err(BuildSetsError::MissingTrainingDate);
         };
+        let Some(memo) = row.training_memo.clone() else {
+            return Err(BuildSetsError::MissingTrainingMemo);
+        };
         let index = match groups
             .iter()
-            .position(|(training_id, _, _)| *training_id == row.training_id)
+            .position(|group| group.training_id == row.training_id)
         {
             Some(index) => index,
             None => {
-                groups.push((row.training_id.clone(), date, Vec::new()));
+                groups.push(TrainingRows {
+                    training_id: row.training_id.clone(),
+                    date,
+                    memo,
+                    rows: Vec::new(),
+                });
                 groups.len() - 1
             }
         };
-        groups[index].2.push(row);
+        groups[index].rows.push(row);
     }
     let mut trainings = Vec::with_capacity(groups.len());
-    for (training_id, date, rows) in groups {
+    for group in groups {
         trainings.push(StoredTrainingSets {
-            exercises: build_training(&training_id, rows)?,
-            training_id,
-            date,
+            exercises: build_training(&group.training_id, group.rows)?,
+            training_id: group.training_id,
+            date: group.date,
+            memo: group.memo,
         });
     }
     Ok(trainings)
@@ -232,6 +290,8 @@ pub(crate) enum BuildSetsError {
     InvalidSetRecord(SetValidationError),
     /// トレーニングの日付が無い。
     MissingTrainingDate,
+    /// トレーニングのメモが無い。
+    MissingTrainingMemo,
 }
 
 struct ExerciseGroup {
@@ -742,6 +802,7 @@ mod tests {
         SetSegmentRow {
             training_id: training_id.to_owned(),
             training_date: None,
+            training_memo: None,
             training_exercise_id: exercise_id.to_owned(),
             snapshot: snapshot_json(exercise_id, record_mode, "bilateral"),
             training_exercise_memo: String::new(),
@@ -775,6 +836,7 @@ mod tests {
         SetSegmentRow {
             training_id: training_id.to_owned(),
             training_date: None,
+            training_memo: None,
             training_exercise_id: exercise_id.to_owned(),
             snapshot: snapshot_json(exercise_id, "weight_and_reps", "unilateral"),
             training_exercise_memo: String::new(),
@@ -806,6 +868,7 @@ mod tests {
         SetSegmentRow {
             training_id: "training-a".to_owned(),
             training_date: None,
+            training_memo: None,
             training_exercise_id: "exercise-bodyweight".to_owned(),
             snapshot: snapshot_json("exercise-bodyweight", "bodyweight_and_reps", "bilateral"),
             training_exercise_memo: String::new(),
