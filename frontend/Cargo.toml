@@ -15,6 +15,11 @@ wasm-bindgen-futures = "0.4"
 warrior_core = { path = "../backend/warrior_core" }
 # dioxus-web は host のビルドでも履歴の API を使うため、Location を明示する。
 web-sys = { version = "0.3", features = [
+  "AudioContext",
+  "AudioContextState",
+  "AudioDestinationNode",
+  "AudioNode",
+  "AudioParam",
   "Crypto",
   "CssStyleDeclaration",
   "Document",
@@ -23,6 +28,7 @@ web-sys = { version = "0.3", features = [
   "Element",
   "Event",
   "EventTarget",
+  "GainNode",
   "Headers",
   "HtmlElement",
   "IdbCursor",
@@ -41,6 +47,7 @@ web-sys = { version = "0.3", features = [
   "Navigator",
   "Node",
   "NodeList",
+  "OscillatorNode",
   "console",
   "Request",
   "RequestInit",
@@ -49,6 +56,7 @@ web-sys = { version = "0.3", features = [
   "ServiceWorkerContainer",
   "ServiceWorkerRegistration",
   "StorageManager",
+  "VisibilityState",
   "Window",
 ] }
 
