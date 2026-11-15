@@ -55,18 +55,7 @@ const LIGHT: FigureColors = FigureColors {
 
 #[wasm_bindgen_test]
 fn req_lib_003_and_012_every_muscle_unit_changes_color_with_the_theme() {
-    let document = web_sys::window()
-        .and_then(|window| window.document())
-        .expect("a browser must have a document");
-    let container = document
-        .create_element("div")
-        .expect("a div must be created");
-    document
-        .document_element()
-        .expect("the root element")
-        .unchecked_ref::<web_sys::Node>()
-        .append_child(container.unchecked_ref::<web_sys::Node>())
-        .expect("the container must be attached");
+    let container = attach_container();
 
     for colors in [&DARK, &LIGHT] {
         container
@@ -118,27 +107,12 @@ fn req_lib_003_and_012_every_muscle_unit_changes_color_with_the_theme() {
         }
     }
 
-    container
-        .parent_node()
-        .expect("the container must have a parent")
-        .remove_child(&container)
-        .expect("the container must be removed");
+    detach_container(&container);
 }
 
 #[wasm_bindgen_test]
 fn req_lib_003_the_front_and_back_figures_share_a_page_without_collisions() {
-    let document = web_sys::window()
-        .and_then(|window| window.document())
-        .expect("a browser must have a document");
-    let container = document
-        .create_element("div")
-        .expect("a div must be created");
-    document
-        .document_element()
-        .expect("the root element")
-        .unchecked_ref::<web_sys::Node>()
-        .append_child(container.unchecked_ref::<web_sys::Node>())
-        .expect("the container must be attached");
+    let container = attach_container();
     container
         .set_attribute("style", &figure_style(&DARK))
         .expect("the figure colors must be set");
@@ -174,10 +148,30 @@ fn req_lib_003_the_front_and_back_figures_share_a_page_without_collisions() {
     unique.dedup();
     assert_eq!(unique.len(), ids.len());
 
+    detach_container(&container);
+}
+
+fn attach_container() -> web_sys::Element {
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("a browser must have a document");
+    let container = document
+        .create_element("div")
+        .expect("a div must be created");
+    document
+        .body()
+        .expect("a browser must have a body")
+        .unchecked_ref::<web_sys::Node>()
+        .append_child(container.unchecked_ref::<web_sys::Node>())
+        .expect("the container must be attached");
+    container
+}
+
+fn detach_container(container: &web_sys::Element) {
     container
         .parent_node()
         .expect("the container must have a parent")
-        .remove_child(&container)
+        .remove_child(container)
         .expect("the container must be removed");
 }
 
