@@ -10,22 +10,24 @@ use dioxus::prelude::*;
 use warrior_core::exercise::RecordMode;
 use warrior_core::rpe;
 use warrior_core::set_calc::SetKind;
-use warrior_core::set_rules;
 use warrior_core::superset::rest_timer_starts;
 use warrior_core::sync::Operation;
 use warrior_core::training_record::SetRecordRow;
 
-use super::super::errors::{clear_set_error, set_load_error, set_set_error, RecordErrors};
+use super::super::errors::{clear_set_error, set_set_error, RecordErrors};
 use super::super::set_events::{SetCompleted, SetCompletedEvents};
 use super::super::sets::{
-    is_lateral, kind_allowed, move_allowed, previous_values, Field, SegmentView, SetAction, SetView,
+    is_lateral, kind_allowed, move_allowed, Field, SegmentView, SetAction, SetView,
 };
 use super::view::ExerciseView;
 use crate::ids::{new_uuid, now_iso};
 use crate::storage::{self, StopwatchSide};
 use crate::sync;
 use crate::text::Key;
-use crate::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
+use crate::training_set::{self, SegmentSideValues, SetValues};
+
+mod grip;
+mod set_io;
 
 /// セットごとの保存の状態。
 #[derive(Default)]
@@ -291,7 +293,7 @@ async fn delete_segment(
         .retain(|segment| segment.record.id != segment_id);
     if set.segments.is_empty() {
         views.set(list);
-        delete_set(training_id, set_id, views, error).await;
+        set_io::delete_set(training_id, set_id, views, error).await;
         return;
     }
     for (index, segment) in set.segments.iter_mut().enumerate() {
@@ -299,264 +301,7 @@ async fn delete_segment(
     }
     set.bump();
     views.set(list);
-    save_set_loop(training_id, set_id, views, error, saver).await;
-}
-
-/// セットの追加を画面へ反映し、端末内へ保存する。
-async fn add_set(
-    training_id: String,
-    view_id: String,
-    mut views: Signal<Vec<ExerciseView>>,
-    error: Signal<RecordErrors>,
-) {
-    let Some(view) = (views)()
-        .iter()
-        .find(|view| view.record.id == view_id)
-        .cloned()
-    else {
-        return;
-    };
-    let position = view
-        .sets
-        .iter()
-        .map(|set| set.record.position)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
-    let lateral = is_lateral(view.snapshot.laterality, view.snapshot.record_mode);
-    let side = lateral.then_some(SegmentSideValues {
-        weight_kg: match view.snapshot.record_mode {
-            RecordMode::BodyweightAndReps => Some(0.0),
-            RecordMode::WeightAndReps | RecordMode::Time => None,
-        },
-        reps: 0,
-        duration_seconds: None,
-    });
-    let values = SetValues {
-        kind: SetKind::Normal,
-        mode: view.snapshot.record_mode,
-        segments: vec![SetSegmentValues {
-            weight_kg: 0.0,
-            reps: 0,
-            momentum_reps: 0,
-            assisted_reps: 0,
-            duration_seconds: None,
-            left: side,
-            right: side,
-        }],
-        completed: false,
-        body_weight_kg: view.body_weight_kg,
-        rpe: None,
-        grip: None,
-    };
-    let (rows, operation) = match training_set::create(&training_id, &view_id, position, &values) {
-        Ok(rows) => rows,
-        Err(_) => {
-            set_load_error(error, Key::RecordSetSaveFailed);
-            return;
-        }
-    };
-    let set_view = SetView::from_rows(rows.set.clone(), rows.segments.clone());
-    {
-        let mut list = (views)();
-        if let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) {
-            view.sets.push(set_view);
-        }
-        views.set(list);
-    }
-    let result = match storage::current().await {
-        Ok(storage) => {
-            storage
-                .save_set_create(&rows.set, &rows.segments, &operation)
-                .await
-        }
-        Err(error) => Err(error),
-    };
-    if result.is_err() {
-        let mut list = (views)();
-        if let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) {
-            view.sets.retain(|set| set.record.id != rows.set.id);
-        }
-        views.set(list);
-        set_load_error(error, Key::RecordSetSaveFailed);
-        return;
-    }
-    sync::flush_in_background();
-}
-
-/// 入力の最新の値を端末内へ保存する。保存中に新しい入力があれば繰り返す。
-async fn save_set_loop(
-    training_id: String,
-    set_id: String,
-    views: Signal<Vec<ExerciseView>>,
-    error: Signal<RecordErrors>,
-    saver: SetSaver,
-) {
-    if !saver.start(&set_id) {
-        return;
-    }
-    let Some((mode, lateral)) = settings_for_set(views, &set_id) else {
-        saver.finish(&set_id);
-        return;
-    };
-    while let Some(set) = find_set(views, &set_id) {
-        if saver.is_stopped(&set_id) || set.completed() {
-            break;
-        }
-        if let Some(key) = set.validation_error(lateral) {
-            set_set_error(error, &set_id, key);
-            break;
-        }
-        let revision = set.revision;
-        let values = set.values(lateral, mode);
-        let segment_records = set
-            .segments
-            .iter()
-            .map(|segment| segment.record.clone())
-            .collect::<Vec<_>>();
-        let (rows, operation) =
-            match training_set::update(&training_id, &set.record, &segment_records, &values) {
-                Ok(rows) => rows,
-                Err(_) => {
-                    set_set_error(error, &set_id, Key::RecordSetSaveFailed);
-                    break;
-                }
-            };
-        let result = match storage::current().await {
-            Ok(storage) => {
-                if saving_stopped(views, &saver, &set_id) {
-                    saver.finish(&set_id);
-                    return;
-                }
-                storage
-                    .save_set_update(&rows.set, &rows.segments, &operation)
-                    .await
-            }
-            Err(error) => Err(error),
-        };
-        if result.is_err() {
-            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
-            break;
-        }
-        clear_set_error(error, &set_id);
-        sync::flush_in_background();
-        if saving_stopped(views, &saver, &set_id) {
-            saver.finish(&set_id);
-            return;
-        }
-        match find_set(views, &set_id) {
-            Some(latest) if latest.revision == revision => {
-                // 版を確かめてから保存の印を外すまでの間にも入力が届く。
-                // 印を外した後にもう一度確かめ、変わっていれば自分で続ける。
-                saver.finish(&set_id);
-                if saving_stopped(views, &saver, &set_id) {
-                    return;
-                }
-                match find_set(views, &set_id) {
-                    Some(latest) if latest.revision == revision => return,
-                    _ => {
-                        if !saver.start(&set_id) {
-                            return;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    saver.finish(&set_id);
-}
-
-/// 前回の値をセットの行としてコピーする。
-async fn copy_sets(
-    training_id: String,
-    view_id: String,
-    mut views: Signal<Vec<ExerciseView>>,
-    error: Signal<RecordErrors>,
-) {
-    let Some(view) = (views)()
-        .iter()
-        .find(|view| view.record.id == view_id)
-        .cloned()
-    else {
-        return;
-    };
-    let Some(previous) = view.previous.as_ref() else {
-        return;
-    };
-    let values = previous
-        .sets
-        .iter()
-        .filter_map(|set| {
-            previous_values(
-                set,
-                view.snapshot.record_mode,
-                view.body_weight_kg,
-                view.snapshot.laterality,
-            )
-        })
-        .collect::<Vec<_>>();
-    if values.is_empty() {
-        return;
-    }
-    let storage = match storage::current().await {
-        Ok(storage) => storage,
-        Err(_) => {
-            set_load_error(error, Key::RecordSetSaveFailed);
-            return;
-        }
-    };
-    // 末尾から削除する。削除するセットの直後は常に空であり、直後のドロップセットが
-    // あるセットの削除を避けられる。
-    for set in view.sets.iter().rev() {
-        let operation = match training_set::delete(&training_id, &set.record.id) {
-            Ok(operation) => operation,
-            Err(_) => {
-                set_load_error(error, Key::RecordSetSaveFailed);
-                return;
-            }
-        };
-        if storage
-            .save_set_delete(&training_id, &set.record.id, &operation)
-            .await
-            .is_err()
-        {
-            set_load_error(error, Key::RecordSetSaveFailed);
-            restore_sets(views, &view_id, error).await;
-            return;
-        }
-    }
-    let mut copied = Vec::new();
-    for (index, values) in values.iter().enumerate() {
-        let position = i64::try_from(index).unwrap_or(i64::MAX).saturating_add(1);
-        let (rows, operation) = match training_set::create(&training_id, &view_id, position, values)
-        {
-            Ok(rows) => rows,
-            Err(_) => {
-                set_load_error(error, Key::RecordSetSaveFailed);
-                restore_sets(views, &view_id, error).await;
-                return;
-            }
-        };
-        if storage
-            .save_set_create(&rows.set, &rows.segments, &operation)
-            .await
-            .is_err()
-        {
-            set_load_error(error, Key::RecordSetSaveFailed);
-            restore_sets(views, &view_id, error).await;
-            return;
-        }
-        copied.push(SetView::from_rows(rows.set, rows.segments));
-    }
-    {
-        let mut list = (views)();
-        if let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) {
-            view.sets = copied;
-        }
-        views.set(list);
-    }
-    sync::flush_in_background();
+    set_io::save_set_loop(training_id, set_id, views, error, saver).await;
 }
 
 /// セットの完了の状態を変え、完了したらイベントを 1 回発行する。
@@ -734,57 +479,6 @@ fn update_completed(mut views: Signal<Vec<ExerciseView>>, set_id: &str, complete
     views.set(list);
 }
 
-/// セットを画面から消し、端末内の行と送信待ちの列から削除する。
-async fn delete_set(
-    training_id: String,
-    set_id: String,
-    mut views: Signal<Vec<ExerciseView>>,
-    error: Signal<RecordErrors>,
-) {
-    let Some((view, _set)) = find_view_and_set(views, &set_id) else {
-        return;
-    };
-    let next = view
-        .sets
-        .iter()
-        .position(|set| set.record.id == set_id)
-        .and_then(|index| view.sets.get(index + 1))
-        .map(SetView::kind);
-    if !set_rules::delete_set_allowed(next) {
-        set_set_error(error, &set_id, Key::RecordSetDeleteBlockedByDrop);
-        return;
-    }
-    let operation = match training_set::delete(&training_id, &set_id) {
-        Ok(operation) => operation,
-        Err(_) => {
-            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
-            return;
-        }
-    };
-    {
-        let mut list = (views)();
-        for view in list.iter_mut() {
-            view.sets.retain(|set| set.record.id != set_id);
-        }
-        views.set(list);
-    }
-    let result = match storage::current().await {
-        Ok(storage) => {
-            storage
-                .save_set_delete(&training_id, &set_id, &operation)
-                .await
-        }
-        Err(error) => Err(error),
-    };
-    if result.is_err() {
-        set_set_error(error, &set_id, Key::RecordSetSaveFailed);
-        restore_sets(views, &view.record.id, error).await;
-        return;
-    }
-    clear_set_error(error, &set_id);
-    sync::flush_in_background();
-}
-
 /// セットの順序を変え、端末内の位置と送信待ちの列へ保存する。
 async fn move_set(
     training_id: String,
@@ -813,7 +507,7 @@ async fn move_set(
     };
     if result.is_err() {
         set_set_error(error, &set_id, Key::RecordSetSaveFailed);
-        restore_sets(views, &view_id, error).await;
+        set_io::restore_sets(views, &view_id, error).await;
         return;
     }
     clear_set_error(error, &set_id);
@@ -854,53 +548,6 @@ fn move_set_order(
     Some((view_id, ordered))
 }
 
-async fn restore_sets(
-    mut views: Signal<Vec<ExerciseView>>,
-    view_id: &str,
-    error: Signal<RecordErrors>,
-) {
-    let Ok(storage) = storage::current().await else {
-        set_load_error(error, Key::RecordSetSaveFailed);
-        return;
-    };
-    let Ok(stored) = storage.training_sets(view_id).await else {
-        set_load_error(error, Key::RecordSetSaveFailed);
-        return;
-    };
-    let sets = stored
-        .into_iter()
-        .filter_map(SetView::from_stored)
-        .collect::<Vec<_>>();
-    let mut list = (views)();
-    if let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) {
-        view.sets = sets;
-    }
-    views.set(list);
-}
-
-fn find_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<SetView> {
-    (views)()
-        .iter()
-        .flat_map(|view| view.sets.iter())
-        .find(|set| set.record.id == set_id)
-        .cloned()
-}
-
-/// 保存を続けない状態か。止めたセット、完了したセット、画面から消えたセット。
-fn saving_stopped(views: Signal<Vec<ExerciseView>>, saver: &SetSaver, set_id: &str) -> bool {
-    saver.is_stopped(set_id) || find_set(views, set_id).is_none_or(|set| set.completed())
-}
-
-fn settings_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<(RecordMode, bool)> {
-    (views)()
-        .iter()
-        .find(|view| view.sets.iter().any(|set| set.record.id == set_id))
-        .map(|view| {
-            let mode = view.snapshot.record_mode;
-            (mode, is_lateral(view.snapshot.laterality, mode))
-        })
-}
-
 fn find_view_and_set(
     views: Signal<Vec<ExerciseView>>,
     set_id: &str,
@@ -924,10 +571,10 @@ pub(in crate::screens::record) fn dispatch(
 ) {
     match action {
         SetAction::Add { view_id } => {
-            spawn(add_set(training_id, view_id, views, error));
+            spawn(set_io::add_set(training_id, view_id, views, error));
         }
         SetAction::Copy { view_id } => {
-            spawn(copy_sets(training_id, view_id, views, error));
+            spawn(set_io::copy_sets(training_id, view_id, views, error));
         }
         SetAction::Input {
             set_id,
@@ -936,20 +583,38 @@ pub(in crate::screens::record) fn dispatch(
             value,
         } => {
             update_set_input(views, &set_id, &segment_id, field, value);
-            spawn(save_set_loop(training_id, set_id, views, error, saver));
+            spawn(async move {
+                set_io::save_set_loop(training_id, set_id, views, error, saver).await;
+            });
         }
         SetAction::Rpe { set_id, value } => {
             update_set_rpe(views, &set_id, value);
-            spawn(save_set_loop(training_id, set_id, views, error, saver));
+            spawn(async move {
+                set_io::save_set_loop(training_id, set_id, views, error, saver).await;
+            });
+        }
+        SetAction::Grip { set_id, grip } => {
+            spawn(grip::change_grip(
+                training_id,
+                set_id,
+                grip,
+                views,
+                error,
+                saver,
+            ));
         }
         SetAction::Kind { set_id, kind } => {
             if update_set_kind(views, &set_id, kind, error) {
-                spawn(save_set_loop(training_id, set_id, views, error, saver));
+                spawn(async move {
+                    set_io::save_set_loop(training_id, set_id, views, error, saver).await;
+                });
             }
         }
         SetAction::AddSegment { set_id } => {
             if append_segment(views, &set_id, error) {
-                spawn(save_set_loop(training_id, set_id, views, error, saver));
+                spawn(async move {
+                    set_io::save_set_loop(training_id, set_id, views, error, saver).await;
+                });
             }
         }
         SetAction::DeleteSegment { set_id, segment_id } => {
@@ -973,7 +638,7 @@ pub(in crate::screens::record) fn dispatch(
             ));
         }
         SetAction::Delete { set_id } => {
-            spawn(delete_set(training_id, set_id, views, error));
+            spawn(set_io::delete_set(training_id, set_id, views, error));
         }
         SetAction::Move { set_id, delta } => {
             spawn(move_set(training_id, set_id, delta, views, error));

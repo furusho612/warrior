@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use warrior_core::exercise::{GripSelection, GripStyle, GripWidth};
 
 use super::*;
 use support::record_common;
@@ -17,6 +18,7 @@ pub(crate) const OTHER_TERMINAL_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5521
 pub(crate) const BENCH_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5530";
 pub(crate) const BODYWEIGHT_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5531";
 pub(crate) const TIME_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5534";
+pub(crate) const GRIP_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5535";
 pub(crate) const FINISHED_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5532";
 pub(crate) const OTHER_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5533";
 pub(crate) const BENCH_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5540";
@@ -34,6 +36,7 @@ pub(crate) const OTHER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5555"
 pub(crate) const BENCH_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5560";
 pub(crate) const BODYWEIGHT_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5561";
 pub(crate) const TIME_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5562";
+pub(crate) const GRIP_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5563";
 pub(crate) const ORIGIN: &str = "http://localhost:8787";
 
 pub(crate) fn seed_base(
@@ -106,6 +109,28 @@ pub(crate) fn seed_base(
             muscle: "pectoralis_major_middle",
             record_mode: "weight_and_reps",
             position: 1,
+            grip_mode: "none",
+            grip_options: &[],
+        },
+    );
+    let grip_options = [GripSelection::Grip {
+        style: GripStyle::Pronated,
+        width: GripWidth::Medium,
+    }];
+    record_common::seed_exercise(
+        server,
+        record_common::ExerciseSeed {
+            row_id: GRIP_ROW_ID,
+            user_id: USER_ID,
+            training_id: TRAINING_ID,
+            exercise_id: GRIP_EXERCISE_ID,
+            name: "T バーロウ",
+            body_part: "back",
+            muscle: "latissimus_dorsi",
+            record_mode: "weight_and_reps",
+            position: 4,
+            grip_mode: "grip",
+            grip_options: &grip_options,
         },
     );
     record_common::seed_exercise(
@@ -120,6 +145,8 @@ pub(crate) fn seed_base(
             muscle: "pectoralis_major_middle",
             record_mode: "bodyweight_and_reps",
             position: 2,
+            grip_mode: "none",
+            grip_options: &[],
         },
     );
     record_common::seed_exercise(
@@ -134,6 +161,8 @@ pub(crate) fn seed_base(
             muscle: "rectus_abdominis_upper",
             record_mode: "time",
             position: 3,
+            grip_mode: "none",
+            grip_options: &[],
         },
     );
     record_common::seed_exercise(
@@ -148,6 +177,8 @@ pub(crate) fn seed_base(
             muscle: "pectoralis_major_middle",
             record_mode: "weight_and_reps",
             position: 1,
+            grip_mode: "none",
+            grip_options: &[],
         },
     );
     record_common::seed_exercise(
@@ -162,6 +193,8 @@ pub(crate) fn seed_base(
             muscle: "pectoralis_major_middle",
             record_mode: "weight_and_reps",
             position: 1,
+            grip_mode: "none",
+            grip_options: &[],
         },
     );
     record_common::seed_set(

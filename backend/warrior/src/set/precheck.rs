@@ -68,7 +68,7 @@ pub(super) async fn precheck(
     db: &Db,
     user_id: &str,
     validated: &ValidatedOperation,
-    rules: Option<ExerciseRules>,
+    rules: Option<&ExerciseRules>,
 ) -> Result<Option<Response>> {
     let training_id = &validated.operation.training_id;
     match &validated.payload {
@@ -112,7 +112,7 @@ async fn precheck_create(
     user_id: &str,
     training_id: &str,
     payload: &SetCreatePayload,
-    rules: ExerciseRules,
+    rules: &ExerciseRules,
 ) -> Result<Option<Response>> {
     if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
         return Ok(Some(rejection));
@@ -155,7 +155,7 @@ async fn precheck_update(
     user_id: &str,
     training_id: &str,
     payload: &SetUpdatePayload,
-    rules: ExerciseRules,
+    rules: &ExerciseRules,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
@@ -245,7 +245,7 @@ async fn precheck_complete(
     user_id: &str,
     training_id: &str,
     payload: &SetCompletePayload,
-    _rules: ExerciseRules,
+    _rules: &ExerciseRules,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));

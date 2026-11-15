@@ -255,6 +255,8 @@ fn seed_unilateral_time_exercise(server: &DevServer) {
             muscle: "rectus_abdominis_upper",
             record_mode: "time",
             position: 4,
+            grip_mode: "none",
+            grip_options: &[],
         },
         "unilateral",
     );
@@ -273,6 +275,8 @@ fn seed_unilateral_bodyweight_exercise(server: &DevServer) {
             muscle: "pectoralis_major_middle",
             record_mode: "bodyweight_and_reps",
             position: 3,
+            grip_mode: "none",
+            grip_options: &[],
         },
         "unilateral",
     );
@@ -291,6 +295,8 @@ fn seed_unilateral_exercise(server: &DevServer) {
             muscle: "latissimus_dorsi",
             record_mode: "weight_and_reps",
             position: 3,
+            grip_mode: "none",
+            grip_options: &[],
         },
         "unilateral",
     );

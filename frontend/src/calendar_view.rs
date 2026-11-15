@@ -8,6 +8,7 @@ use warrior_core::jst::{JstDate, JstMonth, Weekday};
 use warrior_core::rpe;
 use warrior_core::set_calc::{SetKind, SetSegment, SideValue};
 
+use crate::grip_text::{attachment_label, grip_label};
 use crate::text::{text, Key};
 
 /// カレンダーの 1 日のセルの表示内容。
@@ -277,43 +278,6 @@ fn set_kind_label(kind: SetKind) -> &'static str {
     }
 }
 
-pub(crate) fn grip_label(key: &str) -> String {
-    let (style, width) = key.split_once('_').unwrap_or((key, ""));
-    let style = match style {
-        "pronated" => text(Key::CalendarGripPronated),
-        "supinated" => text(Key::CalendarGripSupinated),
-        "parallel" => text(Key::CalendarGripParallel),
-        other => other,
-    };
-    let width = match width {
-        "wide" => text(Key::CalendarGripWide),
-        "medium" => text(Key::CalendarGripMedium),
-        "narrow" => text(Key::CalendarGripNarrow),
-        other => other,
-    };
-    if width.is_empty() {
-        style.to_owned()
-    } else {
-        format!("{style} {width}")
-    }
-}
-
-pub(crate) fn attachment_label(key: &str) -> String {
-    match key {
-        "wide_bar" => text(Key::CalendarAttachmentWideBar).to_owned(),
-        "straight_bar" => text(Key::CalendarAttachmentStraightBar).to_owned(),
-        "parallel_grip" => text(Key::CalendarAttachmentParallelGrip).to_owned(),
-        "mag_narrow_parallel" => text(Key::CalendarAttachmentMagNarrowParallel).to_owned(),
-        "mag_narrow_over" => text(Key::CalendarAttachmentMagNarrowOver).to_owned(),
-        "mag_narrow_under" => text(Key::CalendarAttachmentMagNarrowUnder).to_owned(),
-        "mag_medium_parallel" => text(Key::CalendarAttachmentMagMediumParallel).to_owned(),
-        "mag_medium_over" => text(Key::CalendarAttachmentMagMediumOver).to_owned(),
-        "mag_medium_under" => text(Key::CalendarAttachmentMagMediumUnder).to_owned(),
-        "mag_wide_over" => text(Key::CalendarAttachmentMagWideOver).to_owned(),
-        other => other.to_owned(),
-    }
-}
-
 pub(crate) fn format_weight(value: f64) -> String {
     format!("{value} kg")
 }
@@ -348,11 +312,11 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
-        attachment_label, build_cells, day_aria_label, day_number_class, day_parts, day_title,
-        format_seconds, grip_label, part_color_class, part_counts, part_label, set_notes, set_text,
-        weekdays, CalendarCell,
+        build_cells, day_aria_label, day_number_class, day_parts, day_title, format_seconds,
+        part_color_class, part_counts, part_label, set_notes, set_text, weekdays, CalendarCell,
     };
     use crate::generated::tokens;
+    use crate::grip_text::{attachment_label, grip_label};
 
     #[wasm_bindgen_test]
     fn the_cells_fill_the_weeks_and_mark_the_selected_day() {

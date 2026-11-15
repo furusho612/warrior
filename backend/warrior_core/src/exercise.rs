@@ -459,6 +459,7 @@ pub enum ExerciseError {
     GripSelectionMismatch,
     AttachmentStyleMissing,
     UnexpectedAttachmentStyle,
+    GripOptionsMissing,
     DuplicateMuscle,
 }
 
@@ -507,6 +508,9 @@ impl Exercise {
             && (self.grip_mode != GripMode::None || !self.grip_options.is_empty())
         {
             return Err(ExerciseError::TimeHasGrip);
+        }
+        if self.grip_mode != GripMode::None && self.grip_options.is_empty() {
+            return Err(ExerciseError::GripOptionsMissing);
         }
         for option in &self.grip_options {
             option.validate_for(self.grip_mode)?;
@@ -590,6 +594,9 @@ impl ExerciseSnapshot {
         {
             return Err(ExerciseError::TimeHasGrip);
         }
+        if self.grip_mode != GripMode::None && self.grip_options.is_empty() {
+            return Err(ExerciseError::GripOptionsMissing);
+        }
         for option in &self.grip_options {
             option.validate_for(self.grip_mode)?;
         }
@@ -599,6 +606,10 @@ impl ExerciseSnapshot {
 
 #[cfg(test)]
 mod tests {
+    //! 種目とスナップショットの検証。
+    //!
+    //! 対応する要求: `REQ-SET-011`、`REQ-LIB-011`。
+
     use super::{
         BodyPart, Equipment, Exercise, ExerciseError, ExerciseSnapshot, GripMode, GripSelection,
         GripStyle, GripWidth, Laterality, MuscleAssignment, MuscleRole, MuscleUnit, OtherScope,
@@ -737,32 +748,56 @@ mod tests {
     }
 
     #[test]
+    fn grip_exercises_need_at_least_one_option() {
+        let mut value = exercise();
+        value.grip_mode = GripMode::Grip;
+        assert_eq!(value.validate(), Err(ExerciseError::GripOptionsMissing));
+        value.grip_options = vec![GripSelection::Grip {
+            style: GripStyle::Pronated,
+            width: GripWidth::Medium,
+        }];
+        value.validate().unwrap();
+    }
+
+    #[test]
+    fn a_snapshot_rejects_a_grip_exercise_without_options() {
+        let mut snapshot = ExerciseSnapshot::from(&exercise());
+        snapshot.grip_mode = GripMode::Attachment;
+        assert_eq!(snapshot.validate(), Err(ExerciseError::GripOptionsMissing));
+        snapshot.grip_options = vec![GripSelection::Attachment {
+            attachment: super::Attachment::WideBar,
+            style: Some(GripStyle::Pronated),
+        }];
+        snapshot.validate().unwrap();
+    }
+
+    #[test]
     fn the_grip_comparison_key_separates_every_selection() {
         assert_eq!(GripSelection::None.comparison_key(), (None, None));
-        assert_eq!(
-            GripSelection::Grip {
-                style: GripStyle::Pronated,
-                width: GripWidth::Medium,
+        for style in GripStyle::ALL {
+            for width in GripWidth::ALL {
+                assert_eq!(
+                    GripSelection::Grip { style, width }.comparison_key(),
+                    (Some(format!("{}_{}", style.as_str(), width.as_str())), None)
+                );
             }
-            .comparison_key(),
-            (Some("pronated_medium".to_owned()), None)
-        );
-        assert_eq!(
-            GripSelection::Attachment {
-                attachment: super::Attachment::WideBar,
-                style: Some(GripStyle::Supinated),
+        }
+        for attachment in super::Attachment::ALL {
+            let styles = if attachment.requires_style() {
+                vec![Some(GripStyle::Pronated), Some(GripStyle::Supinated)]
+            } else {
+                vec![None]
+            };
+            for style in styles {
+                assert_eq!(
+                    GripSelection::Attachment { attachment, style }.comparison_key(),
+                    (
+                        style.map(|style| style.as_str().to_owned()),
+                        Some(attachment.as_str().to_owned())
+                    )
+                );
             }
-            .comparison_key(),
-            (Some("supinated".to_owned()), Some("wide_bar".to_owned()))
-        );
-        assert_eq!(
-            GripSelection::Attachment {
-                attachment: super::Attachment::ParallelGrip,
-                style: None,
-            }
-            .comparison_key(),
-            (None, Some("parallel_grip".to_owned()))
-        );
+        }
     }
 
     #[test]

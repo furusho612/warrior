@@ -19,6 +19,7 @@ use support::record_common;
 use support::DevServer;
 use warrior_core::auth::hash_session_token;
 use warrior_core::base64url;
+use warrior_core::exercise::{Attachment, GripSelection, GripStyle, GripWidth};
 use warrior_core::set_calc::estimated_one_rep_max;
 
 const MAIN_PORT: u16 = 8852;
@@ -49,6 +50,8 @@ const GRIP_FIRST_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5820";
 const GRIP_FIRST_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5821";
 const GRIP_SECOND_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5822";
 const GRIP_SECOND_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5823";
+const GRIP_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5824";
+const ATTACHMENT_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5825";
 const GRIP_FIRST_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5830";
 const GRIP_SECOND_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5831";
 const GRIP_FIRST_COMPLETE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5832";
@@ -182,11 +185,51 @@ fn the_set_completion_response_reports_the_updated_personal_bests() {
 fn grip_and_attachment_split_the_personal_bests() {
     let server = start_server(GRIP_PORT);
     let cookie = seed(&server);
+    let grip_options = [GripSelection::Grip {
+        style: GripStyle::Pronated,
+        width: GripWidth::Medium,
+    }];
+    record_common::seed_exercise(
+        &server,
+        record_common::ExerciseSeed {
+            row_id: GRIP_ROW_ID,
+            user_id: USER_ID,
+            training_id: TRAINING_ID,
+            exercise_id: BENCH_EXERCISE_ID,
+            name: "ベンチプレス",
+            body_part: "chest",
+            muscle: "pectoralis_major_middle",
+            record_mode: "weight_and_reps",
+            position: 4,
+            grip_mode: "grip",
+            grip_options: &grip_options,
+        },
+    );
+    let attachment_options = [GripSelection::Attachment {
+        attachment: Attachment::WideBar,
+        style: Some(GripStyle::Pronated),
+    }];
+    record_common::seed_exercise(
+        &server,
+        record_common::ExerciseSeed {
+            row_id: ATTACHMENT_ROW_ID,
+            user_id: USER_ID,
+            training_id: TRAINING_ID,
+            exercise_id: BENCH_EXERCISE_ID,
+            name: "ベンチプレス",
+            body_part: "chest",
+            muscle: "pectoralis_major_middle",
+            record_mode: "weight_and_reps",
+            position: 5,
+            grip_mode: "attachment",
+            grip_options: &attachment_options,
+        },
+    );
 
     let mut first = create_operation(
         GRIP_FIRST_OPERATION_ID,
         TRAINING_ID,
-        BENCH_ROW_ID,
+        GRIP_ROW_ID,
         GRIP_FIRST_SET_ID,
         SetSpec {
             position: 1,
@@ -201,16 +244,17 @@ fn grip_and_attachment_split_the_personal_bests() {
     let mut second = create_operation(
         GRIP_SECOND_OPERATION_ID,
         TRAINING_ID,
-        BENCH_ROW_ID,
+        ATTACHMENT_ROW_ID,
         GRIP_SECOND_SET_ID,
         SetSpec {
-            position: 2,
+            position: 1,
             kind: "normal",
             body_weight_kg: None,
         },
         vec![segment(GRIP_SECOND_SEGMENT_ID, 1, 90.0, 5)],
     );
-    second["payload"]["grip"] = json!({"attachment": {"attachment": "wide_bar", "style": null}});
+    second["payload"]["grip"] =
+        json!({"attachment": {"attachment": "wide_bar", "style": "pronated"}});
     assert_applied(&post(&server, &cookie, &second));
 
     let first_bests = bests(&complete(
@@ -230,7 +274,7 @@ fn grip_and_attachment_split_the_personal_bests() {
         GRIP_SECOND_SET_ID,
     ));
     assert_eq!(second_bests.len(), 3);
-    assert!(second_bests[0]["grip"].is_null());
+    assert_eq!(second_bests[0]["grip"], "pronated");
     assert_eq!(second_bests[0]["attachment"], "wide_bar");
 
     let rows = personal_bests(&server, TRAINING_ID);
@@ -249,7 +293,7 @@ fn grip_and_attachment_split_the_personal_bests() {
         .iter()
         .find(|row| row["attachment"] == "wide_bar")
         .expect("the attachment row");
-    assert_eq!(attached["grip"], "");
+    assert_eq!(attached["grip"], "pronated");
 }
 
 #[test]
@@ -268,6 +312,8 @@ fn a_unilateral_time_set_uses_the_longest_side() {
             muscle: "obliques",
             record_mode: "time",
             position: 3,
+            grip_mode: "none",
+            grip_options: &[],
         },
         "unilateral",
     );

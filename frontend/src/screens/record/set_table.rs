@@ -12,7 +12,7 @@ use warrior_core::set_rules;
 use super::one_rep_max::OneRepMaxBadge;
 use super::set_inputs::{SegmentInputs, SegmentInputsState};
 use super::sets::{
-    detail_open_label, is_lateral, kind_change_allowed, move_candidate_valid,
+    detail_open_label, grip_selection_label, is_lateral, kind_change_allowed, move_candidate_valid,
     needs_segment_confirmation, set_numbers, SegmentView, SelectedSet, SetAction, SetView,
 };
 use crate::text::{text, Key};
@@ -155,6 +155,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
         .map_or_else(|| "D".to_owned(), |number| number.to_string());
     let open_label = detail_open_label(&number_text, is_drop);
     let first_segment = row.set.segments.first().cloned();
+    let grip_label = row.set.grip().map(grip_selection_label);
     let mut pending_kind = use_signal(|| Option::<SetKind>::None);
     let kind_set_id = set_id.clone();
     let on_kind = EventHandler::new(move |new_kind: SetKind| {
@@ -210,6 +211,13 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                     drop_allowed: row.drop_allowed,
                     warmup_allowed: row.warmup_allowed,
                     on_kind,
+                }
+                if let Some(label) = grip_label {
+                    span {
+                        class: "shrink-0 text-[10px] text-text-sub",
+                        "data-set-grip-label": "true",
+                        "{label}"
+                    }
                 }
                 if let Some(segment) = first_segment {
                     div {

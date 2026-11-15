@@ -3,7 +3,7 @@
 use dioxus::prelude::*;
 use warrior_core::training_session::{BestKind, PersonalBestItem, TrainingSessionSummary};
 
-use crate::calendar_view::{attachment_label, grip_label};
+use crate::grip_text::{attachment_label, grip_label};
 use crate::text::{text, Key};
 use crate::training_session;
 

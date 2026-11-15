@@ -513,7 +513,7 @@ fn validate(values: &SetValues) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn grip_json(grip: Option<GripSelection>) -> Option<String> {
+pub(crate) fn grip_json(grip: Option<GripSelection>) -> Option<String> {
     grip.and_then(|grip| serde_json::to_string(&grip).ok())
 }
 

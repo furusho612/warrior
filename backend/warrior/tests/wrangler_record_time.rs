@@ -120,6 +120,8 @@ fn seed_time_exercises(server: &DevServer) {
             muscle: "rectus_abdominis_upper",
             record_mode: "time",
             position: 3,
+            grip_mode: "none",
+            grip_options: &[],
         },
     );
     record_common::seed_exercise_with_laterality(
@@ -134,6 +136,8 @@ fn seed_time_exercises(server: &DevServer) {
             muscle: "obliques",
             record_mode: "time",
             position: 4,
+            grip_mode: "none",
+            grip_options: &[],
         },
         "unilateral",
     );

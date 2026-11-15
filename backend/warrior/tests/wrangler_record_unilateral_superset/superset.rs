@@ -135,6 +135,8 @@ fn seed_superset_exercises(server: &DevServer) {
                 muscle: "pectoralis_major_middle",
                 record_mode: "weight_and_reps",
                 position,
+                grip_mode: "none",
+                grip_options: &[],
             },
         );
     }
