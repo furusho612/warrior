@@ -52,12 +52,12 @@
 
 - [ ] グリップを選べる種目で、記録のときに、種目に応じた握り方、手幅、アタッチメントを選べる。選んだグリップがセットとともに保存される。これは REQ-SET-011 の受入基準に対応する。
 - [ ] 種目ごとの選択肢が、0019 の `GripMode` と `GripSelection` に従う。ワイドバーとストレートバーでは順手か逆手かを選べる。これは REQ-LIB-011 の受入基準に対応する。
-- [ ] グリップを選ばない種目では、選択肢を表示せず、値も保存しない。この issue は、完了条件 1 のグリップの選択が、種目の選択肢の範囲に閉じることを支える。
+- [ ] グリップを選ばない種目では、選択肢を表示せず、値も保存しない。この条件は、グリップの選択が種目の選択肢の範囲に閉じることを支える。
 - [ ] 前回の記録と自己ベストが、同じグリップと同じアタッチメントの記録だけを対象にする。これは REQ-SET-011 の受入基準に対応する。
 - [ ] 握り方と手幅の両方が一致することを、比較の条件にする。これは REQ-SET-011 の受入基準のうち、同じグリップの記録だけを対象にする条件に対応する。
 - [ ] アタッチメントと順手か逆手かの両方が一致することを、比較の条件にする。これは REQ-SET-011 の受入基準のうち、同じアタッチメントの記録だけを対象にする条件に対応する。
 - [ ] 履歴とグラフをグリップとアタッチメントで絞り込むクエリと API は 0049 が担う。この issue は、絞り込みに使う比較のキーと、セットごとのグリップの保存を提供する。
-- [ ] セットのコピーと前回の表示が、グリップとアタッチメントもコピーする。この issue は、完了条件 4 の前回の記録が、コピーの後も同じグリップの記録を指すことを支える。
+- [ ] セットのコピーと前回の表示が、グリップとアタッチメントもコピーする。前回の記録が、コピーの後も同じグリップの記録を指すことを支える。
 - [ ] 種目の選択肢にないグリップを、セットの作成と更新で拒否する。拒否した操作は、セットの行も操作 ID も残さない。これは REQ-SET-011 の受入基準のうち、記録を種目の選択肢に閉じる条件に対応する。
 - [ ] グリップを選ぶ種目は、選択肢を 1 つ以上持つ。選択肢が空の種目を作れないようにする。これは、選択肢の無いグリップ種目がすべてのセット操作を拒否される状態を防ぐ条件である。
 - [ ] PBT で、グリップとアタッチメントの比較のキーが、同じ値の組だけを一致させ、違う値の組を一致させないことを確かめる。これは REQ-SET-011 の受入基準のうち、同じグリップと同じアタッチメントだけを対象にする条件を支える。
@@ -69,10 +69,13 @@
 `sets.grip` の列は `migrations/0006_training_sessions.sql` にあり、値は `GripSelection` の JSON とする。migration は追加しない。
 グリップの選択の型、選択肢の検証、比較のキーは 0019 と 0022 が `backend/warrior_core/src/exercise.rs` に置いた。0031 はこの表現をそのまま使う。
 `backend/warrior/src/set/validation.rs` に、セットの作成と更新で、種目スナップショットの `grip_mode` と `grip_options` に合わないグリップを拒否する検証を置く。
-`backend/warrior_core/src/exercise.rs` の `Exercise::validate` と `ExerciseSnapshot::validate` に、グリップを選ぶ種目は選択肢を 1 つ以上持つという不変条件を足し、スナップショットを受け取る経路で `ExerciseSnapshot::validate` を呼ぶ。
+`backend/warrior_core/src/exercise.rs` の `Exercise::validate` と `ExerciseSnapshot::validate` に、グリップを選ぶ種目は選択肢を 1 つ以上持つという不変条件を足し、スナップショットを受け取る経路で `ExerciseSnapshot::validate` を呼ぶ。呼び出しは `backend/warrior/src/training_session_exercise.rs` に置く。
 `frontend/src/screens/record/set_drawer.rs` と `frontend/src/screens/record/set_table.rs` に、グリップの選択と表示を置く。
 `frontend/src/screens/record/sets.rs` に、既定の選択と選択肢の組み立てを置く。
 `frontend/src/screens/record/exercise_view/operations/grip.rs` に、選択の保存と前回の記録の取り直しを置く。
+`frontend/src/screens/record/exercise_view/operations/set_io.rs` に、セットの追加、保存、削除、コピー、復元を置く。
+`frontend/src/calendar_view.rs` に、グリップとアタッチメントの表示文言を集約し、記録画面とカレンダーとサマリーが共有する。
 履歴とグラフの絞り込みのクエリと API は 0049 が担う。
+`CHANGES.md` の `## develop` に、利用者に見える変更としてグリップの選択を追記する。
 `backend/warrior/tests/e2e_grip.rs` に E2E を追加する。
 `backend/pbt/tests/grip.rs` に性質テストを置く。
