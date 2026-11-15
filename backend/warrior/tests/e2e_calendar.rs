@@ -297,7 +297,7 @@ async fn check_the_day_detail(driver: &WebDriver, dates: &FixtureDates) {
     assert_eq!(exercises[0]["sets"][1]["text"], "100 kg × 5 回");
     assert_eq!(
         exercises[0]["sets"][1]["notes"],
-        "通常 / RPE 8 / 順手 ミディアム"
+        "通常 / RPE 8.0 / 順手 ミディアム"
     );
     assert_eq!(exercises[0]["sets"][1]["total"].as_f64(), Some(500.0));
     assert_eq!(exercises[1]["name"], "プレスダウン");
