@@ -1,6 +1,6 @@
-//! リクエスト 1 件ごとの JSON のログ。
+//! リクエストと AI の生成ジョブの JSON のログ。
 //!
-//! ログに載せるのは経路のメタデータだけとする。
+//! ログに載せるのはメタデータだけとする。
 //! 身体情報、メールアドレス、メモ、AI の入出力、トークン、プッシュ購読の情報は載せない。
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,6 +10,8 @@ use worker::{console_log, Date};
 
 /// ログ 1 行のイベント名。
 pub const EVENT_REQUEST: &str = "request";
+/// AI の生成ジョブのログ 1 行のイベント名。
+pub const EVENT_AI_JOB: &str = "ai_job";
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -57,6 +59,56 @@ pub fn log_request(log: &RequestLog<'_>) {
     console_log!("{}", line(log));
 }
 
+/// AI の生成ジョブのログ。
+///
+/// 種別、生成の ID、試行回数、結果、処理時間、エラーコード、相関 ID だけを持ち、
+/// 記録の本文、メモ、AI の入出力、トークン、購読の情報を持たない。
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct AiJobLog<'a> {
+    pub event: &'static str,
+    pub kind: &'a str,
+    pub generation_id: &'a str,
+    pub attempt: u32,
+    pub result: &'a str,
+    pub duration_ms: u64,
+    pub error_code: Option<&'a str>,
+    pub correlation_id: &'a str,
+}
+
+impl<'a> AiJobLog<'a> {
+    /// ログの値を組み立てる。
+    pub fn new(
+        kind: &'a str,
+        generation_id: &'a str,
+        attempt: u32,
+        result: &'a str,
+        duration_ms: u64,
+        error_code: Option<&'a str>,
+        correlation_id: &'a str,
+    ) -> Self {
+        Self {
+            event: EVENT_AI_JOB,
+            kind,
+            generation_id,
+            attempt,
+            result,
+            duration_ms,
+            error_code,
+            correlation_id,
+        }
+    }
+}
+
+/// AI の生成ジョブのログを wrangler の出力に 1 行の JSON として出す。
+pub fn log_ai_job(log: &AiJobLog<'_>) {
+    console_log!("{}", line_ai_job(log));
+}
+
+/// AI の生成ジョブのログ 1 行の JSON を組み立てる。
+pub fn line_ai_job(log: &AiJobLog<'_>) -> String {
+    serde_json::to_string(log).expect("an AI job log with plain fields is always serializable")
+}
+
 /// 時刻と連番からリクエスト ID を組み立てる。
 pub fn format_request_id(millis: u64, sequence: u64) -> String {
     format!("{millis}-{sequence}")
@@ -72,7 +124,7 @@ pub fn next_request_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_request_id, line, RequestLog};
+    use super::{format_request_id, line, AiJobLog, RequestLog};
 
     #[test]
     fn log_line_contains_the_request_metadata() {
@@ -150,5 +202,63 @@ mod tests {
             format_request_id(1_700_000_000_000, 7),
             format_request_id(1_700_000_000_000, 8)
         );
+    }
+
+    #[test]
+    fn ai_job_log_has_exactly_the_job_metadata() {
+        let log = AiJobLog::new(
+            "daily_evaluation",
+            "job-1",
+            2,
+            "retry",
+            15,
+            Some("http_5xx"),
+            "message-1",
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&super::line_ai_job(&log))
+                .expect("the AI job log is JSON"),
+            serde_json::json!({
+                "event": "ai_job",
+                "kind": "daily_evaluation",
+                "generation_id": "job-1",
+                "attempt": 2,
+                "result": "retry",
+                "duration_ms": 15,
+                "error_code": "http_5xx",
+                "correlation_id": "message-1"
+            })
+        );
+    }
+
+    #[test]
+    fn ai_job_log_does_not_include_private_fields() {
+        let log = AiJobLog::new(
+            "set_proposal",
+            "job-2",
+            1,
+            "failed",
+            3,
+            Some("invalid_output"),
+            "message-2",
+        );
+        let value = serde_json::from_str::<serde_json::Value>(&super::line_ai_job(&log))
+            .expect("the AI job log is JSON");
+        let object = value.as_object().expect("a JSON object");
+        for private in [
+            "body",
+            "memo",
+            "input",
+            "output",
+            "ai_input",
+            "ai_output",
+            "token",
+            "push_subscription",
+        ] {
+            assert!(
+                !object.contains_key(private),
+                "{private} must not be logged"
+            );
+        }
     }
 }

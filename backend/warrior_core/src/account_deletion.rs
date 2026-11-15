@@ -138,6 +138,16 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の端末のプッシュ購読。",
     },
     Table {
+        name: "ai_generation",
+        class: TableClass::Owned,
+        reason: "利用者の AI の生成ジョブ。",
+    },
+    Table {
+        name: "ai_outputs",
+        class: TableClass::Owned,
+        reason: "利用者の AI の出力のメタデータ。",
+    },
+    Table {
         name: "muscles",
         class: TableClass::Master,
         reason: "筋肉の単位。利用者に紐づかない。",
@@ -174,6 +184,8 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "auth_sessions",
     "push_subscriptions",
     "terminal_tokens",
+    "ai_outputs",
+    "ai_generation",
     "superset_members",
     "set_segments",
     "sets",
@@ -232,6 +244,8 @@ mod tests {
             "oauth_states",
             "profiles",
             "push_subscriptions",
+            "ai_generation",
+            "ai_outputs",
         ] {
             assert!(classify(name).is_some(), "{name} must be classified");
         }

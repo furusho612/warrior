@@ -3,9 +3,10 @@
 //! `/api/*` の経路を Router に渡し、応答にセキュリティヘッダとリクエスト ID を付け、
 //! リクエスト 1 件ごとに JSON のログを出す。
 
-use worker::{console_error, event, Context, Date, Env, Request, Response, Result};
+use worker::{console_error, event, Context, Date, Env, MessageBatch, Request, Response, Result};
 
 pub mod account;
+pub mod ai_job;
 pub mod analysis;
 pub mod auth;
 pub mod calendar;
@@ -84,6 +85,16 @@ pub async fn fetch(request: Request, env: Env, _context: Context) -> Result<Resp
         &request_id,
     ));
     Ok(response)
+}
+
+/// AI の生成ジョブの Queue のメッセージを処理する。
+#[event(queue)]
+pub async fn jobs_queue(
+    batch: MessageBatch<ai_job::JobMessage>,
+    env: Env,
+    _context: Context,
+) -> Result<()> {
+    ai_job::consume(batch, env).await
 }
 
 /// 状態を変更するリクエストの `Origin` が、環境の Origin と一致するかを返す。

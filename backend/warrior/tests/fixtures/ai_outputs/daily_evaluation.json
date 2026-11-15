@@ -1,0 +1,42 @@
+{
+  "evaluation": {
+    "good": [
+      {
+        "text": "全セットで安定して挙げられた",
+        "evidence": "80 kg を 8 回、3 セット",
+        "reference_reason": null
+      }
+    ],
+    "improvements": [
+      {
+        "text": "胸の週あたりのセット数は少なめである",
+        "evidence": "胸は週 6 セット",
+        "reference_reason": "補助筋を含めると胸は週 8 セットになる"
+      }
+    ],
+    "next_actions": [
+      {
+        "text": "次回は 82.5 kg で 8 回を狙う",
+        "evidence": "前回 80 kg",
+        "reference_reason": null
+      }
+    ]
+  },
+  "proposals": [
+    {
+      "exercise_id": "bench-press",
+      "grip": null,
+      "attachment": null,
+      "weight_kg": 82.5,
+      "reps": 8,
+      "duration_seconds": null,
+      "sets": 3,
+      "reason": "前回 80 kg で 8 回を達成したため、2.5 kg 増やす",
+      "reference_reason": "補助筋を含めると胸は週 8 セットになる"
+    }
+  ],
+  "menu_changes": [],
+  "goal_response": null,
+  "nutrition_advice": null,
+  "safety_advice": null
+}

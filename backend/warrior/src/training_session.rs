@@ -130,6 +130,12 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
+    if let Err(error) =
+        crate::ai_job::create_session_jobs(&db, &authenticated.id, &training_id, &saved.date, &sets)
+            .await
+    {
+        console_error!("failed to create the AI generation rows: {error}");
+    }
     summary_response(&saved, personal_bests)
 }
 

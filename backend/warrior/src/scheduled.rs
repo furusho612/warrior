@@ -3,14 +3,19 @@
 use warrior_core::sql::{SqlStatement, SqlValue};
 use worker::{event, Env, Result, ScheduleContext, ScheduledEvent};
 
-use crate::auth::now_iso;
+use crate::ai_job;
+use crate::auth::{now_iso, now_seconds};
 use crate::db::Db;
 
-/// 1 分ごとの Cron で期限切れの行を削除する。
+/// 1 分ごとの Cron で期限切れの行を削除し、AI の生成の行を Queue へ送る。
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _context: ScheduleContext) {
     if let Err(error) = remove_expired(&env).await {
         worker::console_error!("the scheduled cleanup failed: {error}");
+    }
+    let now = now_seconds();
+    if let Err(error) = ai_job::enqueue_pending(&env, now).await {
+        worker::console_error!("the scheduled AI job enqueue failed: {error}");
     }
 }
 
