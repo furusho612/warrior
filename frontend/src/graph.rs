@@ -46,6 +46,13 @@ pub(crate) struct DateLabel {
     pub label: String,
 }
 
+/// グラフの目標重量の線。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PlotTarget {
+    pub value: f64,
+    pub y: f64,
+}
+
 /// グラフの配置。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GraphLayout {
@@ -53,24 +60,36 @@ pub(crate) struct GraphLayout {
     pub y_ticks: Vec<AxisTick>,
     pub x_labels: Vec<DateLabel>,
     pub line: String,
+    pub target: Option<PlotTarget>,
     pub empty: bool,
 }
 
 /// 点の列からグラフの配置を作る。
-///
-/// 縦軸は値の範囲に余白を足す。値が 1 つだけのときと、全ての値が同じときも
-/// 範囲が 0 にならないようにする。横軸は最初と最後の日付の間の日数で等分する。
+#[cfg(test)]
 pub(crate) fn layout(points: &[GraphPoint], metric: GraphMetric) -> GraphLayout {
-    if points.is_empty() {
+    layout_with_target(points, metric, None)
+}
+
+/// 点の列と目標重量からグラフの配置を作る。
+///
+/// 目標重量は縦軸の範囲に含め、記録が無くても目標の線を描けるようにする。
+pub(crate) fn layout_with_target(
+    points: &[GraphPoint],
+    metric: GraphMetric,
+    target: Option<f64>,
+) -> GraphLayout {
+    let target = target.filter(|value| value.is_finite());
+    if points.is_empty() && target.is_none() {
         return GraphLayout {
             points: Vec::new(),
             y_ticks: Vec::new(),
             x_labels: Vec::new(),
             line: String::new(),
+            target: None,
             empty: true,
         };
     }
-    let (min, max) = value_range(points);
+    let (min, max) = value_range(points, target);
     let plot_width = WIDTH - PADDING_LEFT - PADDING_RIGHT;
     let plot_height = HEIGHT - PADDING_TOP - PADDING_BOTTOM;
     let first = points.first().map(|point| point.date);
@@ -102,24 +121,37 @@ pub(crate) fn layout(points: &[GraphPoint], metric: GraphMetric) -> GraphLayout 
         .map(|point| format!("{:.1},{:.1}", point.x, point.y))
         .collect::<Vec<_>>()
         .join(" ");
+    let target = target.map(|value| PlotTarget {
+        value,
+        y: PADDING_TOP + plot_height * (max - value) / (max - min),
+    });
+    let empty = plotted.is_empty();
     GraphLayout {
         y_ticks: axis_ticks(min, max, metric),
         x_labels: date_labels(&plotted),
         points: plotted,
         line,
-        empty: false,
+        target,
+        empty,
     }
 }
 
-fn value_range(points: &[GraphPoint]) -> (f64, f64) {
-    let min = points
+fn value_range(points: &[GraphPoint], target: Option<f64>) -> (f64, f64) {
+    let mut min = points
         .iter()
         .map(|point| point.value)
         .fold(f64::INFINITY, f64::min);
-    let max = points
+    let mut max = points
         .iter()
         .map(|point| point.value)
         .fold(f64::NEG_INFINITY, f64::max);
+    if let Some(target) = target.filter(|value| value.is_finite()) {
+        min = min.min(target);
+        max = max.max(target);
+    }
+    if !min.is_finite() || !max.is_finite() {
+        return (0.0, 1.0);
+    }
     if max > min {
         return (min, max);
     }
@@ -199,9 +231,16 @@ pub(crate) const LABEL_CLASS: &str = "fill-text-sub";
 
 /// 推移のグラフ。
 #[component]
-pub fn GraphChart(points: Vec<GraphPoint>, metric: GraphMetric) -> Element {
-    let graph = layout(&points, metric);
+pub fn GraphChart(points: Vec<GraphPoint>, metric: GraphMetric, target: Option<f64>) -> Element {
+    let graph = layout_with_target(&points, metric, target);
     let aria = text(Key::ExerciseHistoryGraph);
+    let target_label = graph.target.as_ref().map(|target| {
+        format!(
+            "{} {:.1} kg",
+            text(Key::ExerciseHistoryGoalTarget),
+            target.value
+        )
+    });
     rsx! {
         svg {
             class: "h-auto w-full",
@@ -235,6 +274,29 @@ pub fn GraphChart(points: Vec<GraphPoint>, metric: GraphMetric) -> Element {
                     "text-anchor": "middle",
                     font_size: "9",
                     "{label.label}"
+                }
+            }
+            if let Some(target) = graph.target.as_ref() {
+                line {
+                    class: LINE_CLASS,
+                    x1: "{PADDING_LEFT}",
+                    x2: "{WIDTH - PADDING_RIGHT}",
+                    y1: "{target.y}",
+                    y2: "{target.y}",
+                    stroke_width: "1",
+                    stroke_dasharray: "4 3",
+                    "data-graph-target": "{target.value}",
+                    "aria-hidden": "true"
+                }
+                if let Some(label) = target_label.as_ref() {
+                    text {
+                        class: LABEL_CLASS,
+                        x: "{WIDTH - PADDING_RIGHT}",
+                        y: "{target.y - 3.0}",
+                        "text-anchor": "end",
+                        font_size: "9",
+                        "{label}"
+                    }
                 }
             }
             if graph.empty {
@@ -444,9 +506,9 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
-        body_part_bar_layout, layout, part_fill_class, point_value_text, AXIS_CLASS, BAR_HEIGHT,
-        BAR_LABEL_WIDTH, BAR_VALUE_WIDTH, HEIGHT, LABEL_CLASS, LINE_CLASS, PADDING_LEFT,
-        PADDING_RIGHT, PADDING_TOP, WIDTH,
+        body_part_bar_layout, layout, layout_with_target, part_fill_class, point_value_text,
+        AXIS_CLASS, BAR_HEIGHT, BAR_LABEL_WIDTH, BAR_VALUE_WIDTH, HEIGHT, LABEL_CLASS, LINE_CLASS,
+        PADDING_LEFT, PADDING_RIGHT, PADDING_TOP, WIDTH,
     };
     use crate::generated::tokens;
 
@@ -481,6 +543,21 @@ mod tests {
             graph.line,
             format!("{:.1},{:.1}", graph.points[0].x, graph.points[0].y)
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_target_is_included_in_the_range_and_has_a_position() {
+        let point = Point::new(2026, 11, 12, 100.0).point();
+        let graph = layout_with_target(&[point], GraphMetric::MaxWeight, Some(120.0));
+        let target = graph.target.expect("the target line");
+        assert_eq!(target.value, 120.0);
+        assert!(target.y < graph.points[0].y, "a heavier target is higher");
+        assert!((target.y - PADDING_TOP).abs() < 1e-9);
+
+        let empty = layout_with_target(&[], GraphMetric::MaxWeight, Some(120.0));
+        assert!(empty.empty);
+        assert_eq!(empty.target.expect("the target line").value, 120.0);
+        assert_eq!(empty.y_ticks.len(), 3);
     }
 
     #[wasm_bindgen_test]

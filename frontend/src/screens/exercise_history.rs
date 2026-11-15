@@ -1,18 +1,24 @@
-//! 種目別の履歴、自己ベスト、推移のグラフの画面。
+//! 種目別の履歴、自己ベスト、目標重量、推移のグラフの画面。
 //!
-//! 対応する要求: `REQ-ANL-001`、`REQ-ANL-002`、`REQ-ANL-003`、`REQ-ANL-004`。
+//! 対応する要求: `REQ-ANL-001`、`REQ-ANL-002`、`REQ-ANL-003`、`REQ-ANL-004`、
+//! `REQ-GOAL-001`、`REQ-GOAL-002`。
 //! 期間と指標の選択肢は種目の記録方式から作り、集計はサーバーの応答を使う (ADR-016)。
+//! 目標重量と現在の記録との差は履歴の応答から表示し、グラフには目標の線を重ねる。
 //! セットの文言はカレンダーの日の詳細と同じ組み立てを共有する。
 
 use dioxus::prelude::*;
 use warrior_core::calendar::CalendarSet;
+use warrior_core::exercise::GripMode;
+use warrior_core::goal::GoalProgress;
 use warrior_core::history::{
-    ExerciseBest, ExerciseGraph, ExerciseHistory, GraphMetric, GraphPeriod, HistoryTraining,
+    ExerciseBest, ExerciseGraph, ExerciseHistory, GraphMetric, GraphPeriod, GripFilter,
+    HistoryTraining,
 };
 use warrior_core::jst::JstDate;
 use warrior_core::training_session::BestKind;
 
 use crate::calendar_view::{day_title, format_seconds, set_notes, set_text};
+use crate::goal as goal_api;
 use crate::graph::GraphChart;
 use crate::grip_text::{attachment_label, grip_label};
 use crate::history as history_api;
@@ -43,6 +49,12 @@ pub fn ExerciseHistoryScreen(id: String) -> Element {
     let period_state = state;
     let metric_state = state;
     let history_retry_state = state;
+    let goal_changed_state = state;
+    let on_goal_changed = EventHandler::new(move |_: ()| {
+        let mut state = goal_changed_state;
+        state.history_reload += 1;
+        state.graph_reload += 1;
+    });
 
     rsx! {
         section {
@@ -98,6 +110,13 @@ pub fn ExerciseHistoryScreen(id: String) -> Element {
                     }
                 }
                 HistoryBests { bests: history.bests.clone() }
+                GoalSection {
+                    exercise_id: id.clone(),
+                    grip_mode: history.grip_mode,
+                    choice: choice.clone(),
+                    goals: history.goals.clone(),
+                    on_changed: on_goal_changed,
+                }
                 if let Some(mode) = record_mode {
                     div { class: "flex flex-wrap gap-2",
                         label {
@@ -305,6 +324,12 @@ fn GraphPanel(
     on_retry: EventHandler<()>,
 ) -> Element {
     let points = graph.as_ref().map(|graph| graph.points.len()).unwrap_or(0);
+    let target = graph
+        .as_ref()
+        .and_then(|graph| match graph.goals.as_slice() {
+            [goal] => Some(goal.goal.target_weight_kg),
+            _ => None,
+        });
     rsx! {
         section {
             class: "flex flex-col gap-2 border-t border-line pt-3",
@@ -323,13 +348,300 @@ fn GraphPanel(
                 div {
                     "data-graph-period": graph.period.as_str(),
                     "data-graph-metric": graph.metric.as_str(),
-                    GraphChart { points: graph.points.clone(), metric }
+                    GraphChart {
+                        points: graph.points.clone(),
+                        metric,
+                        target,
+                    }
                 }
             } else {
                 p { class: "text-[13px] text-text-sub", "{text(Key::ExerciseHistoryLoading)}" }
             }
         }
     }
+}
+
+/// 目標重量と現在の記録との差。
+#[component]
+fn GoalSection(
+    exercise_id: String,
+    grip_mode: GripMode,
+    choice: Option<String>,
+    goals: Vec<GoalProgress>,
+    on_changed: EventHandler<()>,
+) -> Element {
+    let count = goals.len();
+    let empty = goals.is_empty();
+    let selected = selected_goal(&goals, choice.as_deref());
+    let can_edit = grip_mode == GripMode::None || choice.is_some();
+    let editor_key = selected.as_ref().map_or_else(
+        || "new".to_owned(),
+        |progress| {
+            format!(
+                "{:?}-{:?}-{}-{:?}",
+                progress.goal.grip,
+                progress.goal.attachment,
+                progress.goal.target_weight_kg,
+                progress.goal.target_date
+            )
+        },
+    );
+    let initial_weight = selected.as_ref().map_or_else(String::new, |progress| {
+        progress.goal.target_weight_kg.to_string()
+    });
+    let initial_date = selected
+        .as_ref()
+        .and_then(|progress| progress.goal.target_date)
+        .map_or_else(String::new, |date| date.to_string());
+    let list_id = exercise_id.clone();
+    let editor_id = exercise_id;
+    let editor_choice = choice.clone();
+
+    rsx! {
+        section {
+            class: "flex flex-col gap-1 border-t border-line pt-3",
+            "data-history-goals": "true",
+            "data-history-goals-count": "{count}",
+            h2 { class: "text-sm font-bold", "{text(Key::ExerciseHistoryGoals)}" }
+            if empty {
+                p { class: "text-[13px] text-text-sub", "{text(Key::ExerciseHistoryGoalsEmpty)}" }
+            }
+            ul { class: "flex flex-col gap-1",
+                for progress in goals {
+                    GoalRow {
+                        exercise_id: list_id.clone(),
+                        progress,
+                        on_changed,
+                    }
+                }
+            }
+            if can_edit {
+                GoalEditor {
+                    key: "{editor_key}",
+                    exercise_id: editor_id,
+                    choice: editor_choice,
+                    initial_weight,
+                    initial_date,
+                    on_changed,
+                }
+            } else {
+                p { class: "text-[12px] text-text-sub",
+                    "{text(Key::ExerciseHistoryGoalSelectGrip)}"
+                }
+            }
+        }
+    }
+}
+
+fn selected_goal(goals: &[GoalProgress], choice: Option<&str>) -> Option<GoalProgress> {
+    let filter = history_api::filter_from_choice(choice);
+    goals
+        .iter()
+        .find(|progress| {
+            progress.goal.grip == filter.grip && progress.goal.attachment == filter.attachment
+        })
+        .cloned()
+}
+
+/// 保存済みの 1 つの目標。
+#[component]
+fn GoalRow(exercise_id: String, progress: GoalProgress, on_changed: EventHandler<()>) -> Element {
+    let target = progress.goal.target_weight_kg;
+    let current = progress.current_weight_kg;
+    let difference = progress.difference_kg;
+    let target_date = progress.goal.target_date;
+    let equipment = goal_equipment(&progress);
+    let key = goal_key(&progress);
+    let mut deleting = use_signal(|| false);
+    let mut error = use_signal(|| Option::<String>::None);
+    let filter = GripFilter::new(progress.goal.grip.clone(), progress.goal.attachment.clone());
+
+    rsx! {
+        li {
+            class: "flex min-h-11 flex-wrap items-baseline justify-between gap-2 border-b border-line",
+            "data-history-goal": "{key}",
+            "data-history-goal-target": "{target}",
+            "data-history-goal-current": "{current.map_or_else(String::new, |value| value.to_string())}",
+            "data-history-goal-difference": "{difference.map_or_else(String::new, |value| value.to_string())}",
+            "data-history-goal-date": "{target_date.map_or_else(String::new, |date| date.to_string())}",
+            div { class: "flex min-w-0 flex-1 flex-col gap-0.5",
+                span { class: "text-[13px] font-semibold",
+                    "{text(Key::ExerciseHistoryGoalTarget)} {goal_api::weight_label(target)}"
+                    if let Some(date) = target_date {
+                        span { class: "text-[11px] text-text-sub",
+                            " / {text(Key::ExerciseHistoryGoalDate)} {date}"
+                        }
+                    }
+                }
+                if !equipment.is_empty() {
+                    span { class: "text-[11px] text-text-sub", "{equipment}" }
+                }
+                if let Some(value) = current {
+                    span { class: "text-[11px] text-text-sub",
+                        "{text(Key::ExerciseHistoryGoalCurrent)} {goal_api::weight_label(value)}"
+                    }
+                } else {
+                    span { class: "text-[11px] text-text-sub",
+                        "{text(Key::ExerciseHistoryGoalCurrentMissing)}"
+                    }
+                }
+                if let Some(value) = difference {
+                    span { class: "text-[12px] font-semibold",
+                        "{goal_api::difference_label(value)}"
+                    }
+                } else {
+                    span { class: "text-[11px] text-text-sub",
+                        "{text(Key::ExerciseHistoryGoalDifferenceMissing)}"
+                    }
+                }
+                if let Some(message) = (error)() {
+                    span { class: "text-[11px] text-primary", "{message}" }
+                }
+            }
+            button {
+                class: "min-h-11 border border-line px-3 text-[12px]",
+                "data-goal-delete": "true",
+                disabled: (deleting)(),
+                onclick: move |_| {
+                    deleting.set(true);
+                    error.set(None);
+                    let id = exercise_id.clone();
+                    let filter = filter.clone();
+                    spawn(async move {
+                        match goal_api::delete(&id, &filter).await {
+                            Ok(true) => on_changed.call(()),
+                            Ok(false) => error.set(Some(text(Key::ExerciseHistoryGoalDeleteFailed).to_owned())),
+                            Err(_) => error.set(Some(text(Key::ExerciseHistoryGoalDeleteFailed).to_owned())),
+                        }
+                        deleting.set(false);
+                    });
+                },
+                "{text(Key::ExerciseHistoryGoalDelete)}"
+            }
+        }
+    }
+}
+
+/// 目標の設定と変更の入力。
+#[component]
+fn GoalEditor(
+    exercise_id: String,
+    choice: Option<String>,
+    initial_weight: String,
+    initial_date: String,
+    on_changed: EventHandler<()>,
+) -> Element {
+    let mut weight = use_signal(|| initial_weight);
+    let mut date = use_signal(|| initial_date);
+    let mut saving = use_signal(|| false);
+    let mut error = use_signal(|| Option::<String>::None);
+    let mut notice = use_signal(|| Option::<String>::None);
+
+    rsx! {
+        div { class: "flex flex-col gap-2 border-t border-line pt-2",
+            "data-goal-editor": "true",
+            label { class: "flex flex-col gap-1 text-[11px] font-bold text-text-sub",
+                "{text(Key::ExerciseHistoryGoalWeightLabel)}"
+                input {
+                    class: "min-h-11 border border-line bg-bg px-2 text-[13px] text-text",
+                    "data-goal-weight": "true",
+                    r#type: "number",
+                    step: "0.5",
+                    min: "0",
+                    max: "1000",
+                    value: "{weight}",
+                    oninput: move |event| weight.set(event.value()),
+                }
+            }
+            label { class: "flex flex-col gap-1 text-[11px] font-bold text-text-sub",
+                "{text(Key::ExerciseHistoryGoalDateLabel)}"
+                input {
+                    class: "min-h-11 border border-line bg-bg px-2 text-[13px] text-text",
+                    "data-goal-date": "true",
+                    r#type: "date",
+                    value: "{date}",
+                    oninput: move |event| date.set(event.value()),
+                }
+            }
+            if let Some(message) = (error)() {
+                p { class: "text-[12px] text-primary", "{message}" }
+            }
+            if let Some(message) = (notice)() {
+                p { class: "text-[12px] text-text-sub", "{message}" }
+            }
+            button {
+                class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+                "data-goal-save": "true",
+                disabled: (saving)(),
+                onclick: move |_| {
+                    let Some(target) = parse_weight(&(weight)()) else {
+                        error.set(Some(text(Key::ExerciseHistoryGoalWeightInvalid).to_owned()));
+                        return;
+                    };
+                    let target_date = match (date)().trim() {
+                        "" => None,
+                        text_value => match JstDate::parse(text_value) {
+                            Some(value) => Some(value),
+                            None => {
+                                error.set(Some(text(Key::ExerciseHistoryGoalDateInvalid).to_owned()));
+                                return;
+                            }
+                        },
+                    };
+                    let filter = history_api::filter_from_choice(choice.as_deref());
+                    let input = goal_api::GoalInput {
+                        grip: filter.grip,
+                        attachment: filter.attachment,
+                        target_weight_kg: target,
+                        target_date,
+                    };
+                    let id = exercise_id.clone();
+                    saving.set(true);
+                    error.set(None);
+                    notice.set(None);
+                    spawn(async move {
+                        match goal_api::save(&id, &input).await {
+                            Ok(_) => {
+                                notice.set(Some(text(Key::ExerciseHistoryGoalSaved).to_owned()));
+                                on_changed.call(());
+                            }
+                            Err(_) => error.set(Some(text(Key::ExerciseHistoryGoalSaveFailed).to_owned())),
+                        }
+                        saving.set(false);
+                    });
+                },
+                if (saving)() {
+                    "{text(Key::ExerciseHistoryGoalSaving)}"
+                } else {
+                    "{text(Key::ExerciseHistoryGoalSave)}"
+                }
+            }
+        }
+    }
+}
+
+fn parse_weight(text: &str) -> Option<f64> {
+    let value = text.trim().parse::<f64>().ok()?;
+    (value.is_finite() && value > 0.0 && value <= 1000.0).then_some(value)
+}
+
+fn goal_key(progress: &GoalProgress) -> String {
+    format!(
+        "{}|{}",
+        progress.goal.grip.as_deref().unwrap_or_default(),
+        progress.goal.attachment.as_deref().unwrap_or_default()
+    )
+}
+
+fn goal_equipment(progress: &GoalProgress) -> String {
+    let mut parts = Vec::new();
+    if let Some(grip) = &progress.goal.grip {
+        parts.push(grip_label(grip));
+    }
+    if let Some(attachment) = &progress.goal.attachment {
+        parts.push(attachment_label(attachment));
+    }
+    parts.join(" / ")
 }
 
 /// 種目別の自己ベスト。

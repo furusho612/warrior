@@ -9,6 +9,7 @@ use crate::account;
 use crate::analysis;
 use crate::auth::{oauth, passkey, session};
 use crate::calendar;
+use crate::goal;
 use crate::history;
 use crate::library;
 use crate::profile;
@@ -48,6 +49,8 @@ pub const EXERCISE_FAVORITE_ROUTE_NAME: &str = "exercise_favorite";
 pub const EXERCISE_HISTORY_ROUTE_NAME: &str = "exercise_history";
 /// 種目別のグラフを返す経路の名前。
 pub const EXERCISE_GRAPH_ROUTE_NAME: &str = "exercise_graph";
+/// 種目の目標重量を保存し、取り消す経路の名前。
+pub const EXERCISE_GOAL_ROUTE_NAME: &str = "exercise_goal";
 /// 部位別の分析を返す経路の名前。
 pub const ANALYSIS_BODY_PARTS_ROUTE_NAME: &str = "analysis_body_parts";
 /// トレーニングの編集権を引き継ぐ経路の名前。
@@ -95,6 +98,8 @@ pub fn build_router() -> Router<'static, ()> {
         .delete_async("/api/exercises/:id/favorite", library::remove_favorite)
         .get_async("/api/exercises/:id/history", history::history)
         .get_async("/api/exercises/:id/graph", history::graph)
+        .put_async("/api/exercises/:id/goal", goal::put)
+        .delete_async("/api/exercises/:id/goal", goal::delete)
         .get_async("/api/analysis/body-parts", analysis::body_parts)
         .get_async("/api/calendar", calendar::month)
         .get_async("/api/calendar/:date", calendar::day)
@@ -127,6 +132,9 @@ pub fn route_name(path: &str) -> &'static str {
     }
     if path.starts_with("/api/exercises/") && path.ends_with("/favorite") {
         return EXERCISE_FAVORITE_ROUTE_NAME;
+    }
+    if path.starts_with("/api/exercises/") && path.ends_with("/goal") {
+        return EXERCISE_GOAL_ROUTE_NAME;
     }
     if exercise_id_path(path).is_some() {
         return EXERCISE_ROUTE_NAME;
@@ -216,8 +224,8 @@ mod tests {
         TRAINING_TAKEOVER_ROUTE_NAME,
     };
     use super::{
-        CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISE_GRAPH_ROUTE_NAME,
-        EXERCISE_HISTORY_ROUTE_NAME,
+        CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISE_GOAL_ROUTE_NAME,
+        EXERCISE_GRAPH_ROUTE_NAME, EXERCISE_HISTORY_ROUTE_NAME,
     };
 
     #[test]
@@ -325,6 +333,10 @@ mod tests {
         assert_eq!(
             route_name("/api/exercises/3f2504e0-4f89-41d3-9a0c-0305e82c4803/graph"),
             EXERCISE_GRAPH_ROUTE_NAME
+        );
+        assert_eq!(
+            route_name("/api/exercises/3f2504e0-4f89-41d3-9a0c-0305e82c4803/goal"),
+            EXERCISE_GOAL_ROUTE_NAME
         );
     }
 

@@ -8,6 +8,7 @@ pub mod body_figure;
 pub mod calendar;
 pub mod calendar_view;
 pub mod generated;
+pub mod goal;
 pub mod graph;
 pub mod grip_text;
 pub mod history;

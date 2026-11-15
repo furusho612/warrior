@@ -97,11 +97,19 @@ pub struct MenuChange {
 /// 目標重量への対応。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoalResponse {
+    /// 種目 ID。
+    pub exercise_id: String,
+    /// グリップ。
+    #[serde(default)]
+    pub grip: Option<String>,
+    /// アタッチメント。
+    #[serde(default)]
+    pub attachment: Option<String>,
     /// 目標を達成できるか。
     pub achievable: bool,
-    /// 段階的な途中の目標。
+    /// 段階的な途中の目標 (kg)。
     #[serde(default)]
-    pub intermediate_target_kg: Option<f64>,
+    pub intermediate_targets_kg: Vec<f64>,
     /// 理由。
     pub reason: String,
 }
@@ -130,7 +138,7 @@ pub struct AiOutput {
     pub menu_changes: Vec<MenuChange>,
     /// 目標重量への対応。
     #[serde(default)]
-    pub goal_response: Option<GoalResponse>,
+    pub goal_responses: Vec<GoalResponse>,
     /// 栄養の提案。
     #[serde(default)]
     pub nutrition_advice: Option<NutritionAdvice>,
@@ -194,9 +202,11 @@ impl AiOutput {
             return Err(OutputError::TooManyMenuChanges);
         }
         output.menu_changes.retain(valid_menu_change);
-        if let Some(goal) = output.goal_response.take() {
-            output.goal_response = valid_goal_response(&goal).then_some(goal);
-        }
+        output.goal_responses = output
+            .goal_responses
+            .into_iter()
+            .filter_map(|response| validate_goal_response(response, context))
+            .collect();
         output.nutrition_advice = output
             .nutrition_advice
             .filter(|advice| valid_nutrition_advice(advice, context));
@@ -208,7 +218,7 @@ impl AiOutput {
         let has_content = output.evaluation.is_some()
             || !output.proposals.is_empty()
             || !output.menu_changes.is_empty()
-            || output.goal_response.is_some()
+            || !output.goal_responses.is_empty()
             || output.nutrition_advice.is_some()
             || output
                 .safety_advice
@@ -337,11 +347,22 @@ fn valid_menu_change(change: &MenuChange) -> bool {
         && change.sets.is_none_or(|sets| (1..=20).contains(&sets))
 }
 
-fn valid_goal_response(goal: &GoalResponse) -> bool {
-    valid_text(&goal.reason)
-        && goal
-            .intermediate_target_kg
-            .is_none_or(|target| target.is_finite() && target > 0.0)
+fn validate_goal_response(response: GoalResponse, context: &AiContext) -> Option<GoalResponse> {
+    if !valid_text(&response.reason) {
+        return None;
+    }
+    let goal = context.goals.iter().find(|goal| {
+        goal.exercise_id == response.exercise_id
+            && goal.grip == response.grip
+            && goal.attachment == response.attachment
+    })?;
+    let mut response = response;
+    response.intermediate_targets_kg = crate::goal::valid_intermediate_targets(
+        goal.current_weight_kg,
+        goal.target_weight_kg,
+        &response.intermediate_targets_kg,
+    );
+    Some(response)
 }
 
 fn valid_nutrition_advice(advice: &NutritionAdvice, context: &AiContext) -> bool {
@@ -359,12 +380,12 @@ fn valid_nutrition_advice(advice: &NutritionAdvice, context: &AiContext) -> bool
 #[cfg(test)]
 mod tests {
     use super::{
-        AiOutput, Evaluation, EvaluationItem, MenuChange, MenuChangeKind, NutritionAdvice,
-        OutputError, SetProposal,
+        AiOutput, Evaluation, EvaluationItem, GoalResponse, MenuChange, MenuChangeKind,
+        NutritionAdvice, OutputError, SetProposal,
     };
     use crate::ai::context::{
-        AiContext, AiProfile, ContextExercise, ContextTraining, PartAnalysis, PartCategory,
-        PartSetReference, TrainingExperience,
+        AiContext, AiProfile, ContextExercise, ContextTraining, ExerciseGoal, PartAnalysis,
+        PartCategory, PartSetReference, TrainingExperience,
     };
     use crate::jst::JstDate;
     use crate::nutrition::{Goal, Sex};
@@ -408,6 +429,86 @@ mod tests {
             routine: Vec::new(),
             exercises: Vec::new(),
         }
+    }
+
+    #[test]
+    fn goal_responses_are_checked_against_the_context_goal() {
+        let mut context = context();
+        context.goals = vec![ExerciseGoal {
+            exercise_id: "bench-press".to_owned(),
+            grip: None,
+            attachment: None,
+            target_weight_kg: 60.0,
+            target_date: None,
+            current_weight_kg: Some(20.0),
+        }];
+        let output = AiOutput {
+            goal_responses: vec![GoalResponse {
+                exercise_id: "bench-press".to_owned(),
+                grip: None,
+                attachment: None,
+                achievable: false,
+                intermediate_targets_kg: vec![30.0, 60.0, 20.0, 40.0],
+                reason: "段階的に上げる".to_owned(),
+            }],
+            ..AiOutput::default()
+        };
+        let result = AiOutput::validate(output, &context).expect("a valid goal response");
+        assert_eq!(result.goal_responses.len(), 1);
+        assert_eq!(
+            result.goal_responses[0].intermediate_targets_kg,
+            vec![30.0, 40.0]
+        );
+    }
+
+    #[test]
+    fn a_goal_response_without_a_context_goal_is_removed() {
+        let output = AiOutput {
+            goal_responses: vec![GoalResponse {
+                exercise_id: "unknown".to_owned(),
+                grip: None,
+                attachment: None,
+                achievable: true,
+                intermediate_targets_kg: Vec::new(),
+                reason: "達成できる".to_owned(),
+            }],
+            ..AiOutput::default()
+        };
+        assert_eq!(
+            AiOutput::validate(output, &context()),
+            Err(OutputError::NoDisplayableContent)
+        );
+    }
+
+    #[test]
+    fn a_goal_response_without_an_intermediate_target_is_valid() {
+        let mut context = context();
+        context.goals = vec![ExerciseGoal {
+            exercise_id: "bench-press".to_owned(),
+            grip: None,
+            attachment: None,
+            target_weight_kg: 60.0,
+            target_date: None,
+            current_weight_kg: None,
+        }];
+        let output = AiOutput {
+            goal_responses: vec![GoalResponse {
+                exercise_id: "bench-press".to_owned(),
+                grip: None,
+                attachment: None,
+                achievable: true,
+                intermediate_targets_kg: Vec::new(),
+                reason: "達成できる".to_owned(),
+            }],
+            ..AiOutput::default()
+        };
+        assert_eq!(
+            AiOutput::validate(output, &context)
+                .expect("an achievable goal")
+                .goal_responses
+                .len(),
+            1
+        );
     }
 
     fn item(text: &str, evidence: &str) -> EvaluationItem {

@@ -1,11 +1,12 @@
 //! 種目別の履歴、自己ベスト、推移のグラフの取得。
 //!
 //! 対応する要求: `REQ-ANL-001`、`REQ-ANL-002`、`REQ-ANL-003`、`REQ-ANL-004`、
-//! `REQ-SET-006`、`REQ-SET-011`。
+//! `REQ-SET-006`、`REQ-SET-011`、`REQ-GOAL-002`。
 //! 記録の読み込みは `stored_sets` の変換を使い、期間の選択とグラフの点のまとめは
 //! `warrior_core::history` に任せる。このモジュールはグリップとアタッチメントの
 //! 絞り込み、D1 の行から応答への組み立て、期間の終わりに使う日本時間の日付の決定を担う
-//! (ADR-016)。自己ベストは `personal_bests` の保存済みの値を読む (REQ-SET-009)。
+//! (ADR-016)。自己ベストは `personal_bests` の保存済みの値を読み (REQ-SET-009)、
+//! 目標重量と現在の記録との差は `goal` の組み立てを共有する (REQ-GOAL-002)。
 
 use std::collections::HashMap;
 
@@ -25,6 +26,7 @@ use crate::auth::{self, session};
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
 use crate::exercise;
+use crate::goal::{self, GoalRow};
 use crate::stored_sets::{self, SetSegmentRow, StoredExercise};
 
 /// 履歴の 1 行。トレーニングの日付と終了の時刻を、セットの列に重ねる。
@@ -48,20 +50,26 @@ struct TrainingGroup {
 
 /// 1 トレーニング分の、変換済みの種目とセット。
 #[derive(Debug)]
-struct ExerciseTrainingSets {
-    training_id: String,
-    date: String,
-    finished_at: String,
-    exercises: Vec<StoredExercise>,
+pub(crate) struct ExerciseTrainingSets {
+    pub(crate) training_id: String,
+    pub(crate) date: String,
+    pub(crate) finished_at: String,
+    pub(crate) exercises: Vec<StoredExercise>,
 }
 
 #[derive(Debug, Deserialize)]
-struct BestRow {
-    grip: String,
-    attachment: String,
-    kind: String,
-    value: f64,
-    achieved_on: String,
+pub(crate) struct BestRow {
+    pub(crate) grip: String,
+    pub(crate) attachment: String,
+    pub(crate) kind: String,
+    pub(crate) value: f64,
+    pub(crate) achieved_on: String,
+}
+
+/// 履歴とグラフの目標の組み立てに渡す、目標の行と自己ベストの行。
+pub(crate) struct GoalData {
+    pub(crate) rows: Vec<GoalRow>,
+    pub(crate) bests: Vec<BestRow>,
 }
 
 /// `GET /api/exercises/:id/history`
@@ -96,7 +104,9 @@ pub async fn history(request: Request, context: RouteContext<()>) -> Result<Resp
         }
     };
     let bests = load_bests(&db, &authenticated.id, &exercise_id).await?;
-    match history_response(&exercise, &filter, trainings, bests) {
+    let goals = goal::load_rows(&db, &authenticated.id, &exercise_id).await?;
+    let today = current_date()?;
+    match history_response(&exercise, &filter, today, trainings, bests, goals) {
         Ok(body) => Response::from_json(&body),
         Err(error) => {
             console_error!("failed to build the exercise history: {error}");
@@ -154,12 +164,15 @@ pub async fn graph(request: Request, context: RouteContext<()>) -> Result<Respon
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
+    let bests = load_bests(&db, &authenticated.id, &exercise_id).await?;
+    let goals = goal::load_rows(&db, &authenticated.id, &exercise_id).await?;
     match graph_response(
         &exercise,
         period,
         metric,
         &filter,
         &trainings,
+        GoalData { rows: goals, bests },
         current_date()?,
     ) {
         Ok(body) => Response::from_json(&body),
@@ -211,7 +224,7 @@ fn history_statement(user_id: &str, exercise_id: &str) -> SqlStatement {
     )
 }
 
-async fn load_trainings(
+pub(crate) async fn load_trainings(
     db: &Db,
     user_id: &str,
     exercise_id: &str,
@@ -261,7 +274,7 @@ fn group_trainings(rows: Vec<HistoryRow>) -> Result<Vec<ExerciseTrainingSets>> {
         .collect()
 }
 
-async fn load_bests(db: &Db, user_id: &str, exercise_id: &str) -> Result<Vec<BestRow>> {
+pub(crate) async fn load_bests(db: &Db, user_id: &str, exercise_id: &str) -> Result<Vec<BestRow>> {
     db.all(&SqlStatement::new(
         "SELECT grip, attachment, kind, value, achieved_on FROM personal_bests \
          WHERE user_id = ? AND exercise_id = ?",
@@ -277,11 +290,13 @@ async fn load_bests(db: &Db, user_id: &str, exercise_id: &str) -> Result<Vec<Bes
 fn history_response(
     exercise: &Exercise,
     filter: &GripFilter,
+    today: JstDate,
     trainings: Vec<ExerciseTrainingSets>,
     bests: Vec<BestRow>,
+    goals: Vec<GoalRow>,
 ) -> Result<ExerciseHistory> {
     let mut history_trainings = Vec::new();
-    for training in trainings {
+    for training in &trainings {
         let date = parse_date(&training.date)?;
         ensure_instant(&training.finished_at)?;
         let sets = training_sets(exercise.grip_mode, filter, &training.exercises);
@@ -289,13 +304,22 @@ fn history_response(
             continue;
         }
         history_trainings.push(HistoryTraining {
-            training_id: training.training_id,
+            training_id: training.training_id.clone(),
             date,
-            finished_at: training.finished_at,
+            finished_at: training.finished_at.clone(),
             sets,
         });
     }
     sort_trainings(&mut history_trainings);
+    let bests_for_history =
+        exercise_bests(exercise.grip_mode, exercise.record_mode, filter, &bests)?;
+    let goal_progress = goal::statuses(
+        exercise.grip_mode,
+        filter,
+        GoalData { rows: goals, bests },
+        &trainings,
+        today,
+    )?;
     Ok(ExerciseHistory {
         exercise_id: exercise.id.clone(),
         name: exercise.name.clone(),
@@ -303,7 +327,8 @@ fn history_response(
         laterality: exercise.laterality,
         grip_mode: exercise.grip_mode,
         grip_options: exercise.grip_options.clone(),
-        bests: exercise_bests(exercise.grip_mode, exercise.record_mode, filter, bests)?,
+        bests: bests_for_history,
+        goals: goal_progress,
         trainings: history_trainings,
     })
 }
@@ -332,7 +357,7 @@ fn exercise_bests(
     grip_mode: GripMode,
     record_mode: warrior_core::set_calc::RecordMode,
     filter: &GripFilter,
-    rows: Vec<BestRow>,
+    rows: &[BestRow],
 ) -> Result<Vec<ExerciseBest>> {
     let kinds = best_kinds(record_mode);
     let mut bests = Vec::new();
@@ -381,6 +406,7 @@ fn graph_response(
     metric: GraphMetric,
     filter: &GripFilter,
     trainings: &[ExerciseTrainingSets],
+    goal_data: GoalData,
     end: JstDate,
 ) -> Result<ExerciseGraph> {
     let sets = graph_sets(exercise.grip_mode, filter, trainings)?;
@@ -391,6 +417,7 @@ fn graph_response(
         start: period.start(end),
         end,
         points: graph_points(period, end, metric, &sets),
+        goals: goal::statuses(exercise.grip_mode, filter, goal_data, trainings, end)?,
     })
 }
 
@@ -470,7 +497,7 @@ mod tests {
 
     use super::{
         exercise_bests, graph_response, group_trainings, history_response, history_statement,
-        BestRow, ExerciseTrainingSets, HistoryRow,
+        BestRow, ExerciseTrainingSets, GoalData, HistoryRow,
     };
     use crate::stored_sets::StoredExercise;
 
@@ -549,8 +576,15 @@ mod tests {
                 vec![weight_record(SetKind::Normal, 80.0, 10)],
             ),
         ];
-        let history = history_response(&exercise, &GripFilter::default(), trainings, Vec::new())
-            .expect("a history response");
+        let history = history_response(
+            &exercise,
+            &GripFilter::default(),
+            date(2026, 11, 13),
+            trainings,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("a history response");
         assert_eq!(history.name, "ベンチプレス");
         assert_eq!(history.record_mode, RecordMode::WeightAndReps);
         assert_eq!(
@@ -580,20 +614,29 @@ mod tests {
             vec![grip_record(SetKind::Normal, 100.0, 5, "pronated_medium")],
         )];
         let filter = GripFilter::new(Some("supinated_narrow".to_owned()), None);
-        let history = history_response(&exercise, &filter, trainings, Vec::new())
-            .expect("a history response");
+        let history = history_response(
+            &exercise,
+            &filter,
+            date(2026, 11, 13),
+            trainings,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("a history response");
         assert!(history.trainings.is_empty());
 
         let matching = GripFilter::new(Some("pronated_medium".to_owned()), None);
         let history = history_response(
             &exercise,
             &matching,
+            date(2026, 11, 13),
             vec![training_sets(
                 "training-a",
                 "2026-11-12",
                 "2026-11-12T03:00:00Z",
                 vec![grip_record(SetKind::Normal, 100.0, 5, "pronated_medium")],
             )],
+            Vec::new(),
             Vec::new(),
         )
         .expect("a history response");
@@ -626,7 +669,7 @@ mod tests {
             ),
         ];
         let filter = GripFilter::new(Some("supinated_narrow".to_owned()), None);
-        let bests = exercise_bests(GripMode::Grip, RecordMode::WeightAndReps, &filter, rows)
+        let bests = exercise_bests(GripMode::Grip, RecordMode::WeightAndReps, &filter, &rows)
             .expect("the filtered bests");
         assert_eq!(
             bests,
@@ -658,7 +701,7 @@ mod tests {
             GripMode::None,
             RecordMode::Time,
             &GripFilter::default(),
-            rows,
+            &rows,
         )
         .expect("the time bests");
         assert_eq!(
@@ -686,7 +729,7 @@ mod tests {
             GripMode::None,
             RecordMode::WeightAndReps,
             &GripFilter::default(),
-            rows,
+            &rows,
         )
         .is_err());
     }
@@ -709,6 +752,10 @@ mod tests {
             GraphMetric::TotalWeight,
             &GripFilter::default(),
             &trainings,
+            GoalData {
+                rows: Vec::new(),
+                bests: Vec::new(),
+            },
             date(2026, 11, 13),
         )
         .expect("a graph response");
@@ -736,6 +783,10 @@ mod tests {
             GraphMetric::MaxWeight,
             &GripFilter::default(),
             &trainings,
+            GoalData {
+                rows: Vec::new(),
+                bests: Vec::new(),
+            },
             date(2026, 11, 13),
         )
         .is_err());
@@ -916,8 +967,15 @@ mod tests {
             style: GripStyle::Pronated,
             width: GripWidth::Medium,
         }];
-        let history = history_response(&exercise, &GripFilter::default(), Vec::new(), Vec::new())
-            .expect("an empty history");
+        let history = history_response(
+            &exercise,
+            &GripFilter::default(),
+            date(2026, 11, 13),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("an empty history");
         let json = serde_json::to_string(&history).expect("a serializable history");
         assert_eq!(
             serde_json::from_str::<ExerciseHistory>(&json).expect("a readable history"),

@@ -88,6 +88,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の種目のお気に入り。",
     },
     Table {
+        name: "exercise_goals",
+        class: TableClass::Owned,
+        reason: "利用者の種目とグリップとアタッチメントの組ごとの目標重量。",
+    },
+    Table {
         name: "training_sessions",
         class: TableClass::Owned,
         reason: "利用者のトレーニング。",
@@ -168,6 +173,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "user_exercises",
     "master_exercise_overrides",
     "exercise_favorites",
+    "exercise_goals",
     "user_rate_limits",
     "elevation_tokens",
     "passkeys",
@@ -221,6 +227,7 @@ mod tests {
             "user_exercise_muscles",
             "master_exercise_overrides",
             "exercise_favorites",
+            "exercise_goals",
             "training_sessions",
             "training_exercises",
             "sets",
