@@ -3,13 +3,19 @@
 //! 対応する要求: `REQ-LIB-003`、`REQ-LIB-012`。
 //! 24 個の筋肉の単位のそれぞれに対応する SVG の要素があり、`data-primary` と
 //! `data-secondary` の値で色が変わることを、ライトとダークの両方で確かめる。
+//! グリップの選択を変えると、色の付く要素が変わることも確かめる。
 
-use warrior_core::exercise::MuscleUnit;
-use warrior_frontend::body_figure::{figure_svg, unit_attribute, FigureMuscles, FigureSide};
+use warrior_core::exercise::{Attachment, MuscleUnit};
+use warrior_frontend::body_figure::{
+    figure_muscles, figure_svg, unit_attribute, FigureMuscles, FigureSide,
+};
 use warrior_frontend::generated::tokens;
+use warrior_frontend::grip_options::{attachment_with, initial_grip};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
+
+mod support;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -130,6 +136,63 @@ fn req_lib_003_the_front_and_back_figures_share_a_page_without_collisions() {
     unique.sort_unstable();
     unique.dedup();
     assert_eq!(unique.len(), ids.len());
+
+    detach_container(&container);
+}
+
+#[wasm_bindgen_test]
+fn req_lib_003_changing_the_grip_selection_changes_the_colored_elements() {
+    let container = attach_container();
+    container
+        .set_attribute("style", &figure_style(&DARK))
+        .expect("the figure colors must be set");
+    let exercise = support::exercise::seated_row();
+    let options = exercise.grip_options.clone();
+    let selection = initial_grip(exercise.grip_mode, &options)
+        .expect("the seated row must have an initial grip");
+
+    let wide = figure_muscles(&exercise, Some(selection));
+    container.set_inner_html(&both_sides(&wide));
+    assert_color(
+        &container,
+        &unit_selector("m", "lats"),
+        "fill",
+        DARK.secondary,
+    );
+    assert_color(
+        &container,
+        &unit_selector("m", "trap-upper"),
+        "fill",
+        DARK.primary,
+    );
+    assert_color(
+        &container,
+        &unit_selector("m", "trap-mid-lower"),
+        "fill",
+        DARK.primary,
+    );
+
+    let narrow = attachment_with(selection, Attachment::ParallelGrip, &options);
+    let narrow = figure_muscles(&exercise, Some(narrow));
+    container.set_inner_html(&both_sides(&narrow));
+    assert_color(
+        &container,
+        &unit_selector("m", "lats"),
+        "fill",
+        DARK.primary,
+    );
+    assert_color(
+        &container,
+        &unit_selector("m", "trap-upper"),
+        "fill",
+        DARK.rest,
+    );
+    assert_color(
+        &container,
+        &unit_selector("m", "trap-mid-lower"),
+        "fill",
+        DARK.secondary,
+    );
 
     detach_container(&container);
 }

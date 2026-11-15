@@ -6,6 +6,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use thirtyfour::components::SelectElement;
 use thirtyfour::prelude::*;
 use thirtyfour::{ChromiumLikeCapabilities, LoggingPrefsLogLevel};
 
@@ -285,6 +286,21 @@ pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
         .send_keys(value)
         .await
         .unwrap_or_else(|error| panic!("the input {selector} must be typed: {error}"));
+}
+
+/// セレクタの選択要素で、値を選ぶ。
+pub async fn select_value(driver: &WebDriver, selector: &str, value: &str) {
+    let select = driver
+        .find(By::Css(selector))
+        .await
+        .unwrap_or_else(|error| panic!("the select {selector} must exist: {error}"));
+    let select = SelectElement::new(&select)
+        .await
+        .unwrap_or_else(|error| panic!("the select {selector} must be a select: {error}"));
+    select
+        .select_by_value(value)
+        .await
+        .unwrap_or_else(|error| panic!("the value {value} must be selectable: {error}"));
 }
 
 /// 種目をライブラリから記録へ追加する。

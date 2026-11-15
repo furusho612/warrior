@@ -1,4 +1,4 @@
-//! 端末内の保存のブラウザテストが共有する準備。
+//! ブラウザテストが共有する準備。
 
 #![allow(dead_code)]
 
@@ -10,6 +10,7 @@ use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 use warrior_core::training_session::SessionSource;
 use warrior_frontend::storage::{Storage, Store};
 
+pub mod exercise;
 pub mod exercise_tree;
 pub mod set;
 
