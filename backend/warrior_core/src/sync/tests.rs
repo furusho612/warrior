@@ -61,6 +61,101 @@ fn entry(operation: Operation, state: OutboxState) -> OutboxEntry {
 }
 
 #[test]
+fn a_past_record_can_be_added_with_a_date_and_a_duration_but_not_a_start_time() {
+    let operation = Operation {
+        operation_id: OPERATION_ID.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 1,
+        kind: OperationKind::TrainingSessionBackfill,
+        parent_operation_id: None,
+        payload: json!({
+            "id": TRAINING_ID,
+            "date": "2026-11-12",
+            "duration_seconds": 3600,
+            "memo": ""
+        }),
+    };
+    let validated = validate_operation(&operation).expect("a valid backfill");
+    let super::ValidatedPayload::Backfill(payload) = validated.payload else {
+        panic!("the payload must be a backfill");
+    };
+    assert_eq!(payload.date, "2026-11-12");
+    assert_eq!(payload.duration_seconds, 3_600);
+    assert_eq!(payload.id, TRAINING_ID);
+}
+
+#[test]
+fn a_backfill_rejects_an_impossible_date_and_a_duration_out_of_the_day() {
+    let mut operation = Operation {
+        operation_id: OPERATION_ID.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 1,
+        kind: OperationKind::TrainingSessionBackfill,
+        parent_operation_id: None,
+        payload: json!({
+            "id": TRAINING_ID,
+            "date": "2026-11-12",
+            "duration_seconds": 1,
+            "memo": ""
+        }),
+    };
+    assert!(validate_operation(&operation).is_ok());
+    operation.payload["duration_seconds"] = json!(86_400);
+    assert!(validate_operation(&operation).is_ok());
+    operation.payload["duration_seconds"] = json!(0);
+    assert_eq!(
+        validate_operation(&operation),
+        Err(SyncError::InvalidDuration)
+    );
+    operation.payload["duration_seconds"] = json!(86_401);
+    assert_eq!(
+        validate_operation(&operation),
+        Err(SyncError::InvalidDuration)
+    );
+    operation.payload["duration_seconds"] = json!(3_600);
+    operation.payload["date"] = json!("2026-02-30");
+    assert_eq!(validate_operation(&operation), Err(SyncError::InvalidDate));
+    operation.payload["date"] = json!("2026-11-12");
+    operation.payload["id"] = json!(UPDATE_ID);
+    assert_eq!(
+        validate_operation(&operation),
+        Err(SyncError::PayloadIdMismatch)
+    );
+}
+
+#[test]
+fn a_delete_operation_names_the_training_it_removes() {
+    let operation = Operation {
+        operation_id: OPERATION_ID.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 3,
+        kind: OperationKind::TrainingSessionDelete,
+        parent_operation_id: None,
+        payload: json!({ "training_id": TRAINING_ID }),
+    };
+    let validated = validate_operation(&operation).expect("a valid deletion");
+    let super::ValidatedPayload::Delete(payload) = validated.payload else {
+        panic!("the payload must be a deletion");
+    };
+    assert_eq!(payload.training_id, TRAINING_ID);
+
+    let mut foreign = operation.clone();
+    foreign.payload = json!({ "training_id": UPDATE_ID });
+    assert_eq!(
+        validate_operation(&foreign),
+        Err(SyncError::PayloadIdMismatch)
+    );
+    assert_eq!(
+        OperationKind::parse("training_session_delete"),
+        Some(OperationKind::TrainingSessionDelete)
+    );
+    assert_eq!(
+        OperationKind::parse("training_session_backfill"),
+        Some(OperationKind::TrainingSessionBackfill)
+    );
+}
+
+#[test]
 fn validates_a_create_operation() {
     let validated = validate_operation(&create_operation()).expect("valid create");
     assert_eq!(validated.operation.operation_id, OPERATION_ID);

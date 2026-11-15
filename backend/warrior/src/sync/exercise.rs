@@ -63,6 +63,7 @@ pub(super) async fn exercise_batch(
                 &payload.training_exercise_id,
             )
             .await?
+                && !finished
             {
                 return Ok(BatchOutcome::Reject(response(
                     ErrorCode::Conflict,
@@ -82,6 +83,8 @@ pub(super) async fn exercise_batch(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::SetCreate(_)
         | ValidatedPayload::SetUpdate(_)
@@ -150,6 +153,8 @@ fn exercise_statements(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::Delete(_)
         | ValidatedPayload::SetCreate(_)
         | ValidatedPayload::SetUpdate(_)
         | ValidatedPayload::SetDelete(_)

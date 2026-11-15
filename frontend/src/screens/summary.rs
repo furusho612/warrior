@@ -191,7 +191,7 @@ pub(crate) fn best_equipment(item: &PersonalBestItem) -> Option<String> {
     }
 }
 
-fn format_duration(seconds: i64) -> String {
+pub(crate) fn format_duration(seconds: i64) -> String {
     let seconds = seconds.max(0);
     let hours = seconds / 3_600;
     let minutes = (seconds % 3_600) / 60;

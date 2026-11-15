@@ -109,6 +109,15 @@ pub enum RestoreOutcome {
     Deferred,
 }
 
+/// 削除したトレーニングの端末内の後始末の結果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    /// 送信待ちの削除の操作を積んだ。
+    Queued,
+    /// サーバーに届いていないトレーニングだったため、端末の行だけを消した。
+    Discarded,
+}
+
 /// IndexedDB のオブジェクトストア。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Store {
@@ -294,6 +303,135 @@ impl Storage {
             return abort(transaction, error).await;
         }
         transaction.finish().await
+    }
+
+    /// 日付を指定したトレーニングの追加とその操作を 1 つのトランザクションで保存する。
+    ///
+    /// 過去の記録は開始時刻を持たず、終了済みとして保存する。
+    pub async fn save_session_backfill(
+        &self,
+        session: &SessionRecord,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        if operation.kind != OperationKind::TrainingSessionBackfill
+            || operation.training_id != session.id
+            || session.started_at.is_some()
+            || session.finished_at.is_none()
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not a past record addition".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::TrainingSessions.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let sessions = transaction.store(Store::TrainingSessions.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+
+        let entries = outbox::read(&outbox_store).await?;
+        if let Err(error) = indexeddb::put(&sessions, &indexeddb::to_js(session)?).await {
+            return abort(transaction, error).await;
+        }
+        if let Err(error) =
+            exercise::enqueue_operation(&outbox_store, &meta, &entries, operation).await
+        {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// 端末のトレーニングと配下の行を削除し、削除の操作を送信待ちの列へ積む。
+    ///
+    /// 作成がまだサーバーに届いていないトレーニングは、端末の行と送信待ちの操作だけを消す。
+    /// 削除の操作を送っても対象が無く、ほかの操作を失敗させるためである。
+    pub async fn delete_session_tree(
+        &self,
+        training_id: &str,
+        operation: &Operation,
+    ) -> Result<DeleteOutcome, StorageError> {
+        if operation.kind != OperationKind::TrainingSessionDelete
+            || operation.training_id != training_id
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not a training deletion".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::TrainingSessions.name(),
+                Store::TrainingExercises.name(),
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::Supersets.name(),
+                Store::SupersetMembers.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let entries = match outbox::read(&outbox_store).await {
+            Ok(entries) => entries,
+            Err(error) => return abort(transaction, error).await,
+        };
+        let unsent_create = unresolved_create(&entries, training_id).is_some();
+        if let Err(error) = exercise::delete_session_tree(&transaction, training_id).await {
+            return abort(transaction, error).await;
+        }
+        if unsent_create {
+            for entry in entries
+                .iter()
+                .filter(|entry| entry.operation.training_id == training_id)
+            {
+                if let Err(error) = indexeddb::delete_entry(
+                    &outbox_store,
+                    &JsValue::from_str(&entry.operation.operation_id),
+                )
+                .await
+                {
+                    return abort(transaction, error).await;
+                }
+            }
+            transaction.finish().await?;
+            return Ok(DeleteOutcome::Discarded);
+        }
+        let meta = transaction.store(Store::Meta.name())?;
+        if let Err(error) =
+            exercise::enqueue_operation(&outbox_store, &meta, &entries, operation).await
+        {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await?;
+        Ok(DeleteOutcome::Queued)
+    }
+
+    /// 端末に保存した終了済みのトレーニングを、日付と終了時刻の新しい順で返す。
+    pub async fn finished_sessions(&self) -> Result<Vec<SessionRecord>, StorageError> {
+        let values = self.all_records(Store::TrainingSessions).await?;
+        let mut sessions = values
+            .iter()
+            .map(|value| serde_json::from_value::<SessionRecord>(value.clone()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| StorageError::Serialize(error.to_string()))?;
+        sessions.retain(|session| session.finished_at.is_some());
+        sessions.sort_by(|left, right| {
+            right
+                .date
+                .cmp(&left.date)
+                .then_with(|| right.finished_at.cmp(&left.finished_at))
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+        });
+        Ok(sessions)
     }
 
     /// トレーニングの更新とその操作を 1 つのトランザクションで保存する。
@@ -824,7 +962,9 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
         | OperationKind::SetComplete
         | OperationKind::SupersetCreate
         | OperationKind::SupersetDelete
-        | OperationKind::SupersetReorder => Err(StorageError::InvalidOperation(
+        | OperationKind::SupersetReorder
+        | OperationKind::TrainingSessionBackfill
+        | OperationKind::TrainingSessionDelete => Err(StorageError::InvalidOperation(
             "the operation has no memo".to_owned(),
         )),
     }

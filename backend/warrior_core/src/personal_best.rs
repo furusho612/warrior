@@ -211,6 +211,113 @@ pub fn recompute(trainings: &[TrainingSets<'_>]) -> Vec<PersonalBestEntry> {
     entries
 }
 
+/// 自己ベストの計算し直しの対象にする、種目、グリップ、アタッチメントの組。
+///
+/// 自己ベストの種類は組に含めない。組を対象にすると、その組が持ちうる全ての種類を
+/// 残っている記録から作り直す。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BestGroup {
+    /// 種目 ID。
+    pub exercise_id: String,
+    /// グリップ。選ばない種目は None。
+    pub grip: Option<String>,
+    /// アタッチメント。選ばない種目は None。
+    pub attachment: Option<String>,
+}
+
+impl BestGroup {
+    /// セットの記録が比較に使う組を返す。
+    pub fn of(key: &BestKey) -> Self {
+        Self {
+            exercise_id: key.exercise_id.clone(),
+            grip: key.grip.clone(),
+            attachment: key.attachment.clone(),
+        }
+    }
+
+    /// 比較の単位がこの組に属するか返す。
+    pub fn contains(&self, key: &PersonalBestKey) -> bool {
+        self.exercise_id == key.exercise_id
+            && self.grip == key.grip
+            && self.attachment == key.attachment
+    }
+}
+
+/// セットの記録から、影響する組を重複なく返す。
+///
+/// 編集または削除したトレーニングのセットを渡し、計算し直す範囲を決める。
+pub fn affected_groups(sets: &[SessionSet]) -> Vec<BestGroup> {
+    let mut groups = Vec::<BestGroup>::new();
+    for set in sets {
+        let group = BestGroup::of(set.record.key());
+        if !groups.contains(&group) {
+            groups.push(group);
+        }
+    }
+    groups
+}
+
+/// 全ての記録から、指定した組だけの自己ベストを計算し直す。
+///
+/// トレーニングは日付の昇順で渡す。組の外の候補は捨てる。
+pub fn recompute_groups(
+    trainings: &[TrainingSets<'_>],
+    groups: &[BestGroup],
+) -> Vec<PersonalBestEntry> {
+    recompute(trainings)
+        .into_iter()
+        .filter(|entry| groups.iter().any(|group| group.contains(&entry.key)))
+        .collect()
+}
+
+/// 保存済みの行のうち、指定した組の行を計算し直した値で置き換える。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RebuiltBests {
+    /// 書き込む、または値を更新する行。
+    pub upserts: Vec<PersonalBestEntry>,
+    /// 値がなくなった行のキー。
+    pub deletes: Vec<PersonalBestKey>,
+}
+
+impl RebuiltBests {
+    /// 適用の後の自己ベストの一覧を返す。
+    ///
+    /// 組の外の行は変えず、組の中の行だけを計算し直した値にする。
+    pub fn applied(&self, existing: &[PersonalBestEntry]) -> Vec<PersonalBestEntry> {
+        let mut entries = existing
+            .iter()
+            .filter(|entry| !self.deletes.contains(&entry.key))
+            .filter(|entry| !self.upserts.iter().any(|upsert| upsert.key == entry.key))
+            .cloned()
+            .collect::<Vec<_>>();
+        entries.extend(self.upserts.iter().cloned());
+        entries
+    }
+}
+
+/// 計算し直した値と保存済みの行の差を返す。
+///
+/// 対象の組の行は計算し直した値で置き換え、計算し直した値が無い行は削除する。
+/// 同じ値の行も書き直す。書き込みを冪等にし、再送で状態を変えないためである。
+pub fn reconcile(
+    existing: &[PersonalBestEntry],
+    recomputed: &[PersonalBestEntry],
+    groups: &[BestGroup],
+) -> RebuiltBests {
+    let upserts = recomputed
+        .iter()
+        .filter(|entry| groups.iter().any(|group| group.contains(&entry.key)))
+        .cloned()
+        .collect::<Vec<_>>();
+    let deletes = existing
+        .iter()
+        .map(|entry| entry.key.clone())
+        .filter(|key| groups.iter().any(|group| group.contains(key)))
+        .filter(|key| !upserts.iter().any(|upsert| upsert.key == *key))
+        .collect::<Vec<_>>();
+    RebuiltBests { upserts, deletes }
+}
+
 struct CandidateGroup {
     key: BestKey,
     mode: RecordMode,
@@ -260,7 +367,10 @@ mod tests {
     //! 対応する要求: `REQ-SET-009`、`REQ-SET-011`。
     //! 4 種類、ドロップセット、ウォームアップ、グリップの分離、左右別の時間を固定する。
 
-    use super::{candidates, recompute, updated, PersonalBestEntry, PersonalBestKey, TrainingSets};
+    use super::{
+        affected_groups, candidates, recompute, recompute_groups, reconcile, updated, BestGroup,
+        PersonalBestEntry, PersonalBestKey, TrainingSets,
+    };
     use crate::exercise::Laterality;
     use crate::jst::JstDate;
     use crate::set_calc::{
@@ -602,5 +712,138 @@ mod tests {
             "{kind:?} must be {value} but was {}",
             candidate.value
         );
+    }
+
+    #[test]
+    fn a_rebuild_replaces_the_affected_rows_and_keeps_the_others() {
+        let affected = group("bench");
+        let untouched = group("squat");
+        let existing = vec![
+            entry(&affected, BestKind::MaxWeight, 100.0, 11, "first"),
+            entry(&untouched, BestKind::MaxWeight, 150.0, 10, "squat"),
+        ];
+        let recomputed = vec![entry(&affected, BestKind::MaxWeight, 90.0, 12, "second")];
+
+        let rebuilt = reconcile(&existing, &recomputed, std::slice::from_ref(&affected));
+
+        assert_eq!(rebuilt.upserts, recomputed);
+        assert!(rebuilt.deletes.is_empty());
+        assert_eq!(
+            rebuilt.applied(&existing),
+            vec![
+                entry(&untouched, BestKind::MaxWeight, 150.0, 10, "squat"),
+                entry(&affected, BestKind::MaxWeight, 90.0, 12, "second"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rebuild_deletes_the_rows_whose_value_is_gone() {
+        let affected = group("bench");
+        let untouched = group("squat");
+        let existing = vec![
+            entry(&affected, BestKind::MaxWeight, 100.0, 11, "first"),
+            entry(&affected, BestKind::EstimatedOneRepMax, 120.0, 11, "first"),
+            entry(&untouched, BestKind::MaxWeight, 150.0, 10, "squat"),
+        ];
+
+        let rebuilt = reconcile(&existing, &[], std::slice::from_ref(&affected));
+
+        assert!(rebuilt.upserts.is_empty());
+        assert_eq!(
+            rebuilt.deletes,
+            vec![
+                PersonalBestKey {
+                    kind: BestKind::MaxWeight,
+                    ..key_of(&affected)
+                },
+                PersonalBestKey {
+                    kind: BestKind::EstimatedOneRepMax,
+                    ..key_of(&affected)
+                },
+            ]
+        );
+        assert_eq!(
+            rebuilt.applied(&existing),
+            vec![entry(&untouched, BestKind::MaxWeight, 150.0, 10, "squat")]
+        );
+    }
+
+    #[test]
+    fn recompute_groups_only_returns_the_requested_groups() {
+        let bench = session_set(
+            "bench",
+            weight_record(SetKind::Normal, vec![segment(100.0, 5)]),
+        );
+        let squat_key = BestKey {
+            exercise_id: "squat".to_owned(),
+            grip: None,
+            attachment: None,
+        };
+        let squat = session_set(
+            "squat",
+            SetRecord::new(
+                squat_key,
+                SetKind::Normal,
+                vec![segment(150.0, 5)],
+                None,
+                None,
+                RecordMode::WeightAndReps,
+            )
+            .expect("a valid set"),
+        );
+        let entries = recompute_groups(
+            &[TrainingSets {
+                training_id: "training",
+                achieved_on: date(12),
+                sets: &[bench, squat],
+            }],
+            &[group("bench")],
+        );
+
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().all(|entry| entry.key.exercise_id == "bench"));
+        assert_eq!(
+            affected_groups(&[session_set(
+                "bench",
+                weight_record(SetKind::Normal, vec![segment(100.0, 5)])
+            )]),
+            vec![group("bench")]
+        );
+    }
+
+    fn group(exercise_id: &str) -> BestGroup {
+        BestGroup {
+            exercise_id: exercise_id.to_owned(),
+            grip: None,
+            attachment: None,
+        }
+    }
+
+    fn key_of(group: &BestGroup) -> PersonalBestKey {
+        PersonalBestKey {
+            exercise_id: group.exercise_id.clone(),
+            grip: group.grip.clone(),
+            attachment: group.attachment.clone(),
+            kind: BestKind::MaxWeight,
+        }
+    }
+
+    fn entry(
+        group: &BestGroup,
+        kind: BestKind,
+        value: f64,
+        day: u32,
+        training_id: &str,
+    ) -> PersonalBestEntry {
+        PersonalBestEntry {
+            key: PersonalBestKey {
+                kind,
+                ..key_of(group)
+            },
+            value,
+            achieved_on: date(day),
+            training_id: training_id.to_owned(),
+        }
     }
 }

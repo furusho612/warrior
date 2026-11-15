@@ -430,6 +430,7 @@ mod tests {
             analysis_date: date.to_owned(),
             segment: SetSegmentRow {
                 training_id: training_id.to_owned(),
+                training_date: None,
                 training_exercise_id: format!("{training_id}-exercise"),
                 snapshot: serde_json::to_string(&exercise(body_part))
                     .expect("a serializable snapshot"),

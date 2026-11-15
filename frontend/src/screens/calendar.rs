@@ -1,6 +1,7 @@
 //! カレンダーの月表示、部位の色分け、日数の集計、日の詳細、絞り込み、凡例。
 
 use dioxus::prelude::*;
+use dioxus_router::Link;
 use warrior_core::calendar::{
     next_month, previous_month, CalendarDayDetail, CalendarExercise, CalendarMonth, CalendarSet,
 };
@@ -13,6 +14,11 @@ use crate::calendar_view::{
     format_weight, part_button_class, part_color_class, part_counts, part_label, set_notes,
     set_text, weekdays, CalendarCell,
 };
+use crate::ids::{new_uuid, now_iso};
+use crate::routes::Route;
+use crate::screens::history::{backfill_operation, backfill_session};
+use crate::storage;
+use crate::sync;
 use crate::text::{text, Key};
 
 #[component]
@@ -47,6 +53,12 @@ pub fn CalendarScreen() -> Element {
             section { class: "min-w-0 flex-1 px-3.5",
                 div { class: "flex h-12 items-center justify-between",
                     h1 { class: "text-[17px] font-black", "{text(Key::CalendarTitle)}" }
+                    Link {
+                        to: Route::History {},
+                        class: "flex min-h-11 items-center border border-line px-2 text-[11px] text-primary",
+                        "data-calendar-history": "true",
+                        "{text(Key::CalendarHistory)}"
+                    }
                 }
                 MonthHeading {
                     month: month_now,
@@ -68,6 +80,7 @@ pub fn CalendarScreen() -> Element {
                     loading: detail_loading,
                     on_retry: handlers.day_retry,
                 }
+                CalendarAddForm { state: state, today: today }
                 MonthStatus {
                     loading: loading,
                     error: month_error,
@@ -79,7 +92,7 @@ pub fn CalendarScreen() -> Element {
 }
 
 /// カレンダー画面の状態。月と日の読み込みも、この状態へ書き込む。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct CalendarSignals {
     month: Signal<Option<JstMonth>>,
     part: Signal<Option<BodyPart>>,
@@ -527,6 +540,148 @@ fn SetDetail(index: usize, set: CalendarSet) -> Element {
             span { class: "text-[11px] text-text-sub", "{notes_text}" }
         }
     }
+}
+
+/// 日付を指定した追加の操作の結果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddRecordError {
+    /// 日付が存在しない、または形式が違う。
+    InvalidDate,
+    /// 所要時間が 1 分以上 1440 分以下でない。
+    InvalidDuration,
+    /// 端末に保存できない。
+    Storage,
+}
+
+/// 日付を指定して過去の記録を追加する入口。
+///
+/// 追加する記録は開始時刻を持たず、指定した日付と所要時間を持つ。サーバーが受理した後に
+/// 月と日を読み直すため、追加した日付のトレーニングがカレンダーに現れる。
+#[component]
+fn CalendarAddForm(state: CalendarSignals, today: Option<JstDate>) -> Element {
+    let initial_date = (state.selected)()
+        .or(today)
+        .map(|date| date.to_string())
+        .unwrap_or_default();
+    let mut date = use_signal(|| initial_date);
+    let mut minutes = use_signal(String::new);
+    let error = use_signal(|| Option::<String>::None);
+    let busy = use_signal(|| false);
+    let busy_now = busy();
+    let error_now = error();
+    let date_value = date();
+    let minutes_value = minutes();
+
+    rsx! {
+        section {
+            class: "mt-2 flex flex-col gap-2 border border-line bg-surface p-2",
+            "data-calendar-add": "true",
+            h2 { class: "text-sm font-bold", "{text(Key::CalendarAddTitle)}" }
+            label { class: "flex flex-col gap-1 text-[11px]",
+                "{text(Key::CalendarAddDateLabel)}"
+                input {
+                    class: "min-h-11 border border-line bg-surface px-2 text-[13px]",
+                    r#type: "date",
+                    "data-calendar-add-date": "true",
+                    value: "{date_value}",
+                    oninput: move |event| date.set(event.value()),
+                }
+            }
+            label { class: "flex flex-col gap-1 text-[11px]",
+                "{text(Key::CalendarAddDurationLabel)}"
+                input {
+                    class: "min-h-11 border border-line bg-surface px-2 text-[13px]",
+                    r#type: "number",
+                    min: "1",
+                    max: "1440",
+                    "data-calendar-add-duration": "true",
+                    value: "{minutes_value}",
+                    oninput: move |event| minutes.set(event.value()),
+                }
+            }
+            if let Some(message) = error_now {
+                p { class: "text-[11px] text-primary", "data-calendar-add-error": "true", "{message}" }
+            }
+            button {
+                class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+                "data-calendar-add-submit": "true",
+                disabled: busy_now,
+                onclick: move |_| {
+                    let date_text = date();
+                    let minutes_text = minutes();
+                    spawn(add_record(date_text, minutes_text, state, error, busy));
+                },
+                "{text(Key::CalendarAddSubmit)}"
+            }
+        }
+    }
+}
+
+/// 日付と所要時間から過去の記録を作り、端末の保存と送信待ちの列を通す。
+async fn add_record(
+    date_text: String,
+    minutes_text: String,
+    mut state: CalendarSignals,
+    mut error: Signal<Option<String>>,
+    mut busy: Signal<bool>,
+) {
+    busy.set(true);
+    let result = save_backfill(&date_text, &minutes_text).await;
+    busy.set(false);
+    match result {
+        Ok(session) => {
+            error.set(None);
+            if let Some(date) = JstDate::parse(&session.date) {
+                state.month.set(Some(date.month_range()));
+                state.selected.set(Some(date));
+            }
+            state.month_reload += 1;
+            state.day_reload += 1;
+        }
+        Err(AddRecordError::InvalidDate) => {
+            error.set(Some(text(Key::CalendarAddInvalidDate).to_owned()));
+        }
+        Err(AddRecordError::InvalidDuration) => {
+            error.set(Some(text(Key::CalendarAddInvalidDuration).to_owned()));
+        }
+        Err(AddRecordError::Storage) => {
+            error.set(Some(text(Key::CalendarAddFailed).to_owned()));
+        }
+    }
+}
+
+/// 追加する記録を端末に保存し、サーバーへの送信を待つ。
+async fn save_backfill(
+    date_text: &str,
+    minutes_text: &str,
+) -> Result<warrior_core::sync::SessionRecord, AddRecordError> {
+    let Some(date) = JstDate::parse(date_text.trim()) else {
+        return Err(AddRecordError::InvalidDate);
+    };
+    let minutes = minutes_text
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| AddRecordError::InvalidDuration)?;
+    let duration_seconds = minutes
+        .checked_mul(60)
+        .ok_or(AddRecordError::InvalidDuration)?;
+    let now = now_iso();
+    let session = backfill_session(
+        new_uuid().map_err(|_| AddRecordError::Storage)?,
+        date.to_string(),
+        duration_seconds,
+        now,
+    );
+    let operation = backfill_operation(&session).map_err(|_| AddRecordError::InvalidDuration)?;
+    let storage = storage::current()
+        .await
+        .map_err(|_| AddRecordError::Storage)?;
+    storage
+        .save_session_backfill(&session, &operation)
+        .await
+        .map_err(|_| AddRecordError::Storage)?;
+    sync::flush().await;
+    Ok(session)
 }
 
 /// 月の読み込み要求。応答を適用してよいかを、要求した月と部位と世代で決める。
