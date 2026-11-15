@@ -277,6 +277,8 @@ text_keys! {
     ExerciseOtherScope => "範囲",
     ExerciseScopeFullBody => "全身",
     ExerciseScopeLowerBody => "下半身",
+    ExerciseFigureFront => "前",
+    ExerciseFigureBack => "後",
     ExerciseHistory => "履歴とグラフを見る",
     ExerciseLoadFailed => "種目を読み込めませんでした。",
     ExerciseRetry => "再試行",

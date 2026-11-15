@@ -62,7 +62,7 @@ run = "cargo build -p warrior_test_oidc"
 [tasks.e2e]
 description = "Chrome の E2E と、資源の teardown のテストを実行する"
 depends = ["backend:build", "frontend:build", "test-oidc:build"]
-run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke --test e2e_auth --test e2e_passkey --test e2e_account_deletion --test e2e_pwa --test e2e_offline --test e2e_training_session --test e2e_ownership --test e2e_calendar --test e2e_record_exercise --test e2e_record_set --test e2e_record_drop_set --test e2e_record_unilateral_superset --test e2e_record_reps_rpe --test e2e_record_time --test e2e_grip --test e2e_personal_best --test e2e_profile --test e2e_library"
+run = "cargo test -p warrior --test e2e_harness_smoke --test support_teardown --test wrangler_oidc_provider --test wrangler_frontend_smoke --test e2e_auth --test e2e_passkey --test e2e_account_deletion --test e2e_pwa --test e2e_offline --test e2e_training_session --test e2e_ownership --test e2e_calendar --test e2e_record_exercise --test e2e_record_set --test e2e_record_drop_set --test e2e_record_unilateral_superset --test e2e_record_reps_rpe --test e2e_record_time --test e2e_grip --test e2e_personal_best --test e2e_profile --test e2e_library --test e2e_body_figure"
 
 [tasks."e2e-safari"]
 description = "Safari の E2E のスモークを実行する"
@@ -104,6 +104,7 @@ cargo test -p warrior_frontend --target wasm32-unknown-unknown
 
 [tasks."test-pbt"]
 description = "性質テストを実行する"
+depends = ["tokens"]
 run = "cargo test -p warrior_pbt"
 
 [tasks."backend:build"]

@@ -3686,6 +3686,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "warrior_core",
+ "warrior_frontend",
 ]
 
 [[package]]
