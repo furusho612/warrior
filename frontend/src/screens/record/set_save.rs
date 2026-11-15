@@ -31,7 +31,7 @@ struct SaveStates {
     waiters: HashMap<String, Vec<Waker>>,
 }
 
-/// セットの保存が同時に走らないようにする印。
+/// セットごとの保存の実行と、完了のための停止を管理する印。
 #[derive(Clone, Default)]
 pub(super) struct SetSaver {
     states: Rc<RefCell<SaveStates>>,
@@ -188,6 +188,7 @@ fn lateral_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> bool {
         .is_some_and(|view| view.snapshot.laterality == Laterality::Unilateral)
 }
 
+// 対応する要求: `REQ-SET-009`。セットの完了は、保存中の値の更新より後ろに積まない。
 #[cfg(test)]
 mod tests {
     use std::future::Future;

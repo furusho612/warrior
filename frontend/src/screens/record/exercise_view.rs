@@ -530,7 +530,11 @@ pub(super) async fn complete_set(
         }
     };
     // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
-    if completed && !save_completed_values(&storage, &training_id, &set, lateral, error).await {
+    if completed
+        && save_completed_values(&storage, &training_id, &set, lateral)
+            .await
+            .is_err()
+    {
         abort_completion(views, &set_id, completed, &saver, error);
         return;
     }
@@ -561,37 +565,23 @@ pub(super) async fn complete_set(
     sync::flush_in_background();
 }
 
-/// 完了するセットの値の更新を端末内へ保存する。保存できたら true を返す。
+/// 完了するセットの値の更新を端末内へ保存する。
 async fn save_completed_values(
     storage: &storage::Storage,
     training_id: &str,
     set: &SetView,
     lateral: bool,
-    error: Signal<Option<String>>,
-) -> bool {
+) -> Result<(), storage::StorageError> {
     let values = set.values(lateral);
     let segments = set
         .segments
         .iter()
         .map(|segment| segment.record.clone())
         .collect::<Vec<_>>();
-    let (rows, operation) = match training_set::update(training_id, &set.record, &segments, &values)
-    {
-        Ok(rows) => rows,
-        Err(_) => {
-            set_error(error, Key::RecordSetSaveFailed);
-            return false;
-        }
-    };
-    if storage
+    let (rows, operation) = training_set::update(training_id, &set.record, &segments, &values)?;
+    storage
         .save_set_update(&rows.set, &rows.segments, &operation)
         .await
-        .is_err()
-    {
-        set_error(error, Key::RecordSetSaveFailed);
-        return false;
-    }
-    true
 }
 
 /// 完了を書き込めなかったときに、画面の印と保存の停止を戻す。
