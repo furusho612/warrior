@@ -157,6 +157,7 @@ pub(crate) async fn set_batch(
         user_id,
         validated,
         rules.map(|rules| rules.record_mode),
+        rules.is_some_and(|rules| rules.lateral()),
         ownership,
         now,
     ) else {
@@ -236,6 +237,10 @@ async fn precheck_create(
     if let Some(rejection) = validation::segments_shape_rejection(&payload.segments, rules) {
         return Ok(Some(rejection));
     }
+    if let Some(rejection) = validation::time_values_rejection(&payload.segments, rules.record_mode)
+    {
+        return Ok(Some(rejection));
+    }
     if let Some(existing) = set_owner_row(db, user_id, &payload.set_id).await? {
         if existing.training_id != training_id
             || existing.training_exercise_id != payload.training_exercise_id
@@ -274,6 +279,10 @@ async fn precheck_update(
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
     if let Some(rejection) = validation::segments_shape_rejection(&payload.segments, rules) {
+        return Ok(Some(rejection));
+    }
+    if let Some(rejection) = validation::time_values_rejection(&payload.segments, rules.record_mode)
+    {
         return Ok(Some(rejection));
     }
     if !drop_positions_allowed(
@@ -375,6 +384,7 @@ fn set_statements(
     user_id: &str,
     validated: &ValidatedOperation,
     mode: Option<RecordMode>,
+    lateral: bool,
     ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Option<SetData> {
@@ -389,6 +399,7 @@ fn set_statements(
                 training_id,
                 set_id: &payload.set_id,
                 mode,
+                lateral,
                 ownership,
                 applied: &applied,
                 now,
@@ -405,6 +416,7 @@ fn set_statements(
                 training_id,
                 set_id: &payload.set_id,
                 mode,
+                lateral,
                 ownership,
                 applied: &applied,
                 now,
@@ -420,6 +432,7 @@ fn set_statements(
                 training_id,
                 set_id: &payload.set_id,
                 mode: RecordMode::WeightAndReps,
+                lateral: false,
                 ownership,
                 applied: &applied,
                 now,

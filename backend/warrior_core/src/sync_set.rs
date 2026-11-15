@@ -248,7 +248,8 @@ impl SetSegmentPayload {
             };
             return match mode {
                 RecordMode::Time => {
-                    left.duration_seconds.is_some_and(|duration| duration > 0)
+                    self.duration_seconds.is_none()
+                        && left.duration_seconds.is_some_and(|duration| duration > 0)
                         && right.duration_seconds.is_some_and(|duration| duration > 0)
                 }
                 RecordMode::WeightAndReps => {
@@ -868,5 +869,25 @@ mod tests {
             duration_seconds: None,
         });
         assert!(!empty_side.has_completion_values(RecordMode::WeightAndReps, true));
+    }
+
+    #[test]
+    fn a_lateral_time_segment_rejects_a_top_level_duration() {
+        let mut segment = segment();
+        segment.reps = 0;
+        segment.weight_kg = 0.0;
+        segment.left = Some(crate::sync::SetSidePayload {
+            weight_kg: None,
+            reps: 0,
+            duration_seconds: Some(30),
+        });
+        segment.right = Some(crate::sync::SetSidePayload {
+            weight_kg: None,
+            reps: 0,
+            duration_seconds: Some(40),
+        });
+        assert!(segment.has_completion_values(RecordMode::Time, true));
+        segment.duration_seconds = Some(60);
+        assert!(!segment.has_completion_values(RecordMode::Time, true));
     }
 }

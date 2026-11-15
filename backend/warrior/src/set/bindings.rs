@@ -16,6 +16,7 @@ pub(super) fn segment_bindings(
     set_id: &str,
     segment: &SetSegmentPayload,
     mode: RecordMode,
+    lateral: bool,
     now: &str,
 ) -> Vec<SqlValue> {
     let is_time = mode == RecordMode::Time;
@@ -25,12 +26,12 @@ pub(super) fn segment_bindings(
         SqlValue::Text(set_id.to_owned()),
         SqlValue::Integer(segment.position),
         optional_real(if is_time {
-            (segment.weight_kg != 0.0).then_some(segment.weight_kg)
+            None
         } else {
             Some(segment.weight_kg)
         }),
         optional_integer(if is_time {
-            (segment.reps != 0).then(|| i64::from(segment.reps))
+            None
         } else {
             Some(i64::from(segment.reps))
         }),
@@ -44,7 +45,7 @@ pub(super) fn segment_bindings(
         } else {
             i64::from(segment.assisted_reps)
         }),
-        optional_integer(if is_time {
+        optional_integer(if is_time && !lateral {
             segment.duration_seconds.map(i64::from)
         } else {
             None
@@ -136,6 +137,7 @@ pub(super) struct SegmentStatements<'a> {
     pub(super) training_id: &'a str,
     pub(super) set_id: &'a str,
     pub(super) mode: RecordMode,
+    pub(super) lateral: bool,
     pub(super) ownership: ExerciseOwnership<'a>,
     pub(super) applied: &'a AppliedCondition,
     pub(super) now: &'a str,
@@ -182,6 +184,7 @@ fn segment_insert_statement(
         context.set_id,
         segment,
         context.mode,
+        context.lateral,
         context.now,
     );
     bindings.append(&mut condition_bindings);
