@@ -5,25 +5,36 @@
 //! セットの適用の成功を確かめる。
 
 use warrior_core::exercise::GripSelection;
-use warrior_core::sql::SqlValue;
+use warrior_core::set_calc::RecordMode;
+use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::SetSegmentPayload;
 
-use crate::training_session_exercise::ExerciseOwnership;
+use crate::training_session_exercise::{ownership_condition, ExerciseOwnership};
 
 pub(super) fn segment_bindings(
     user_id: &str,
     set_id: &str,
     segment: &SetSegmentPayload,
+    mode: RecordMode,
+    lateral: bool,
     now: &str,
 ) -> Vec<SqlValue> {
-    let is_time = is_time_segment(segment);
+    let is_time = mode == RecordMode::Time;
     let mut bindings = vec![
         SqlValue::Text(segment.segment_id.clone()),
         SqlValue::Text(user_id.to_owned()),
         SqlValue::Text(set_id.to_owned()),
         SqlValue::Integer(segment.position),
-        optional_real((!is_time).then_some(segment.weight_kg)),
-        optional_integer((!is_time).then(|| i64::from(segment.reps))),
+        optional_real(if is_time {
+            None
+        } else {
+            Some(segment.weight_kg)
+        }),
+        optional_integer(if is_time {
+            None
+        } else {
+            Some(i64::from(segment.reps))
+        }),
         SqlValue::Integer(if is_time {
             0
         } else {
@@ -34,41 +45,32 @@ pub(super) fn segment_bindings(
         } else {
             i64::from(segment.assisted_reps)
         }),
-        optional_integer(segment.duration_seconds.map(i64::from)),
+        optional_integer(if is_time && !lateral {
+            segment.duration_seconds.map(i64::from)
+        } else {
+            None
+        }),
     ];
     for side in [segment.left.as_ref(), segment.right.as_ref()] {
-        let weight = if is_time {
+        bindings.push(optional_real(if is_time {
             None
         } else {
             side.and_then(|side| side.weight_kg)
-        };
-        let reps = if is_time {
+        }));
+        bindings.push(optional_integer(if is_time {
             None
         } else {
             side.map(|side| i64::from(side.reps))
-        };
-        bindings.push(optional_real(weight));
-        bindings.push(optional_integer(reps));
-        bindings.push(optional_integer(
-            side.and_then(|side| side.duration_seconds).map(i64::from),
-        ));
+        }));
+        bindings.push(optional_integer(if is_time {
+            side.and_then(|side| side.duration_seconds).map(i64::from)
+        } else {
+            None
+        }));
     }
     bindings.push(SqlValue::Text(now.to_owned()));
     bindings.push(SqlValue::Text(now.to_owned()));
     bindings
-}
-
-/// 時間の列を持つ段か。時間で記録する段は重量と回数を保存しない。
-fn is_time_segment(segment: &SetSegmentPayload) -> bool {
-    segment.duration_seconds.is_some()
-        || segment
-            .left
-            .as_ref()
-            .is_some_and(|side| side.duration_seconds.is_some())
-        || segment
-            .right
-            .as_ref()
-            .is_some_and(|side| side.duration_seconds.is_some())
 }
 
 /// 操作 ID を保存したことを表す条件。
@@ -127,4 +129,87 @@ pub(super) fn optional_real(value: Option<f64>) -> SqlValue {
 
 pub(super) fn optional_integer(value: Option<i64>) -> SqlValue {
     value.map_or(SqlValue::Null, SqlValue::Integer)
+}
+
+/// 段の文を作るための、対象と条件の組。
+pub(super) struct SegmentStatements<'a> {
+    pub(super) user_id: &'a str,
+    pub(super) training_id: &'a str,
+    pub(super) set_id: &'a str,
+    pub(super) mode: RecordMode,
+    pub(super) lateral: bool,
+    pub(super) ownership: ExerciseOwnership<'a>,
+    pub(super) applied: &'a AppliedCondition,
+    pub(super) now: &'a str,
+}
+
+pub(super) fn segment_replace_statements(
+    context: &SegmentStatements<'_>,
+    segments: &[SetSegmentPayload],
+) -> Vec<SqlStatement> {
+    let mut statements = vec![delete_segments_statement(context)];
+    for segment in segments {
+        statements.push(segment_insert_statement(context, segment));
+    }
+    statements
+}
+
+fn delete_segments_statement(context: &SegmentStatements<'_>) -> SqlStatement {
+    let (training_condition, training_bindings) =
+        ownership_condition_placeholder(context.user_id, context.ownership);
+    let mut bindings = vec![
+        SqlValue::Text(context.set_id.to_owned()),
+        SqlValue::Text(context.user_id.to_owned()),
+    ];
+    bindings.extend(training_bindings);
+    bindings.extend(context.applied.bindings.iter().cloned());
+    SqlStatement::new(
+        format!(
+            "DELETE FROM set_segments WHERE set_id = ? AND user_id = ? \
+             AND {training_condition} AND {}",
+            context.applied.sql
+        ),
+        bindings,
+    )
+}
+
+fn segment_insert_statement(
+    context: &SegmentStatements<'_>,
+    segment: &SetSegmentPayload,
+) -> SqlStatement {
+    let (condition, mut condition_bindings) =
+        ownership_condition(context.user_id, context.training_id, context.ownership);
+    let mut bindings = segment_bindings(
+        context.user_id,
+        context.set_id,
+        segment,
+        context.mode,
+        context.lateral,
+        context.now,
+    );
+    bindings.append(&mut condition_bindings);
+    bindings.extend(context.applied.bindings.iter().cloned());
+    SqlStatement::new(
+        format!(
+            "INSERT INTO set_segments \
+             (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, \
+              duration_seconds, left_weight_kg, left_reps, left_duration_seconds, \
+              right_weight_kg, right_reps, right_duration_seconds, created_at, updated_at) \
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? \
+             WHERE {condition} AND {} \
+             ON CONFLICT(id) DO UPDATE SET position = excluded.position, \
+             weight_kg = excluded.weight_kg, reps = excluded.reps, \
+             momentum_reps = excluded.momentum_reps, assisted_reps = excluded.assisted_reps, \
+             duration_seconds = excluded.duration_seconds, \
+             left_weight_kg = excluded.left_weight_kg, left_reps = excluded.left_reps, \
+             left_duration_seconds = excluded.left_duration_seconds, \
+             right_weight_kg = excluded.right_weight_kg, right_reps = excluded.right_reps, \
+             right_duration_seconds = excluded.right_duration_seconds, \
+             updated_at = excluded.updated_at \
+             WHERE set_segments.user_id = excluded.user_id \
+             AND set_segments.set_id = excluded.set_id",
+            context.applied.sql
+        ),
+        bindings,
+    )
 }

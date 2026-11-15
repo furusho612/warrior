@@ -220,6 +220,13 @@ pub async fn click_text(driver: &WebDriver, label: &str) {
 pub async fn click(driver: &WebDriver, selector: &str) {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
+        driver
+            .execute(
+                "document.querySelector(arguments[0]).scrollIntoView({block: 'center', inline: 'center'});",
+                vec![serde_json::json!(selector)],
+            )
+            .await
+            .ok();
         let element = driver
             .find(By::Css(selector))
             .await

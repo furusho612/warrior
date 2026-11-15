@@ -108,13 +108,13 @@ fn time_record() -> impl Strategy<Value = SetRecord> {
     (
         0u8..=2,
         0u8..=2,
-        1u32..=86_400,
+        (1u32..=86_400, 1u32..=86_400),
         0.0f64..=100.0,
         1u32..=20,
         prop_oneof![Just(false), Just(true)],
     )
         .prop_map(
-            |(exercise, grip, duration, side_weight, side_reps, lateral)| {
+            |(exercise, grip, (duration, other_duration), side_weight, side_reps, lateral)| {
                 let segment = if lateral {
                     SetSegment {
                         weight_kg: 0.0,
@@ -129,7 +129,7 @@ fn time_record() -> impl Strategy<Value = SetRecord> {
                         right: Some(SideValue {
                             weight_kg: side_weight,
                             reps: side_reps,
-                            duration_seconds: Some(duration.saturating_add(10)),
+                            duration_seconds: Some(other_duration),
                         }),
                         duration_seconds: None,
                     }

@@ -92,7 +92,7 @@ pub enum Laterality {
 
 /// 左右を別々に記録する種目か。
 ///
-/// 時間で記録する種目も、左右別なら左右の時間を別々に持つ。
+/// 時間で記録する種目も、左右別の種目は左右それぞれの時間を持つ。
 pub fn is_lateral(laterality: Laterality, _record_mode: RecordMode) -> bool {
     laterality == Laterality::Unilateral
 }

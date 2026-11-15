@@ -3,6 +3,7 @@
 - Requirements: REQ-SET-010, REQ-NFR-019
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-time-exercises
 
@@ -45,6 +46,8 @@ RPE は記録できる。
 前回比とグラフは、最長時間と合計時間で示す。左右別に行う時間で記録する種目は、最長時間を左右の最大値、合計時間を左右の和とする。グラフの実装は 0049 が担う。
 
 0027 は時間で記録する種目を左右別の対象から外し、左右の値を持たない。
+この issue は 0027 の前提を変更し、`laterality=unilateral` の時間種目は左右それぞれの duration を持つ。
+全体の duration だけを持つ左右別時間のセットは拒否し、左右の両方の duration を完了の条件にする。
 左右別の時間の記録はこの issue が担う。
 
 ## 完了条件
@@ -72,3 +75,13 @@ RPE は記録できる。
 `frontend/tests/stopwatch.rs` にブラウザのテストを追加する。
 `backend/warrior/tests/e2e_record_time.rs` に E2E を追加する。
 `backend/pbt/tests/duration.rs` に性質テストを置く。
+
+## 結果
+
+時間で記録する種目のセットは、`set_segments.duration_seconds` に時間を保存する。`mm:ss` と秒の入力、1 秒以上 86400 秒以下の検証を `warrior_core::duration` に置いた。
+左右別の時間種目は左右それぞれの duration を持ち、片側だけの指定と、左右に加えてトップレベルの duration を持つ指定を拒否する。左右別でない時間種目はトップレベルの duration を持つ。最長時間は左右の最大値、合計時間は左右の和。
+ストップウォッチは開始時刻を IndexedDB に保存し、再読み込み後に経過時間を復元する。手入力の経路もある。計測中に種目やセットを切り替えても、計測状態が別のセットへ移らないよう、セットと段を ID でキーした。
+時間種目は重量、回数、反動、補助の欄を表示せず、値も保存しない。RPE は記録できる。時間セットは総重量と推定 1RM の対象外で、部位別のセット数に 1 と数える。
+`e2e_training_session` の空の記録画面に drawer を期待する古い assert を削除し、drawer はセットを選んだ後の E2E で確かめるようにした。
+
+検証は `wrangler_record_time`、`e2e_record_time`、`e2e_training_session`、`e2e_calendar`、`mise run formal` を通した。Safari の E2E はローカルの remote automation が無効なため未実行で、CI で確認する。

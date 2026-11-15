@@ -198,11 +198,11 @@ impl SegmentView {
         body_weight_kg: Option<f64>,
         lateral: bool,
     ) -> Option<SetSegment> {
-        let momentum_reps = parse_count_or_zero(&self.momentum)?;
-        let assisted_reps = parse_count_or_zero(&self.assisted)?;
         if mode == RecordMode::Time {
             return self.to_time_segment(lateral);
         }
+        let momentum_reps = parse_count_or_zero(&self.momentum)?;
+        let assisted_reps = parse_count_or_zero(&self.assisted)?;
         if lateral {
             return Some(SetSegment {
                 weight_kg: 0.0,
@@ -306,10 +306,12 @@ impl SegmentView {
     }
 }
 
-/// 種目の記録方式と左右の指定から、左右の列を使うか決める。
+/// 種目の左右の指定から、左右の列を使うか決める。
 ///
-/// 時間で記録する種目の左右は、時間の入力とあわせて実装する。
-pub(super) use warrior_core::exercise::is_lateral;
+/// 時間で記録する種目も左右別の入力を持つ。
+pub(super) fn is_lateral(laterality: Laterality, _mode: RecordMode) -> bool {
+    laterality == Laterality::Unilateral
+}
 
 /// 重量種目は入力した重量を、自重種目は記録した体重に加重を足した値を返す。
 fn bodyweight_weight(mode: RecordMode, body_weight_kg: Option<f64>, weight: f64) -> f64 {
@@ -376,6 +378,7 @@ impl SetView {
     pub(super) fn values(&self, lateral: bool, mode: RecordMode) -> SetValues {
         SetValues {
             kind: self.kind(),
+            mode,
             segments: self
                 .segments
                 .iter()
@@ -523,6 +526,7 @@ pub(super) fn previous_values(
         .collect();
     Some(SetValues {
         kind: previous.kind,
+        mode,
         segments,
         body_weight_kg,
         rpe: previous.rpe,

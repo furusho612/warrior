@@ -1,6 +1,6 @@
 //! セットの端末内の保存のテストが共有する行と値。
 
-use warrior_core::set_calc::SetKind;
+use warrior_core::set_calc::{RecordMode, SetKind};
 use warrior_core::sync::{Operation, OperationKind, SessionUpdatePayload};
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
 use warrior_frontend::training_set::{SetSegmentValues, SetValues};
@@ -85,6 +85,7 @@ pub fn values(kind: SetKind, weight_kg: f64, reps: u32) -> SetValues {
 pub fn values_for(kind: SetKind, segments: &[(f64, u32)]) -> SetValues {
     SetValues {
         kind,
+        mode: RecordMode::WeightAndReps,
         segments: segments
             .iter()
             .map(|(weight_kg, reps)| SetSegmentValues {

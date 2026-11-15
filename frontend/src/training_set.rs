@@ -8,7 +8,7 @@
 //! 保存しない。
 //! 操作の ID と順序は保存のときに `frontend/src/storage` が決める。
 
-use warrior_core::exercise::GripSelection;
+use warrior_core::exercise::{GripSelection, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::sync::{
     Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
@@ -52,20 +52,27 @@ pub struct SetSegmentValues {
 impl SetSegmentValues {
     /// 段が完了に必要な値を持つか。
     ///
-    /// 左右別の段は、左右の両方に重量と回数、または左右の両方に時間があることを求める。
-    pub fn is_complete(&self) -> bool {
+    /// 時間で記録する段は時間を、重量で記録する段は重量と回数を求める。
+    /// 左右別の段は左右の両方に値があることを求める。
+    pub fn is_complete(&self, mode: RecordMode) -> bool {
         match (self.left.as_ref(), self.right.as_ref()) {
-            (Some(left), Some(right)) => {
-                (left.weight_kg.is_some()
-                    && left.reps > 0
-                    && right.weight_kg.is_some()
-                    && right.reps > 0)
-                    || (left.duration_seconds.is_some_and(|duration| duration > 0)
-                        && right.duration_seconds.is_some_and(|duration| duration > 0))
-            }
-            (None, None) => {
-                self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
-            }
+            (Some(left), Some(right)) => match mode {
+                RecordMode::Time => {
+                    left.duration_seconds.is_some_and(|duration| duration > 0)
+                        && right.duration_seconds.is_some_and(|duration| duration > 0)
+                }
+                RecordMode::WeightAndReps => {
+                    left.weight_kg.is_some()
+                        && left.reps > 0
+                        && right.weight_kg.is_some()
+                        && right.reps > 0
+                }
+                RecordMode::BodyweightAndReps => left.reps > 0 && right.reps > 0,
+            },
+            (None, None) => match mode {
+                RecordMode::Time => self.duration_seconds.is_some_and(|duration| duration > 0),
+                RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => self.reps > 0,
+            },
             (Some(_), None) | (None, Some(_)) => false,
         }
     }
@@ -76,6 +83,8 @@ impl SetSegmentValues {
 pub struct SetValues {
     /// セット種別。
     pub kind: SetKind,
+    /// 記録方式。時間で記録するセットは時間だけを保存する。
+    pub mode: RecordMode,
     /// 段の入力。並び順である。
     pub segments: Vec<SetSegmentValues>,
     /// 完了しているか。値が無いときは完了にしない。
@@ -91,7 +100,11 @@ pub struct SetValues {
 impl SetValues {
     /// セットが完了に必要な値を持つか。すべての段が完了していることを求める。
     pub fn is_complete(&self) -> bool {
-        !self.segments.is_empty() && self.segments.iter().all(SetSegmentValues::is_complete)
+        !self.segments.is_empty()
+            && self
+                .segments
+                .iter()
+                .all(|segment| segment.is_complete(self.mode))
     }
 
     /// 値を保ったまま完了できるか。
@@ -124,6 +137,7 @@ pub fn create(
     }
     let now = now_iso();
     let set_id = new_uuid()?;
+    let mode = values.mode;
     let segment_ids = values
         .segments
         .iter()
@@ -133,8 +147,15 @@ pub fn create(
         .iter()
         .zip(&values.segments)
         .enumerate()
-        .map(|(index, (segment_id, values))| {
-            segment_record(segment_id, &set_id, position_of(index), values, &now)
+        .map(|(index, (segment_id, segment_values))| {
+            segment_record(
+                segment_id,
+                &set_id,
+                position_of(index),
+                segment_values,
+                mode,
+                &now,
+            )
         })
         .collect::<Vec<_>>();
     let set = SetRecordRow {
@@ -159,7 +180,7 @@ pub fn create(
         rpe: values.rpe,
         grip: values.grip,
         body_weight_kg: values.body_weight_kg,
-        segments: payload_segments(&segment_ids, &values.segments),
+        segments: payload_segments(&segment_ids, &values.segments, values.mode),
     };
     let operation = operation(
         training_id,
@@ -184,6 +205,7 @@ pub fn update(
         ));
     }
     let now = now_iso();
+    let mode = values.mode;
     let updated_set = SetRecordRow {
         kind: values.kind.as_str().to_owned(),
         completed: if values.completed_with_values() { 1 } else { 0 },
@@ -197,8 +219,8 @@ pub fn update(
         .iter()
         .zip(&values.segments)
         .enumerate()
-        .map(|(index, (segment, values))| {
-            updated_segment_record(segment, position_of(index), values, &now)
+        .map(|(index, (segment, segment_values))| {
+            updated_segment_record(segment, position_of(index), segment_values, mode, &now)
         })
         .collect::<Vec<_>>();
     let segment_ids = updated_segments
@@ -214,7 +236,7 @@ pub fn update(
         rpe: values.rpe,
         grip: values.grip,
         body_weight_kg: values.body_weight_kg,
-        segments: payload_segments(&segment_ids, &values.segments),
+        segments: payload_segments(&segment_ids, &values.segments, values.mode),
     };
     let operation = operation(
         training_id,
@@ -295,9 +317,10 @@ fn segment_record(
     set_id: &str,
     position: i64,
     values: &SetSegmentValues,
+    mode: RecordMode,
     now: &str,
 ) -> SetSegmentRecord {
-    let fields = segment_fields(values);
+    let fields = segment_fields(values, mode);
     SetSegmentRecord {
         id: segment_id.to_owned(),
         set_id: set_id.to_owned(),
@@ -322,9 +345,10 @@ fn updated_segment_record(
     segment: &SetSegmentRecord,
     position: i64,
     values: &SetSegmentValues,
+    mode: RecordMode,
     now: &str,
 ) -> SetSegmentRecord {
-    let fields = segment_fields(values);
+    let fields = segment_fields(values, mode);
     SetSegmentRecord {
         position,
         weight_kg: fields.weight_kg,
@@ -358,8 +382,8 @@ struct SegmentFields {
     right_duration_seconds: Option<i64>,
 }
 
-fn segment_fields(values: &SetSegmentValues) -> SegmentFields {
-    let is_time = is_time_segment(values);
+fn segment_fields(values: &SetSegmentValues, mode: RecordMode) -> SegmentFields {
+    let is_time = mode == RecordMode::Time;
     SegmentFields {
         weight_kg: (!is_time).then_some(values.weight_kg),
         reps: (!is_time).then(|| i64::from(values.reps)),
@@ -373,7 +397,11 @@ fn segment_fields(values: &SetSegmentValues) -> SegmentFields {
         } else {
             i64::from(values.assisted_reps)
         },
-        duration_seconds: values.duration_seconds.map(i64::from),
+        duration_seconds: if is_time {
+            values.duration_seconds.map(i64::from)
+        } else {
+            None
+        },
         left_weight_kg: if is_time {
             None
         } else {
@@ -384,10 +412,14 @@ fn segment_fields(values: &SetSegmentValues) -> SegmentFields {
         } else {
             values.left.map(|side| i64::from(side.reps))
         },
-        left_duration_seconds: values
-            .left
-            .and_then(|side| side.duration_seconds)
-            .map(i64::from),
+        left_duration_seconds: if is_time {
+            values
+                .left
+                .and_then(|side| side.duration_seconds)
+                .map(i64::from)
+        } else {
+            None
+        },
         right_weight_kg: if is_time {
             None
         } else {
@@ -398,48 +430,56 @@ fn segment_fields(values: &SetSegmentValues) -> SegmentFields {
         } else {
             values.right.map(|side| i64::from(side.reps))
         },
-        right_duration_seconds: values
-            .right
-            .and_then(|side| side.duration_seconds)
-            .map(i64::from),
+        right_duration_seconds: if is_time {
+            values
+                .right
+                .and_then(|side| side.duration_seconds)
+                .map(i64::from)
+        } else {
+            None
+        },
     }
 }
 
-/// 時間の値を持つ段か。端末の行は時間の段に重量と回数を保存しない。
-fn is_time_segment(values: &SetSegmentValues) -> bool {
-    values.duration_seconds.is_some()
-        || values
-            .left
-            .is_some_and(|side| side.duration_seconds.is_some())
-        || values
-            .right
-            .is_some_and(|side| side.duration_seconds.is_some())
-}
-
-fn payload_segments(segment_ids: &[String], values: &[SetSegmentValues]) -> Vec<SetSegmentPayload> {
+fn payload_segments(
+    segment_ids: &[String],
+    values: &[SetSegmentValues],
+    mode: RecordMode,
+) -> Vec<SetSegmentPayload> {
     segment_ids
         .iter()
         .zip(values)
         .enumerate()
-        .map(|(index, (segment_id, values))| SetSegmentPayload {
-            segment_id: segment_id.clone(),
-            position: position_of(index),
-            weight_kg: values.weight_kg,
-            reps: values.reps,
-            momentum_reps: values.momentum_reps,
-            assisted_reps: values.assisted_reps,
-            duration_seconds: values.duration_seconds,
-            left: values.left.map(side_payload),
-            right: values.right.map(side_payload),
+        .map(|(index, (segment_id, values))| {
+            let is_time = mode == RecordMode::Time;
+            SetSegmentPayload {
+                segment_id: segment_id.clone(),
+                position: position_of(index),
+                weight_kg: if is_time { 0.0 } else { values.weight_kg },
+                reps: if is_time { 0 } else { values.reps },
+                momentum_reps: if is_time { 0 } else { values.momentum_reps },
+                assisted_reps: if is_time { 0 } else { values.assisted_reps },
+                duration_seconds: if is_time {
+                    values.duration_seconds
+                } else {
+                    None
+                },
+                left: values.left.map(|side| side_payload(side, is_time)),
+                right: values.right.map(|side| side_payload(side, is_time)),
+            }
         })
         .collect()
 }
 
-fn side_payload(values: SegmentSideValues) -> warrior_core::sync::SetSidePayload {
+fn side_payload(values: SegmentSideValues, is_time: bool) -> warrior_core::sync::SetSidePayload {
     warrior_core::sync::SetSidePayload {
-        weight_kg: values.weight_kg,
-        reps: values.reps,
-        duration_seconds: values.duration_seconds,
+        weight_kg: if is_time { None } else { values.weight_kg },
+        reps: if is_time { 0 } else { values.reps },
+        duration_seconds: if is_time {
+            values.duration_seconds
+        } else {
+            None
+        },
     }
 }
 

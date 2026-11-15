@@ -11,8 +11,8 @@ use serde::Deserialize;
 use warrior_core::exercise::{is_lateral, Laterality, RecordMode};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
-    SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetSegmentPayload,
-    SetUpdatePayload, ValidatedOperation, ValidatedPayload,
+    SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetUpdatePayload,
+    ValidatedOperation, ValidatedPayload,
 };
 use worker::Result;
 
@@ -29,10 +29,7 @@ mod completion;
 mod precheck;
 mod validation;
 
-use bindings::{
-    applied_exists, grip_json, optional_real, ownership_condition_placeholder, segment_bindings,
-    AppliedCondition,
-};
+use bindings::{applied_exists, grip_json, optional_real};
 pub(crate) use completion::personal_bests_after_completion;
 use precheck::precheck;
 
@@ -46,7 +43,7 @@ struct ExerciseRules {
 }
 
 impl ExerciseRules {
-    /// 左右の列を使う種目か。時間で記録する種目は左右の列を使わない。
+    /// 左右の列を使う種目か。
     fn lateral(self) -> bool {
         is_lateral(self.laterality, self.record_mode)
     }
@@ -120,7 +117,14 @@ pub(crate) async fn set_batch(
         }
         OwnerCondition::Finished => ExerciseOwnership::Finished,
     };
-    let Some(data) = set_statements(user_id, validated, ownership, now) else {
+    let Some(data) = set_statements(
+        user_id,
+        validated,
+        rules.map(|rules| rules.record_mode),
+        rules.is_some_and(|rules| rules.lateral()),
+        ownership,
+        now,
+    ) else {
         return Ok(BatchOutcome::Reject(response(
             ErrorCode::BadRequest,
             "operation is invalid",
@@ -146,6 +150,8 @@ struct SetData {
 fn set_statements(
     user_id: &str,
     validated: &ValidatedOperation,
+    mode: Option<RecordMode>,
+    lateral: bool,
     ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Option<SetData> {
@@ -153,39 +159,56 @@ fn set_statements(
     let training_id = &operation.training_id;
     let applied = applied_exists(user_id, &operation.operation_id);
     match &validated.payload {
-        ValidatedPayload::SetCreate(payload) => Some(SetData {
-            main: create_set_statement(user_id, training_id, payload, ownership, now)?,
-            children: segment_replace_statements(
+        ValidatedPayload::SetCreate(payload) => {
+            let mode = mode?;
+            let context = bindings::SegmentStatements {
                 user_id,
                 training_id,
-                &payload.set_id,
-                &payload.segments,
+                set_id: &payload.set_id,
+                mode,
+                lateral,
                 ownership,
-                &applied,
+                applied: &applied,
                 now,
-            ),
-        }),
-        ValidatedPayload::SetUpdate(payload) => Some(SetData {
-            main: update_set_statement(user_id, training_id, payload, ownership, now),
-            children: segment_replace_statements(
+            };
+            Some(SetData {
+                main: create_set_statement(user_id, training_id, payload, ownership, now)?,
+                children: bindings::segment_replace_statements(&context, &payload.segments),
+            })
+        }
+        ValidatedPayload::SetUpdate(payload) => {
+            let mode = mode?;
+            let context = bindings::SegmentStatements {
                 user_id,
                 training_id,
-                &payload.set_id,
-                &payload.segments,
+                set_id: &payload.set_id,
+                mode,
+                lateral,
                 ownership,
-                &applied,
+                applied: &applied,
                 now,
-            ),
-        }),
-        ValidatedPayload::SetDelete(payload) => Some(SetData {
-            main: delete_set_statement(user_id, training_id, payload, ownership),
-            children: vec![delete_segments_statement(
+            };
+            Some(SetData {
+                main: update_set_statement(user_id, training_id, payload, ownership, now),
+                children: bindings::segment_replace_statements(&context, &payload.segments),
+            })
+        }
+        ValidatedPayload::SetDelete(payload) => {
+            let context = bindings::SegmentStatements {
                 user_id,
-                &payload.set_id,
+                training_id,
+                set_id: &payload.set_id,
+                mode: RecordMode::WeightAndReps,
+                lateral: false,
                 ownership,
-                &applied,
-            )],
-        }),
+                applied: &applied,
+                now,
+            };
+            Some(SetData {
+                main: delete_set_statement(user_id, training_id, payload, ownership),
+                children: bindings::segment_replace_statements(&context, &[]),
+            })
+        }
         ValidatedPayload::SetReorder(payload) => Some(SetData {
             main: reorder_set_statement(user_id, training_id, payload, ownership, now),
             children: Vec::new(),
@@ -370,96 +393,6 @@ fn reorder_set_statement(
              WHERE id IN ({placeholders}) AND user_id = ? AND training_exercise_id = ? \
              AND {condition}",
             case.join(" ")
-        ),
-        bindings,
-    )
-}
-
-fn segment_replace_statements(
-    user_id: &str,
-    training_id: &str,
-    set_id: &str,
-    segments: &[SetSegmentPayload],
-    ownership: ExerciseOwnership<'_>,
-    applied: &AppliedCondition,
-    now: &str,
-) -> Vec<SqlStatement> {
-    let mut statements = vec![delete_segments_statement(
-        user_id, set_id, ownership, applied,
-    )];
-    for segment in segments {
-        statements.push(segment_insert_statement(
-            user_id,
-            training_id,
-            set_id,
-            segment,
-            ownership,
-            applied,
-            now,
-        ));
-    }
-    statements
-}
-
-fn delete_segments_statement(
-    user_id: &str,
-    set_id: &str,
-    ownership: ExerciseOwnership<'_>,
-    applied: &AppliedCondition,
-) -> SqlStatement {
-    // 段は set_id と user_id に絞る。トレーニングと操作 ID の条件は、セットの適用が
-    // 成功したときだけ段を動かすために付ける。
-    let (training_condition, training_bindings) =
-        ownership_condition_placeholder(user_id, ownership);
-    let mut bindings = vec![
-        SqlValue::Text(set_id.to_owned()),
-        SqlValue::Text(user_id.to_owned()),
-    ];
-    bindings.extend(training_bindings);
-    bindings.extend(applied.bindings.iter().cloned());
-    SqlStatement::new(
-        format!(
-            "DELETE FROM set_segments WHERE set_id = ? AND user_id = ? \
-             AND {training_condition} AND {}",
-            applied.sql
-        ),
-        bindings,
-    )
-}
-
-fn segment_insert_statement(
-    user_id: &str,
-    training_id: &str,
-    set_id: &str,
-    segment: &SetSegmentPayload,
-    ownership: ExerciseOwnership<'_>,
-    applied: &AppliedCondition,
-    now: &str,
-) -> SqlStatement {
-    let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
-    let mut bindings = segment_bindings(user_id, set_id, segment, now);
-    bindings.append(&mut condition_bindings);
-    bindings.extend(applied.bindings.iter().cloned());
-    SqlStatement::new(
-        format!(
-            "INSERT INTO set_segments \
-             (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, \
-              duration_seconds, left_weight_kg, left_reps, left_duration_seconds, \
-              right_weight_kg, right_reps, right_duration_seconds, created_at, updated_at) \
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? \
-             WHERE {condition} AND {} \
-             ON CONFLICT(id) DO UPDATE SET position = excluded.position, \
-             weight_kg = excluded.weight_kg, reps = excluded.reps, \
-             momentum_reps = excluded.momentum_reps, assisted_reps = excluded.assisted_reps, \
-             duration_seconds = excluded.duration_seconds, \
-             left_weight_kg = excluded.left_weight_kg, left_reps = excluded.left_reps, \
-             left_duration_seconds = excluded.left_duration_seconds, \
-             right_weight_kg = excluded.right_weight_kg, right_reps = excluded.right_reps, \
-             right_duration_seconds = excluded.right_duration_seconds, \
-             updated_at = excluded.updated_at \
-             WHERE set_segments.user_id = excluded.user_id \
-             AND set_segments.set_id = excluded.set_id",
-            applied.sql
         ),
         bindings,
     )

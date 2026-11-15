@@ -112,4 +112,12 @@ mod tests {
         assert_eq!(elapsed_seconds(1_000, 3_500), 2);
         assert_eq!(elapsed_seconds(2_000, 1_000), 0);
     }
+
+    #[test]
+    fn elapsed_seconds_handles_the_i64_limits() {
+        assert_eq!(elapsed_seconds(i64::MIN, i64::MAX), 18_446_744_073_709_551);
+        assert_eq!(elapsed_seconds(i64::MAX, i64::MIN), 0);
+        assert_eq!(elapsed_seconds(0, 999), 0);
+        assert_eq!(elapsed_seconds(0, 1_000), 1);
+    }
 }

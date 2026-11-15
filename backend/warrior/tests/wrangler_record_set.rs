@@ -727,7 +727,7 @@ fn a_time_set_completes_only_with_a_duration() {
             kind: "normal",
             body_weight_kg: None,
         },
-        vec![segment(TIME_SEGMENT_ID, 1, 0.0, 5)],
+        vec![segment(TIME_SEGMENT_ID, 1, 0.0, 0)],
     );
     let response = post(&server, &user_cookie, &create);
     assert_eq!(response.status, 200, "{}", response.body);
@@ -746,7 +746,7 @@ fn a_time_set_completes_only_with_a_duration() {
             .is_some_and(|snapshot| snapshot.contains("\"record_mode\":\"time\"")),
         "the time exercise must be seeded: {seeded}"
     );
-    assert_eq!(seeded["reps"], 5);
+    assert_eq!(seeded["reps"], Value::Null);
     assert_eq!(seeded["duration_seconds"], Value::Null);
 
     let bad_complete = complete_operation(

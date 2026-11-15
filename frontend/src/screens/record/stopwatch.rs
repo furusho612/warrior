@@ -153,8 +153,11 @@ fn start_stopwatch(set_id: String, side: StopwatchSide, signals: StopwatchSignal
     let mut started_at = signals.started_at;
     let mut last_elapsed = signals.last_elapsed;
     let mut failed = signals.failed;
+    started_at.set(Some(now));
+    last_elapsed.set(None);
     spawn(async move {
         let Ok(storage) = storage::current().await else {
+            started_at.set(None);
             failed.set(true);
             return;
         };
@@ -163,12 +166,11 @@ fn start_stopwatch(set_id: String, side: StopwatchSide, signals: StopwatchSignal
             .await
             .is_err()
         {
+            started_at.set(None);
             failed.set(true);
             return;
         }
         failed.set(false);
-        started_at.set(Some(now));
-        last_elapsed.set(None);
     });
 }
 

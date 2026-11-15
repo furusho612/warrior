@@ -2,19 +2,23 @@
 //!
 //! 完了済みのセットは、更新、削除、完了の取消、同じ ID の作成の再送を拒否する。
 //! ドロップセットの位置と、完了に必要な値も、データ文を組み立てる前に確かめる。
+//! 段の形と、時間種目の値は、種目の記録方式と左右の指定に照らして確かめる。
 
 use serde::Deserialize;
-use warrior_core::exercise::{ExerciseSnapshot, RecordMode};
+use warrior_core::exercise::ExerciseSnapshot;
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
-    SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetSegmentPayload,
-    SetUpdatePayload, ValidatedOperation, ValidatedPayload,
+    SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetUpdatePayload,
+    ValidatedOperation, ValidatedPayload,
 };
 use worker::{Response, Result};
 
-use super::validation::{completed_set_has_values, completed_set_is_valid};
+use super::validation::{
+    completed_set_has_values, completed_set_is_valid, segments_shape_rejection,
+    time_values_rejection,
+};
 use super::ExerciseRules;
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
@@ -110,10 +114,10 @@ async fn precheck_create(
     payload: &SetCreatePayload,
     rules: ExerciseRules,
 ) -> Result<Option<Response>> {
-    if !exercise_in_training(db, user_id, training_id, &payload.training_exercise_id).await? {
-        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-    }
     if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
+        return Ok(Some(rejection));
+    }
+    if let Some(rejection) = time_values_rejection(&payload.segments, rules.record_mode) {
         return Ok(Some(rejection));
     }
     if let Some(existing) = set_owner_row(db, user_id, &payload.set_id).await? {
@@ -162,6 +166,9 @@ async fn precheck_update(
     if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
         return Ok(Some(rejection));
     }
+    if let Some(rejection) = time_values_rejection(&payload.segments, rules.record_mode) {
+        return Ok(Some(rejection));
+    }
     if !drop_positions_allowed(
         db,
         user_id,
@@ -184,7 +191,7 @@ async fn precheck_update(
             || !payload
                 .segments
                 .iter()
-                .all(|segment| segment_has_completion_values(segment, rules))
+                .all(|segment| segment.has_completion_values(rules.record_mode, rules.lateral()))
         {
             return Ok(Some(invalid_completion()));
         }
@@ -421,47 +428,6 @@ fn parse_snapshot(snapshot: &str) -> Result<ExerciseSnapshot> {
     serde_json::from_str(snapshot).map_err(|error| {
         worker::Error::RustError(format!("the stored exercise snapshot is invalid: {error}"))
     })
-}
-
-/// 段の形が種目の左右の指定と一致するか。
-fn segments_shape_rejection(
-    segments: &[SetSegmentPayload],
-    rules: ExerciseRules,
-) -> Option<Response> {
-    if segments
-        .iter()
-        .all(|segment| segment_matches_sides(segment, rules))
-    {
-        return None;
-    }
-    Some(response(
-        ErrorCode::BadRequest,
-        "the set does not match the exercise laterality",
-    ))
-}
-
-/// 段の左右の列が種目の指定と一致するか。
-///
-/// 時間で記録する段は、左右の列の代わりに上の時間だけを持つ形も受け付ける。
-fn segment_matches_sides(segment: &SetSegmentPayload, rules: ExerciseRules) -> bool {
-    if rules.record_mode == RecordMode::Time && segment.duration_seconds.is_some() {
-        return segment.left.is_none() && segment.right.is_none();
-    }
-    segment.has_matching_sides(rules.lateral())
-}
-
-/// 段が完了に必要な値を持つか。
-///
-/// 時間で記録する段は、上の時間だけを持つ形でも完了できる。
-fn segment_has_completion_values(segment: &SetSegmentPayload, rules: ExerciseRules) -> bool {
-    if rules.record_mode == RecordMode::Time && segment.duration_seconds.is_some() {
-        return segment.left.is_none()
-            && segment.right.is_none()
-            && segment
-                .duration_seconds
-                .is_some_and(|duration| duration > 0);
-    }
-    segment.has_completion_values(rules.record_mode, rules.lateral())
 }
 
 fn drop_position_rejection() -> Response {

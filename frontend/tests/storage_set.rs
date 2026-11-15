@@ -32,6 +32,7 @@ async fn unilateral_sets_keep_both_sides_in_the_rows_and_the_payload() {
 
     let values = SetValues {
         kind: SetKind::Normal,
+        mode: RecordMode::WeightAndReps,
         segments: vec![SetSegmentValues {
             weight_kg: 0.0,
             reps: 0,
