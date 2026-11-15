@@ -628,6 +628,9 @@ pub(in crate::screens::record) fn dispatch(
             ));
         }
         SetAction::Complete { set_id } => {
+            // ブラウザは利用者の操作の外で始まる音を止めることがある。完了の操作の中で
+            // 音の再生を許可しておき、失敗しても完了は止めない。
+            let _ = crate::sound::unlock();
             spawn(complete_set(
                 training_id,
                 set_id,

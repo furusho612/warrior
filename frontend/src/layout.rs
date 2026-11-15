@@ -5,6 +5,7 @@ use dioxus_router::{router, Link, Outlet};
 
 use crate::record_rail::RecordRailState;
 use crate::routes::{tab_is_active, tab_key, tab_route, Route, Tab, TABS};
+use crate::screens::record::{RecordWakeLock, RestTimerBar};
 use crate::text::{text, Key};
 
 /// 全ての画面を包む共通の枠。
@@ -35,15 +36,15 @@ pub fn AppShell() -> Element {
                     aside {
                         class: "flex w-[60px] shrink-0 flex-col items-stretch gap-1 overflow-y-auto border-r border-line bg-surface pt-3 text-[11px] text-text-sub",
                         "data-exercise-rail": "true",
-                        RecordRail { training_id: record_training_id }
+                        RecordRail { training_id: record_training_id.clone() }
                     }
                     main { class: "min-h-0 min-w-0 flex-1 overflow-y-auto", Outlet::<Route> {} }
                 }
                 div {
                     class: "flex h-[72px] shrink-0 items-center justify-center border-t border-line bg-surface text-[11px] text-text-sub",
-                    "data-rest-timer": "true",
-                    "{text(Key::RestTimer)}"
+                    RestTimerBar { training_id: record_training_id.clone() }
                 }
+                RecordWakeLock { training_id: record_training_id }
             } else {
                 main { class: "min-h-0 flex-1 overflow-y-auto", Outlet::<Route> {} }
                 TabBar { current }

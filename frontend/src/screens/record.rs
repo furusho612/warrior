@@ -1,7 +1,7 @@
 //! 記録の開始、記録中のメモの端末内への保存、種目の追加と前回の記録、トレーニングの終了。
 //!
 //! 種目の一覧と前回の記録、セットの入力、レストタイマー、セット詳細の枠を置く。
-//! レストタイマーの中身は後続の画面が入れる。
+//! レストタイマーの表示と操作は `rest_timer` が持つ。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -31,6 +31,7 @@ mod failed_operations;
 mod one_rep_max;
 mod ownership;
 mod personal_bests;
+mod rest_timer;
 mod set_drawer;
 mod set_events;
 mod set_inputs;
@@ -43,6 +44,7 @@ use exercises::ExerciseSection;
 use failed_operations::FailedOperations;
 use ownership::RecordOwnership;
 use personal_bests::RecordPersonalBests;
+pub(crate) use rest_timer::{RecordWakeLock, RestSettingsPanel, RestTimerBar, RestTimerEvents};
 use set_events::{SetCompleted, SetCompletedEvents};
 
 #[component]
@@ -245,12 +247,14 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             "data-rest-timer-events": "{rest_timer_event_count}",
             "data-profile-checked": if profile_checked() { "true" } else { "false" },
             RecordHeader { signals, state_signals }
+            RestTimerEvents {}
             RecordOwnership {
                 training_id: training_id.clone(),
                 signals,
                 ownership,
             }
             MemoEditor { signals, state_signals }
+            RestSettingsPanel {}
             RecordFinish { signals }
             RecordPersonalBests { items: (state_signals.personal_bests)() }
             if profile_prompt() {

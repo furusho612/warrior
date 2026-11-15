@@ -28,6 +28,7 @@ mod body_weight;
 mod discard;
 mod exercise;
 mod personal_best;
+mod rest_timer;
 mod set;
 mod stopwatch;
 mod superset;

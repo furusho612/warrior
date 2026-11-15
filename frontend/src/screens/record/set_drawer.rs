@@ -9,6 +9,7 @@ use dioxus::prelude::*;
 use warrior_core::duration;
 use warrior_core::exercise::{GripMode, GripSelection, RecordMode};
 
+use super::rest_timer::{RestSecondsField, RestSecondsTarget};
 use super::set_inputs::Field;
 use super::sets::{
     attachment_styles, attachment_with, attachment_with_style, default_grip, grip_attachments,
@@ -41,6 +42,7 @@ pub(super) fn SetDrawer(
     };
     let mut selected_set = selected;
     let set_id = set.record.id.clone();
+    let rest_set_id = set.record.id.clone();
     let rpe_set_id = set.record.id.clone();
     let locked = disabled || set.completed();
     let summary = summary_text(set, mode);
@@ -103,6 +105,10 @@ pub(super) fn SetDrawer(
                 value: set.rpe.clone(),
                 disabled: locked,
                 on_action,
+            }
+            RestSecondsField {
+                target: RestSecondsTarget::Set(rest_set_id),
+                disabled: locked,
             }
         }
     }

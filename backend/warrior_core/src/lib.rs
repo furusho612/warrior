@@ -20,6 +20,7 @@ pub mod previous;
 pub mod profile;
 pub mod pwa;
 pub mod rate_limit;
+pub mod rest_timer;
 pub mod rpe;
 pub mod set_calc;
 pub mod set_rules;

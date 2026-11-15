@@ -21,6 +21,7 @@ use super::exercise_view::{
     dispatch, dissolve_superset, exercise_diff, save_superset_group, training_difference,
     ExerciseView, SetSaver, SupersetGroupView,
 };
+use super::rest_timer::{RestSecondsField, RestSecondsTarget};
 use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
 use super::set_table::{SetTable, SetTableState};
@@ -531,6 +532,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
     let mode = view.snapshot.record_mode;
     let laterality = view.snapshot.laterality;
     let superset_view_id = view.record.id.clone();
+    let rest_exercise_id = view.record.id.clone();
     let superset = view.superset.clone();
     let rows = view.sets.clone();
     let has_completed = rows.iter().any(SetView::completed);
@@ -588,6 +590,10 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                 disabled,
                 on_create: on_superset_create,
                 on_delete: on_superset_delete,
+            }
+            RestSecondsField {
+                target: RestSecondsTarget::Exercise(rest_exercise_id),
+                disabled,
             }
             if let Some(diff) = diff {
                 ExerciseDifferenceView { diff }
