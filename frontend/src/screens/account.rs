@@ -181,7 +181,12 @@ fn DeleteAccountPanel() -> Element {
                 }
             }
             if current == DeleteState::Confirming {
-                DeleteConfirmation { state }
+                DeleteConfirmation {
+                    state,
+                    on_confirm: move |_| {
+                        spawn(delete_account(state));
+                    },
+                }
             }
             if current == DeleteState::Deleting {
                 p { class: "text-[13px] text-text-sub", "{text(Key::DeleteAccountDeleting)}" }
@@ -213,7 +218,7 @@ fn DeleteAccountPanel() -> Element {
 }
 
 #[component]
-fn DeleteConfirmation(state: Signal<DeleteState>) -> Element {
+fn DeleteConfirmation(state: Signal<DeleteState>, on_confirm: EventHandler<()>) -> Element {
     rsx! {
         div {
             class: "flex flex-col gap-2 border border-primary p-3",
@@ -226,9 +231,7 @@ fn DeleteConfirmation(state: Signal<DeleteState>) -> Element {
                 r#type: "button",
                 class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
                 "data-account-delete-confirm": "true",
-                onclick: move |_| {
-                    spawn(delete_account(state));
-                },
+                onclick: move |_| on_confirm.call(()),
                 "{text(Key::DeleteAccountConfirm)}"
             }
             button {
