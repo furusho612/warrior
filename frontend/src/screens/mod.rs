@@ -19,7 +19,7 @@ pub mod record;
 pub mod routines;
 pub mod summary;
 
-pub use account::AccountSettings;
+pub use account::{AccountScreen, AccountSection, AccountSettings};
 pub use analysis::AnalysisScreen;
 pub use calendar::CalendarScreen;
 pub use exercise::ExerciseScreen;

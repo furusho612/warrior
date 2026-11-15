@@ -5,9 +5,9 @@ use dioxus_router::Routable;
 
 use crate::layout::AppShell;
 use crate::screens::{
-    AnalysisScreen, CalendarScreen, ExerciseScreen, ExerciseSelectScreen, HomeScreen,
-    LibraryScreen, LoginScreen, MyPageScreen, NotFoundScreen, RecordScreen, RecordSessionScreen,
-    RoutinesScreen, SummaryScreen,
+    AccountScreen, AnalysisScreen, CalendarScreen, ExerciseScreen, ExerciseSelectScreen,
+    HomeScreen, LibraryScreen, LoginScreen, MyPageScreen, NotFoundScreen, RecordScreen,
+    RecordSessionScreen, RoutinesScreen, SummaryScreen,
 };
 use crate::text::Key;
 
@@ -28,7 +28,7 @@ const fn route(pattern: &'static str) -> AppRoute {
 }
 
 /// 画面の経路の台帳。
-pub const APP_ROUTES: [AppRoute; 13] = [
+pub const APP_ROUTES: [AppRoute; 14] = [
     route("/login"),
     route("/login/error"),
     route("/"),
@@ -42,6 +42,7 @@ pub const APP_ROUTES: [AppRoute; 13] = [
     route("/routines"),
     route("/summary/:training_id"),
     route("/mypage"),
+    route("/account"),
 ];
 
 /// 画面の経路。
@@ -87,6 +88,9 @@ pub enum Route {
     /// マイページ。
     #[route("/mypage", MyPageScreen)]
     MyPage {},
+    /// アカウントの管理。
+    #[route("/account", AccountScreen)]
+    Account {},
     /// 未知の経路。
     #[route("/:..segments", NotFoundScreen)]
     NotFound { segments: Vec<String> },
@@ -107,6 +111,7 @@ pub fn screen_key(route: &Route) -> Key {
         Route::Routines {} => Key::RoutinesTitle,
         Route::Summary { .. } => Key::SummaryTitle,
         Route::MyPage {} => Key::MyPageTitle,
+        Route::Account {} => Key::AccountTitle,
         Route::NotFound { .. } => Key::NotFoundTitle,
     }
 }
@@ -127,6 +132,7 @@ pub fn route_name(route: &Route) -> &'static str {
         Route::Routines {} => "/routines",
         Route::Summary { .. } => "/summary/:training_id",
         Route::MyPage {} => "/mypage",
+        Route::Account {} => "/account",
         Route::NotFound { .. } => "/:..segments",
     }
 }
@@ -184,7 +190,7 @@ pub fn tab_is_active(current: &Route, tab: Tab) -> bool {
         Tab::Calendar => matches!(current, Route::Calendar {}),
         Tab::Library => matches!(current, Route::Library {} | Route::Exercise { .. }),
         Tab::Analysis => matches!(current, Route::Analysis {}),
-        Tab::MyPage => matches!(current, Route::MyPage {}),
+        Tab::MyPage => matches!(current, Route::MyPage {} | Route::Account {}),
     }
 }
 
@@ -212,7 +218,7 @@ mod tests {
     use crate::text::{text, Key};
 
     #[test]
-    fn the_ledger_has_the_thirteen_routes() {
+    fn the_ledger_has_the_fourteen_routes() {
         let patterns = [
             "/login",
             "/login/error",
@@ -227,6 +233,7 @@ mod tests {
             "/routines",
             "/summary/:training_id",
             "/mypage",
+            "/account",
         ];
         assert_eq!(APP_ROUTES.len(), patterns.len());
         for (index, pattern) in patterns.iter().enumerate() {
@@ -328,6 +335,7 @@ mod tests {
         }
         assert_eq!(tab_route(Tab::Home), Route::Home {});
         assert_eq!(tab_route(Tab::MyPage), Route::MyPage {});
+        assert!(tab_is_active(&Route::Account {}, Tab::MyPage));
     }
 
     #[test]

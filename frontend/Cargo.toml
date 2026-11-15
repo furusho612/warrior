@@ -15,6 +15,7 @@ wasm-bindgen-futures = "0.4"
 warrior_core = { path = "../backend/warrior_core" }
 # dioxus-web は host のビルドでも履歴の API を使うため、Location を明示する。
 web-sys = { version = "0.3", features = [
+  "CacheStorage",
   "Crypto",
   "Document",
   "DomException",
@@ -44,6 +45,7 @@ web-sys = { version = "0.3", features = [
   "ServiceWorker",
   "ServiceWorkerContainer",
   "ServiceWorkerRegistration",
+  "Storage",
   "StorageManager",
   "Window",
 ] }

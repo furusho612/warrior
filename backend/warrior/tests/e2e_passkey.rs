@@ -55,7 +55,7 @@ async fn chrome_virtual_authenticator_registers_logs_in_and_deletes_passkeys() {
         .expect("the virtual authenticator must be added");
 
     login_with_google(&driver, &server).await;
-    open_route(&driver, &server, "/mypage", "/mypage").await;
+    open_route(&driver, &server, "/account", "/account").await;
     wait_for_text(&driver, "パスキーはまだ登録されていません").await;
 
     add_passkey(&driver, &server, 0).await;
@@ -79,7 +79,7 @@ async fn chrome_virtual_authenticator_registers_logs_in_and_deletes_passkeys() {
     click_text(&driver, "パスキーでログイン").await;
     wait_for_route(&driver, &server, "/").await;
 
-    open_route(&driver, &server, "/mypage", "/mypage").await;
+    open_route(&driver, &server, "/account", "/account").await;
     wait_for_passkey_count(&driver, 2).await;
     click_text(&driver, "パスキーを追加").await;
     wait_for_text(
@@ -90,14 +90,14 @@ async fn chrome_virtual_authenticator_registers_logs_in_and_deletes_passkeys() {
     assert_eq!(passkey_count(&driver).await, 2);
 
     click_text(&driver, "Google で再認証").await;
-    wait_for_route(&driver, &server, "/mypage").await;
+    wait_for_route(&driver, &server, "/account").await;
     wait_for_passkey_count(&driver, 2).await;
     click_text(&driver, "削除").await;
     wait_for_text(&driver, "パスキーを削除しました").await;
     assert_eq!(passkey_count(&driver).await, 1);
 
     click_text(&driver, "Google で再認証").await;
-    wait_for_route(&driver, &server, "/mypage").await;
+    wait_for_route(&driver, &server, "/account").await;
     wait_for_passkey_count(&driver, 1).await;
     click_text(&driver, "削除").await;
     wait_for_text(&driver, "パスキーを削除しました").await;
@@ -105,7 +105,7 @@ async fn chrome_virtual_authenticator_registers_logs_in_and_deletes_passkeys() {
 
     logout(&driver).await;
     login_with_google(&driver, &server).await;
-    open_route(&driver, &server, "/mypage", "/mypage").await;
+    open_route(&driver, &server, "/account", "/account").await;
     wait_for_text(&driver, "パスキーはまだ登録されていません").await;
     add_passkey(&driver, &server, 0).await;
 
@@ -113,9 +113,9 @@ async fn chrome_virtual_authenticator_registers_logs_in_and_deletes_passkeys() {
 }
 
 async fn add_passkey(driver: &WebDriver, server: &DevServer, expected_before: usize) {
-    open_route(driver, server, "/mypage", "/mypage").await;
+    open_route(driver, server, "/account", "/account").await;
     click_text(driver, "Google で再認証").await;
-    wait_for_route(driver, server, "/mypage").await;
+    wait_for_route(driver, server, "/account").await;
     let before = wait_for_passkey_count(driver, expected_before).await;
     click_text(driver, "パスキーを追加").await;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);

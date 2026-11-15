@@ -245,7 +245,7 @@ pub async fn callback(request: Request, context: RouteContext<()>) -> Result<Res
             ));
         }
         let elevation = super::passkey::issue_elevation(&db, &session.id).await?;
-        let url = Url::parse(&format!("{origin}/mypage"))?;
+        let url = Url::parse(&format!("{origin}/account"))?;
         let response = redirect(url.as_str())?;
         let response = append_cookie(response, &elevation_cookie(&elevation))?;
         return append_cookie(response, &clear_oauth_state_cookie());

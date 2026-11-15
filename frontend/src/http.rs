@@ -1,4 +1,4 @@
-//! 同じオリジンの API への要求と、JSON の応答の復元。
+//! 同じオリジンの API への要求と、JSON の応答または状態コードの取り出し。
 //!
 //! 画面は応答の型だけを持ち、要求の組み立てと失敗の分類はここに集める。
 
@@ -36,11 +36,43 @@ pub async fn request_json_with_body<T: DeserializeOwned, B: Serialize>(
     send_json(method, url, Some(body)).await
 }
 
+/// 同じオリジンへ要求を送り、応答の状態コードを返す。
+pub async fn request_status(method: &str, url: &str) -> Result<u16, HttpError> {
+    send_status(method, url, None).await
+}
+
+/// 同じオリジンへ JSON の本文を送り、応答の状態コードを返す。
+pub async fn request_status_with_body<B: Serialize>(
+    method: &str,
+    url: &str,
+    body: &B,
+) -> Result<u16, HttpError> {
+    let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
+    send_status(method, url, Some(body)).await
+}
+
 async fn send_json<T: DeserializeOwned>(
     method: &str,
     url: &str,
     body: Option<String>,
 ) -> Result<T, HttpError> {
+    let response = send(method, url, body).await?;
+    if !response.ok() {
+        return Err(HttpError::Rejected);
+    }
+    let body = JsFuture::from(response.text().map_err(|_| HttpError::Unavailable)?)
+        .await
+        .map_err(|_| HttpError::Unavailable)?;
+    let body: String = body.as_string().ok_or(HttpError::InvalidResponse)?;
+    serde_json::from_str(&body).map_err(|_| HttpError::InvalidResponse)
+}
+
+async fn send_status(method: &str, url: &str, body: Option<String>) -> Result<u16, HttpError> {
+    let response = send(method, url, body).await?;
+    Ok(response.status())
+}
+
+async fn send(method: &str, url: &str, body: Option<String>) -> Result<Response, HttpError> {
     let window = web_sys::window().ok_or(HttpError::Unavailable)?;
     let headers = Headers::new().map_err(|_| HttpError::Unavailable)?;
     headers
@@ -56,13 +88,7 @@ async fn send_json<T: DeserializeOwned>(
     let response = JsFuture::from(window.fetch_with_request(&request))
         .await
         .map_err(|_| HttpError::Unavailable)?;
-    let response: Response = response.dyn_into().map_err(|_| HttpError::Unavailable)?;
-    if !response.ok() {
-        return Err(HttpError::Rejected);
-    }
-    let body = JsFuture::from(response.text().map_err(|_| HttpError::Unavailable)?)
-        .await
-        .map_err(|_| HttpError::Unavailable)?;
-    let body: String = body.as_string().ok_or(HttpError::InvalidResponse)?;
-    serde_json::from_str(&body).map_err(|_| HttpError::InvalidResponse)
+    response
+        .dyn_into::<Response>()
+        .map_err(|_| HttpError::Unavailable)
 }
