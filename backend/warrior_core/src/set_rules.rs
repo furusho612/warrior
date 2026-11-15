@@ -22,6 +22,13 @@ pub fn drop_set_positions_valid(kinds: &[SetKind]) -> bool {
     })
 }
 
+/// 直後のセット種別から、セットを削除できるか返す。
+///
+/// 直後がドロップセットのときは削除できない。直後のドロップセットが先頭になるためである。
+pub fn delete_set_allowed(next: Option<SetKind>) -> bool {
+    next != Some(SetKind::Drop)
+}
+
 fn previous_kind(kinds: &[SetKind], index: usize) -> Option<SetKind> {
     index
         .checked_sub(1)
@@ -33,7 +40,7 @@ fn previous_kind(kinds: &[SetKind], index: usize) -> Option<SetKind> {
 mod tests {
     //! 対応する要求: `REQ-SET-003`。
 
-    use super::{drop_set_allowed, drop_set_positions_valid};
+    use super::{delete_set_allowed, drop_set_allowed, drop_set_positions_valid};
     use crate::set_calc::SetKind;
 
     #[test]
@@ -85,5 +92,13 @@ mod tests {
     #[test]
     fn an_empty_sequence_is_valid() {
         assert!(drop_set_positions_valid(&[]));
+    }
+
+    #[test]
+    fn req_set_003_a_set_before_a_drop_set_cannot_be_deleted() {
+        assert!(!delete_set_allowed(Some(SetKind::Drop)));
+        assert!(delete_set_allowed(None));
+        assert!(delete_set_allowed(Some(SetKind::Normal)));
+        assert!(delete_set_allowed(Some(SetKind::Warmup)));
     }
 }

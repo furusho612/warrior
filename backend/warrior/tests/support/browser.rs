@@ -214,15 +214,27 @@ pub async fn click_text(driver: &WebDriver, label: &str) {
 }
 
 /// セレクタの要素を押す。
+///
+/// 前回の記録や自己ベストの読み込みで要素が動くと、押す位置が別の要素に当たる。
+/// 要素を取り直して、押せるようになるまで繰り返す。
 pub async fn click(driver: &WebDriver, selector: &str) {
-    let element = driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
-    element
-        .click()
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must be clickable: {error}"));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let element = driver
+            .find(By::Css(selector))
+            .await
+            .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
+        match element.click().await {
+            Ok(()) => return,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the element {selector} must be clickable: {error}"
+                );
+                std::thread::sleep(POLL_INTERVAL);
+            }
+        }
+    }
 }
 
 /// 数値の入力要素を空にして、値を入れる。
@@ -470,6 +482,52 @@ pub async fn eval_string(
         .as_str()
         .unwrap_or_default()
         .to_owned()
+}
+
+/// 画面のセットの行の ID を並べる。
+pub async fn set_ids(driver: &WebDriver) -> Vec<String> {
+    let value = eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         done(JSON.stringify(Array.from(document.querySelectorAll('[data-set-row]')) \
+           .map((element) => element.getAttribute('data-set-id'))));",
+        Vec::new(),
+    )
+    .await;
+    value
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 要素が有効になるまで待つ。
+pub async fn wait_for_enabled(driver: &WebDriver, selector: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let enabled = eval_json(
+            driver,
+            "const done = arguments[arguments.length - 1]; \
+             const element = document.querySelector(arguments[0]); \
+             done(JSON.stringify(element ? !element.disabled : false));",
+            vec![serde_json::json!(selector)],
+        )
+        .await
+        .as_bool()
+        .unwrap_or(false);
+        if enabled {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the element {selector} did not become enabled"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
 }
 
 /// OS に空きポートを選ばせる。

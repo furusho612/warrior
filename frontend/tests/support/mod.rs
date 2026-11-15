@@ -6,9 +6,11 @@ use std::cell::Cell;
 
 use serde_json::json;
 use warrior_core::sync::{Operation, OperationKind, SessionCreatePayload, SessionRecord};
-use warrior_core::training_record::TrainingRecord;
+use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 use warrior_core::training_session::SessionSource;
 use warrior_frontend::storage::{Storage, Store};
+
+pub mod exercise_tree;
 
 thread_local! {
     static SEQUENCE: Cell<u32> = const { Cell::new(0) };
@@ -29,7 +31,7 @@ pub fn database_name(test: &str) -> String {
 
 /// テスト用のデータベースを開く。
 pub async fn open(name: &str) -> Storage {
-    Storage::open_with(name, 2)
+    Storage::open_with(name, warrior_frontend::storage::SCHEMA_VERSION)
         .await
         .expect("the database must open")
 }
@@ -188,4 +190,57 @@ pub async fn record_ids(storage: &Storage, store: Store) -> Vec<String> {
         .iter()
         .map(|record| record["id"].as_str().expect("a record id").to_owned())
         .collect()
+}
+
+/// テスト用の種目の行。
+pub fn exercise_row(id: &str, exercise_id: &str, position: i64) -> TrainingExerciseRecord {
+    TrainingExerciseRecord {
+        id: id.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        exercise_id: exercise_id.to_owned(),
+        snapshot: "{}".to_owned(),
+        position,
+        created_at: "2026-11-12T03:00:00Z".to_owned(),
+        updated_at: "2026-11-12T03:00:00Z".to_owned(),
+    }
+}
+
+/// テスト用の種目の追加の操作。
+pub fn create_exercise_operation(id: &str) -> Operation {
+    Operation {
+        operation_id: format!("3f2504e0-4f89-41d3-9a0c-0305e82c57{}", &id[35..36]),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 0,
+        kind: OperationKind::TrainingExerciseCreate,
+        parent_operation_id: None,
+        payload: json!({
+            "training_id": TRAINING_ID,
+            "training_exercise_id": id,
+            "exercise_id": "bench-press",
+            "snapshot": {
+                "exercise_id": "bench-press",
+                "name": "ベンチプレス",
+                "body_part": "chest",
+                "muscles": [],
+                "record_mode": "weight_and_reps",
+                "laterality": "bilateral",
+                "grip_mode": "none",
+                "grip_options": []
+            },
+            "position": 1
+        }),
+    }
+}
+
+/// 種目を保存して、サーバーが受理した状態にする。
+pub async fn save_exercise(storage: &Storage, row: TrainingExerciseRecord) {
+    let operation = create_exercise_operation(&row.id);
+    storage
+        .save_training_exercise_create(&row, &operation)
+        .await
+        .expect("the exercise must be saved");
+    storage
+        .mark_success(&operation.operation_id)
+        .await
+        .expect("the exercise creation must succeed");
 }

@@ -5,7 +5,9 @@
 //! 送信の再試行は固定の sleep で待たず、次の online イベントか起動で行う。
 //! テストの待機も条件で行い、固定の sleep を書かない (ADR-024)。
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::future::poll_fn;
+use std::task::{Poll, Waker};
 
 use warrior_core::sync::{next_sendable, Operation, OperationResponse};
 use warrior_core::training_session::PersonalBestItem;
@@ -27,6 +29,7 @@ pub struct SyncStatus {
 
 thread_local! {
     static FLUSHING: Cell<bool> = const { Cell::new(false) };
+    static FLUSH_WAITERS: RefCell<Vec<Waker>> = const { RefCell::new(Vec::new()) };
     static LISTENING: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -98,14 +101,39 @@ pub fn flush_in_background() {
     });
 }
 
-/// 送信待ちの列を先頭から送る。同じ flush を同時に走らせない。
+/// 送信待ちの列を先頭から送る。
+///
+/// 実行中の flush があるときは、それが終わるのを待ってから送る。待たずに戻ると、
+/// あとから積んだ操作が送られないまま未保存として残る。
 pub async fn flush() {
-    if FLUSHING.with(Cell::get) {
+    loop {
+        wait_until_idle().await;
+        // 待っている間に別の flush が始まることがある。もう一度確かめる。
+        if FLUSHING.with(Cell::get) {
+            continue;
+        }
+        FLUSHING.with(|flushing| flushing.set(true));
+        let _guard = FlushGuard;
+        flush_inner().await;
         return;
     }
-    FLUSHING.with(|flushing| flushing.set(true));
-    let _guard = FlushGuard;
-    flush_inner().await;
+}
+
+/// 実行中の flush が終わるまで待つ。
+async fn wait_until_idle() {
+    poll_fn(|context| {
+        if !FLUSHING.with(Cell::get) {
+            return Poll::Ready(());
+        }
+        FLUSH_WAITERS.with(|waiters| {
+            let mut waiters = waiters.borrow_mut();
+            if !waiters.iter().any(|waker| waker.will_wake(context.waker())) {
+                waiters.push(context.waker().clone());
+            }
+        });
+        Poll::Pending
+    })
+    .await;
 }
 
 struct FlushGuard;
@@ -113,6 +141,10 @@ struct FlushGuard;
 impl Drop for FlushGuard {
     fn drop(&mut self) {
         FLUSHING.with(|flushing| flushing.set(false));
+        let waiters = FLUSH_WAITERS.with(|waiters| std::mem::take(&mut *waiters.borrow_mut()));
+        for waker in waiters {
+            waker.wake();
+        }
     }
 }
 

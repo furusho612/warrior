@@ -46,7 +46,17 @@ const COMPLETED_UNCOMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82
 const EMPTY_REJECTED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5637";
 const COMPLETED_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5638";
 const SECOND_SET_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5622";
+const EMPTY_COMPLETED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5639";
 const TAKEOVER_PORT: u16 = 8824;
+const TIME_PORT: u16 = 8827;
+const TIME_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5650";
+const TIME_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5651";
+const TIME_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5652";
+const TIME_BAD_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5653";
+const TIME_BAD_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5654";
+const TIME_GOOD_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5655";
+const TIME_GOOD_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5656";
+const TIME_REOPEN_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5657";
 const TAKEOVER_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5640";
 const TAKEOVER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5641";
 const TAKEOVER_OLD_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5642";
@@ -195,10 +205,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
             completed: false,
             body_weight_kg: Some(70.0),
         },
-        vec![
-            segment(BENCH_SEGMENT_ID, 1, 110.0, 6),
-            segment(EXTRA_SEGMENT_ID, 2, 90.0, 8),
-        ],
+        vec![segment(BENCH_SEGMENT_ID, 1, 110.0, 6)],
     );
     let response = post(server, cookie, &two_segments);
     assert_eq!(response.status, 200, "{}", response.body);
@@ -215,7 +222,7 @@ fn update_and_complete_the_set(server: &DevServer, cookie: &str) {
             server,
             &format!("SELECT COUNT(*) AS count FROM set_segments WHERE set_id = '{BENCH_SET_ID}'")
         ),
-        2
+        1
     );
 
     let one_segment = update_operation(
@@ -594,7 +601,8 @@ fn a_completed_set_requires_values() {
         vec![segment(segment_id, 1, 0.0, 0)],
     );
     let response = post(&server, &user_cookie, &empty_update);
-    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(&server, EMPTY_UPDATE_OPERATION_ID), 0);
     assert_eq!(
         first_row(
             &server,
@@ -633,6 +641,33 @@ fn a_completed_set_requires_values() {
         1
     );
 
+    let empty_completed = update_operation(
+        EMPTY_COMPLETED_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        set_id,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![segment(segment_id, 1, 0.0, 0)],
+    );
+    let response = post(&server, &user_cookie, &empty_completed);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(
+        applied_count(&server, EMPTY_COMPLETED_UPDATE_OPERATION_ID),
+        0
+    );
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT completed FROM sets WHERE id = '{set_id}'")
+        )["completed"],
+        1,
+        "a completed update must keep values"
+    );
+
     let rejected_update = update_operation(
         EMPTY_REJECTED_UPDATE_OPERATION_ID,
         TRAINING_ID,
@@ -640,7 +675,7 @@ fn a_completed_set_requires_values() {
         UpdateSpec {
             position: 1,
             kind: "normal",
-            completed: true,
+            completed: false,
             body_weight_kg: None,
         },
         vec![segment(segment_id, 1, 0.0, 0)],
@@ -668,6 +703,134 @@ fn a_completed_set_requires_values() {
     let summary: Value = serde_json::from_str(&finish.body).expect("a summary");
     assert_eq!(summary["set_count"], 1);
     assert_eq!(summary["total_weight_kg"], 500.0);
+}
+
+#[test]
+fn a_time_set_completes_only_with_a_duration() {
+    let server = DevServer::start(TIME_PORT);
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let token = base64url::encode(&[81u8; 32]);
+    let terminal_token = base64url::encode(&[82u8; 32]);
+    let other_terminal_token = base64url::encode(&[83u8; 32]);
+    seed_base(&server, &token, &terminal_token, &other_terminal_token);
+    let user_cookie = cookie(&token, &terminal_token);
+
+    let create = create_operation(
+        TIME_CREATE_OPERATION_ID,
+        TRAINING_ID,
+        TIME_ROW_ID,
+        TIME_SET_ID,
+        SetSpec {
+            position: 1,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![segment(TIME_SEGMENT_ID, 1, 0.0, 5)],
+    );
+    let response = post(&server, &user_cookie, &create);
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    let seeded = first_row(
+        &server,
+        &format!(
+            "SELECT te.snapshot AS snapshot, sg.reps, sg.duration_seconds \
+             FROM sets s JOIN training_exercises te ON te.id = s.training_exercise_id \
+             JOIN set_segments sg ON sg.set_id = s.id WHERE s.id = '{TIME_SET_ID}'"
+        ),
+    );
+    assert!(
+        seeded["snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| snapshot.contains("\"record_mode\":\"time\"")),
+        "the time exercise must be seeded: {seeded}"
+    );
+    assert_eq!(seeded["reps"], 5);
+    assert_eq!(seeded["duration_seconds"], Value::Null);
+
+    let bad_complete = complete_operation(
+        TIME_BAD_COMPLETE_OPERATION_ID,
+        TRAINING_ID,
+        TIME_SET_ID,
+        true,
+    );
+    let response = post(&server, &user_cookie, &bad_complete);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(&server, TIME_BAD_COMPLETE_OPERATION_ID), 0);
+
+    let bad_update = update_operation(
+        TIME_BAD_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        TIME_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![segment(TIME_SEGMENT_ID, 1, 0.0, 5)],
+    );
+    let response = post(&server, &user_cookie, &bad_update);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(&server, TIME_BAD_UPDATE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT completed FROM sets WHERE id = '{TIME_SET_ID}'")
+        )["completed"],
+        0
+    );
+
+    let good_update = update_operation(
+        TIME_GOOD_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        TIME_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![time_segment(TIME_SEGMENT_ID, 1, 90)],
+    );
+    let response = post(&server, &user_cookie, &good_update);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT completed FROM sets WHERE id = '{TIME_SET_ID}'")
+        )["completed"],
+        1
+    );
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT duration_seconds FROM set_segments WHERE id = '{TIME_SEGMENT_ID}'")
+        )["duration_seconds"],
+        90
+    );
+
+    let complete = complete_operation(
+        TIME_GOOD_COMPLETE_OPERATION_ID,
+        TRAINING_ID,
+        TIME_SET_ID,
+        true,
+    );
+    let response = post(&server, &user_cookie, &complete);
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    let reopen = complete_operation(TIME_REOPEN_OPERATION_ID, TRAINING_ID, TIME_SET_ID, false);
+    let response = post(&server, &user_cookie, &reopen);
+    assert_eq!(response.status, 409, "{}", response.body);
+    assert_eq!(applied_count(&server, TIME_REOPEN_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            &server,
+            &format!("SELECT completed FROM sets WHERE id = '{TIME_SET_ID}'")
+        )["completed"],
+        1
+    );
 }
 
 #[test]

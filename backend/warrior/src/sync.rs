@@ -169,6 +169,12 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
                     return applied_response("already_applied", bests.held);
                 }
             }
+            if is_superset_member_conflict(&error) {
+                return Ok(response(
+                    ErrorCode::Conflict,
+                    "a superset member already belongs to a group",
+                ));
+            }
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
@@ -186,6 +192,12 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
     let bests =
         crate::set::personal_bests_after_completion(&db, &authenticated.id, &validated).await;
     applied_response("applied", bests.updated)
+}
+
+/// スーパーセットの種目の一意制約に違反したか。
+fn is_superset_member_conflict(error: &worker::Error) -> bool {
+    let message = error.to_string();
+    message.contains("UNIQUE constraint failed") && message.contains("superset_members")
 }
 
 /// batch の最初の文が変更した行数を返す。

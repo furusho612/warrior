@@ -3,16 +3,17 @@
 //! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-010`。
 
 use serde_json::json;
-use warrior_core::set_calc::{SetKind, SideValue};
+use warrior_core::set_calc::SetKind;
 use warrior_core::sql::SqlValue;
 use warrior_core::sync::{
     Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
-    SetReorderPayload, SetSegmentPayload, SetUpdatePayload, ValidatedOperation, ValidatedPayload,
+    SetReorderPayload, SetSegmentPayload, SetSidePayload, SetUpdatePayload, ValidatedOperation,
+    ValidatedPayload,
 };
 
+use super::bindings::{applied_exists, ownership_condition_placeholder, segment_bindings};
 use super::{
-    applied_exists, delete_set_statement, ownership_condition_placeholder, same_set_ids,
-    segment_bindings, set_statements, update_set_statement, ExerciseOwnership,
+    delete_set_statement, same_set_ids, set_statements, update_set_statement, ExerciseOwnership,
 };
 
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5301";
@@ -275,13 +276,13 @@ fn set_ids_match_regardless_of_the_input_order() {
 #[test]
 fn segment_bindings_keep_the_sides() {
     let mut segment = segment();
-    segment.left = Some(SideValue {
-        weight_kg: 10.0,
+    segment.left = Some(SetSidePayload {
+        weight_kg: Some(10.0),
         reps: 4,
         duration_seconds: None,
     });
-    segment.right = Some(SideValue {
-        weight_kg: 12.0,
+    segment.right = Some(SetSidePayload {
+        weight_kg: Some(12.0),
         reps: 3,
         duration_seconds: None,
     });
@@ -317,13 +318,13 @@ fn segment_bindings_store_no_weight_or_reps_for_a_unilateral_time_segment() {
     let mut segment = segment();
     segment.weight_kg = 0.0;
     segment.reps = 0;
-    segment.left = Some(SideValue {
-        weight_kg: 10.0,
+    segment.left = Some(SetSidePayload {
+        weight_kg: Some(10.0),
         reps: 4,
         duration_seconds: Some(30),
     });
-    segment.right = Some(SideValue {
-        weight_kg: 12.0,
+    segment.right = Some(SetSidePayload {
+        weight_kg: Some(12.0),
         reps: 3,
         duration_seconds: Some(40),
     });

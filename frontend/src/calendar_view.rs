@@ -5,6 +5,7 @@
 use warrior_core::calendar::{day_body_parts, month_cells, CalendarMonth};
 use warrior_core::exercise::BodyPart;
 use warrior_core::jst::{JstDate, JstMonth, Weekday};
+use warrior_core::rpe;
 use warrior_core::set_calc::{SetKind, SetSegment, SideValue};
 
 use crate::text::{text, Key};
@@ -227,7 +228,7 @@ fn side_text(side: &SideValue) -> String {
 pub(crate) fn set_notes(set: &warrior_core::calendar::CalendarSet) -> Vec<String> {
     let mut notes = vec![set_kind_label(set.kind).to_owned()];
     if let Some(rpe) = set.rpe {
-        notes.push(format!("RPE {rpe}"));
+        notes.push(format!("RPE {}", rpe::format(rpe)));
     }
     if let Some(grip) = set.grip.as_deref() {
         notes.push(grip_label(grip));
@@ -609,7 +610,7 @@ mod tests {
             set_notes(&set),
             vec![
                 "通常".to_owned(),
-                "RPE 8".to_owned(),
+                "RPE 8.0".to_owned(),
                 "順手 ミディアム".to_owned(),
                 "反動 2 回".to_owned(),
                 "補助 1 回".to_owned(),

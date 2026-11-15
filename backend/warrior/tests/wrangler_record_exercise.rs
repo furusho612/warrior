@@ -11,6 +11,7 @@ mod support;
 
 use helpers::*;
 use serde_json::{json, Value};
+use support::record_common;
 use support::DevServer;
 use warrior_core::base64url;
 
@@ -242,17 +243,55 @@ fn reject_writes_without_the_editing_right(
 }
 
 fn seed_sets(server: &DevServer) {
+    record_common::seed_set(
+        server,
+        record_common::SetSeed {
+            set_id: BENCH_SET_ID,
+            user_id: USER_ID,
+            training_exercise_id: BENCH_ROW_ID,
+            position: 1,
+            kind: "normal",
+            completed: 1,
+            grip: None,
+        },
+    );
+    record_common::seed_segment(
+        server,
+        record_common::SegmentSeed {
+            segment_id: BENCH_SEGMENT_ID,
+            user_id: USER_ID,
+            set_id: BENCH_SET_ID,
+            position: 1,
+            weight_kg: Some(100.0),
+            reps: Some(5),
+            duration_seconds: None,
+        },
+    );
+    record_common::seed_set(
+        server,
+        record_common::SetSeed {
+            set_id: PLANK_SET_ID,
+            user_id: USER_ID,
+            training_exercise_id: PLANK_ROW_ID,
+            position: 1,
+            kind: "normal",
+            completed: 1,
+            grip: None,
+        },
+    );
+    record_common::seed_segment(
+        server,
+        record_common::SegmentSeed {
+            segment_id: PLANK_SEGMENT_ID,
+            user_id: USER_ID,
+            set_id: PLANK_SET_ID,
+            position: 1,
+            weight_kg: None,
+            reps: None,
+            duration_seconds: Some(90),
+        },
+    );
     for sql in [
-        seed_set_sql(BENCH_ROW_ID, BENCH_SET_ID, 1, "normal", None),
-        seed_segment_sql(
-            BENCH_SET_ID,
-            BENCH_SEGMENT_ID,
-            Some(100.0),
-            Some(5),
-            None,
-        ),
-        seed_set_sql(PLANK_ROW_ID, PLANK_SET_ID, 1, "normal", None),
-        seed_segment_sql(PLANK_SET_ID, PLANK_SEGMENT_ID, None, None, Some(90)),
         format!(
             "INSERT INTO supersets (id, user_id, training_id, position, created_at, updated_at) \
              VALUES ('{SUPERSET_ID}', '{USER_ID}', '{TRAINING_ID}', 1, '2026-11-12T03:00:00Z', '2026-11-12T03:00:00Z')"
@@ -264,7 +303,7 @@ fn seed_sets(server: &DevServer) {
     ] {
         server
             .execute_d1_json(&sql)
-            .expect("the sets must be seeded");
+            .expect("the superset must be seeded");
     }
 }
 

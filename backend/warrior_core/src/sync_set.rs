@@ -1,7 +1,7 @@
 //! セットの追加、更新、削除、並べ替え、完了の操作の本文の検証。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-006`、`REQ-SET-007`、
-//! `REQ-LIB-004`、`REQ-PRF-005`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-004`、`REQ-SET-006`、
+//! `REQ-SET-007`、`REQ-LIB-004`、`REQ-PRF-005`。
 //! `warrior_core::sync` の操作の検証から呼ぶ。本文を操作のトレーニングの ID、セットの
 //! ID、段、セット種別、RPE、記録した時点の体重について確かめ、`SetRecord` への変換を
 //! 提供する。段の入力は warrior_core::set_calc の計算規則と同じ形にそろえる。
@@ -10,11 +10,12 @@ use crate::exercise::GripSelection;
 use crate::ids::is_valid_uuid_v4;
 use crate::profile::bodyweight_set_weight;
 use crate::set_calc::{
-    validate_rpe, BestKey, RecordMode, SetRecord, SetSegment, SetValidationError, SideValue,
+    validate_rpe, BestKey, RecordMode, SetKind, SetRecord, SetSegment, SetValidationError,
+    SideValue,
 };
 use crate::sync::{
     Operation, SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload,
-    SetSegmentPayload, SetUpdatePayload, SyncError, ValidatedPayload,
+    SetSegmentPayload, SetSidePayload, SetUpdatePayload, SyncError, ValidatedPayload,
 };
 
 /// 秒数の上限。1 日とする。
@@ -32,6 +33,7 @@ pub(crate) fn validate_create(
         &payload.set_id,
         Some(&payload.training_exercise_id),
         payload.position,
+        payload.kind,
         payload.rpe,
         payload.body_weight_kg,
         &payload.segments,
@@ -51,6 +53,7 @@ pub(crate) fn validate_update(
         &payload.set_id,
         None,
         payload.position,
+        payload.kind,
         payload.rpe,
         payload.body_weight_kg,
         &payload.segments,
@@ -114,6 +117,7 @@ fn validate_set_fields(
     set_id: &str,
     training_exercise_id: Option<&str>,
     position: i64,
+    kind: SetKind,
     rpe: Option<f64>,
     body_weight_kg: Option<f64>,
     segments: &[SetSegmentPayload],
@@ -137,6 +141,9 @@ fn validate_set_fields(
     }
     if segments.is_empty() {
         return Err(SyncError::EmptySegments);
+    }
+    if kind != SetKind::Drop && segments.len() != 1 {
+        return Err(SyncError::InvalidSegmentCount);
     }
     let mut seen = Vec::new();
     for segment in segments {
@@ -178,11 +185,14 @@ fn validate_segment(segment: &SetSegmentPayload) -> Result<(), SyncError> {
 }
 
 fn validate_side(
-    side: &SideValue,
+    side: &SetSidePayload,
     momentum_reps: u32,
     assisted_reps: u32,
 ) -> Result<(), SyncError> {
-    if !side.weight_kg.is_finite() || side.weight_kg < 0.0 {
+    if side
+        .weight_kg
+        .is_some_and(|weight| !weight.is_finite() || weight < 0.0)
+    {
         return Err(SyncError::InvalidWeight);
     }
     if let Some(duration) = side.duration_seconds {
@@ -198,38 +208,64 @@ fn validate_side(
 
 impl SetSegmentPayload {
     /// crate::set_calc の段の記録に変換する。自重種目は記録した時点の体重に加重を足す。
+    ///
+    /// 重量欄が空の片側は 0 kg として計算する。完了できるかは
+    /// `has_completion_values` が判定する。
     pub fn to_segment(&self, mode: RecordMode, body_weight_kg: Option<f64>) -> SetSegment {
+        let side = |side: &SetSidePayload| SideValue {
+            weight_kg: weight_at_record(side.weight_kg.unwrap_or(0.0), mode, body_weight_kg),
+            reps: side.reps,
+            duration_seconds: side.duration_seconds,
+        };
         SetSegment {
             weight_kg: weight_at_record(self.weight_kg, mode, body_weight_kg),
             reps: self.reps,
             momentum_reps: self.momentum_reps,
             assisted_reps: self.assisted_reps,
-            left: self.left.clone().map(|side| SideValue {
-                weight_kg: weight_at_record(side.weight_kg, mode, body_weight_kg),
-                ..side
-            }),
-            right: self.right.clone().map(|side| SideValue {
-                weight_kg: weight_at_record(side.weight_kg, mode, body_weight_kg),
-                ..side
-            }),
+            left: self.left.as_ref().map(side),
+            right: self.right.as_ref().map(side),
             duration_seconds: self.duration_seconds,
+        }
+    }
+
+    /// 左右の列が種目の左右別の指定と一致するか。
+    pub fn has_matching_sides(&self, lateral: bool) -> bool {
+        match (self.left.is_some(), self.right.is_some()) {
+            (true, true) => lateral,
+            (false, false) => !lateral,
+            (true, false) | (false, true) => false,
         }
     }
 
     /// 段が完了に必要な値を持つか。
     ///
-    /// 左右別の段は左右の両方に回数または時間があることを求める。
-    pub fn is_complete(&self) -> bool {
-        match (self.left.as_ref(), self.right.as_ref()) {
-            (Some(left), Some(right)) => {
-                (left.reps > 0 && right.reps > 0)
-                    || (left.duration_seconds.is_some_and(|duration| duration > 0)
-                        && right.duration_seconds.is_some_and(|duration| duration > 0))
-            }
-            (None, None) => {
-                self.reps > 0 || self.duration_seconds.is_some_and(|duration| duration > 0)
-            }
-            (Some(_), None) | (None, Some(_)) => false,
+    /// 左右別の重量種目は左右の両方に重量と回数を、時間種目は左右の両方に時間を
+    /// 求める。左右別でない段は左右の列を持たないことを求める。
+    pub fn has_completion_values(&self, mode: RecordMode, lateral: bool) -> bool {
+        if lateral {
+            let (Some(left), Some(right)) = (self.left.as_ref(), self.right.as_ref()) else {
+                return false;
+            };
+            return match mode {
+                RecordMode::Time => {
+                    left.duration_seconds.is_some_and(|duration| duration > 0)
+                        && right.duration_seconds.is_some_and(|duration| duration > 0)
+                }
+                RecordMode::WeightAndReps => {
+                    left.weight_kg.is_some()
+                        && left.reps > 0
+                        && right.weight_kg.is_some()
+                        && right.reps > 0
+                }
+                RecordMode::BodyweightAndReps => left.reps > 0 && right.reps > 0,
+            };
+        }
+        if self.left.is_some() || self.right.is_some() {
+            return false;
+        }
+        match mode {
+            RecordMode::Time => self.duration_seconds.is_some_and(|duration| duration > 0),
+            RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => self.reps > 0,
         }
     }
 }
@@ -455,6 +491,7 @@ mod tests {
 
         let operation = create_operation();
         let mut payload = create_from(&operation);
+        payload.kind = SetKind::Drop;
         payload.segments.push(segment());
         assert_eq!(
             validate_create(&operation, payload),
@@ -488,6 +525,26 @@ mod tests {
             validate_create(&operation, payload),
             Err(SyncError::EmptySegments)
         );
+    }
+
+    #[test]
+    fn a_non_drop_set_needs_exactly_one_segment() {
+        let operation = create_operation();
+        let mut payload = create_from(&operation);
+        let mut extra = segment();
+        extra.segment_id = OTHER_ID.to_owned();
+        extra.position = 2;
+        payload.segments.push(extra.clone());
+        assert_eq!(
+            validate_create(&operation, payload),
+            Err(SyncError::InvalidSegmentCount)
+        );
+
+        let operation = create_operation();
+        let mut payload = create_from(&operation);
+        payload.kind = SetKind::Drop;
+        payload.segments.push(extra);
+        assert!(validate_create(&operation, payload).is_ok());
     }
 
     #[test]
@@ -556,8 +613,8 @@ mod tests {
     fn sides_validate_their_own_reps_and_durations() {
         let operation = create_operation();
         let mut payload = create_from(&operation);
-        payload.segments[0].left = Some(crate::set_calc::SideValue {
-            weight_kg: 10.0,
+        payload.segments[0].left = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(10.0),
             reps: 2,
             duration_seconds: None,
         });
@@ -570,8 +627,8 @@ mod tests {
 
         let operation = create_operation();
         let mut payload = create_from(&operation);
-        payload.segments[0].right = Some(crate::set_calc::SideValue {
-            weight_kg: 10.0,
+        payload.segments[0].right = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(10.0),
             reps: 5,
             duration_seconds: Some(0),
         });
@@ -744,35 +801,72 @@ mod tests {
     }
 
     #[test]
-    fn segments_report_whether_they_are_complete() {
-        let mut empty = segment();
-        empty.reps = 0;
-        empty.weight_kg = 0.0;
-        assert!(!empty.is_complete());
-        assert!(segment().is_complete());
-
-        let mut one_side = segment();
-        one_side.reps = 0;
-        one_side.left = Some(crate::set_calc::SideValue {
-            weight_kg: 10.0,
+    fn sides_must_match_the_exercise_laterality() {
+        let mut bilateral = segment();
+        assert!(bilateral.has_matching_sides(false));
+        bilateral.left = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(10.0),
             reps: 5,
             duration_seconds: None,
         });
-        assert!(!one_side.is_complete());
+        assert!(!bilateral.has_matching_sides(false));
+        assert!(!bilateral.has_matching_sides(true));
 
-        one_side.right = Some(crate::set_calc::SideValue {
-            weight_kg: 10.0,
+        let mut unilateral = segment();
+        unilateral.left = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(10.0),
+            reps: 5,
+            duration_seconds: None,
+        });
+        assert!(!unilateral.has_matching_sides(true));
+        unilateral.right = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(12.0),
             reps: 4,
             duration_seconds: None,
         });
-        assert!(one_side.is_complete());
+        assert!(unilateral.has_matching_sides(true));
+        assert!(!unilateral.has_matching_sides(false));
+    }
+
+    #[test]
+    fn completion_needs_values_on_both_sides_of_a_unilateral_set() {
+        let mut empty = segment();
+        empty.reps = 0;
+        empty.weight_kg = 0.0;
+        assert!(!empty.has_completion_values(RecordMode::WeightAndReps, false));
+        assert!(segment().has_completion_values(RecordMode::WeightAndReps, false));
+
+        let mut one_side = segment();
+        one_side.reps = 0;
+        one_side.left = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(10.0),
+            reps: 5,
+            duration_seconds: None,
+        });
+        assert!(!one_side.has_completion_values(RecordMode::WeightAndReps, true));
+
+        one_side.right = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(10.0),
+            reps: 4,
+            duration_seconds: None,
+        });
+        assert!(one_side.has_completion_values(RecordMode::WeightAndReps, true));
+
+        let mut empty_weight = one_side.clone();
+        empty_weight.left = Some(crate::sync::SetSidePayload {
+            weight_kg: None,
+            reps: 5,
+            duration_seconds: None,
+        });
+        assert!(!empty_weight.has_completion_values(RecordMode::WeightAndReps, true));
+        assert!(empty_weight.has_completion_values(RecordMode::BodyweightAndReps, true));
 
         let mut empty_side = one_side.clone();
-        empty_side.right = Some(crate::set_calc::SideValue {
-            weight_kg: 10.0,
+        empty_side.right = Some(crate::sync::SetSidePayload {
+            weight_kg: Some(10.0),
             reps: 0,
             duration_seconds: None,
         });
-        assert!(!empty_side.is_complete());
+        assert!(!empty_side.has_completion_values(RecordMode::WeightAndReps, true));
     }
 }

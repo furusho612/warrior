@@ -688,6 +688,8 @@ fn validate_duration(duration: u32) -> Result<(), SetValidationError> {
 
 #[cfg(test)]
 mod tests {
+    //! 対応する要求: `REQ-SET-004`。
+
     use super::{
         estimated_one_rep_max, is_reference_one_rep_max, strict_reps, BestKey, PartRole,
         PersonalBest, RecordMode, SetKind, SetRecord, SetSegment, SetValidationError, Side,
@@ -721,6 +723,31 @@ mod tests {
 
     fn record(kind: SetKind, segments: Vec<SetSegment>) -> SetRecord {
         SetRecord::new(key(), kind, segments, None, None, RecordMode::WeightAndReps).unwrap()
+    }
+
+    fn unilateral_segment(
+        left: (f64, u32),
+        right: (f64, u32),
+        momentum_reps: u32,
+        assisted_reps: u32,
+    ) -> SetSegment {
+        SetSegment {
+            weight_kg: 0.0,
+            reps: 0,
+            momentum_reps,
+            assisted_reps,
+            left: Some(SideValue {
+                weight_kg: left.0,
+                reps: left.1,
+                duration_seconds: None,
+            }),
+            right: Some(SideValue {
+                weight_kg: right.0,
+                reps: right.1,
+                duration_seconds: None,
+            }),
+            duration_seconds: None,
+        }
     }
 
     #[test]
@@ -759,23 +786,7 @@ mod tests {
     fn unilateral_zero_weight_does_not_create_a_personal_best() {
         let record = record(
             SetKind::Normal,
-            vec![SetSegment {
-                weight_kg: 0.0,
-                reps: 0,
-                momentum_reps: 0,
-                assisted_reps: 0,
-                left: Some(SideValue {
-                    weight_kg: 0.0,
-                    reps: 5,
-                    duration_seconds: None,
-                }),
-                right: Some(SideValue {
-                    weight_kg: 0.0,
-                    reps: 5,
-                    duration_seconds: None,
-                }),
-                duration_seconds: None,
-            }],
+            vec![unilateral_segment((0.0, 5), (0.0, 5), 0, 0)],
         );
         assert_eq!(record.max_weight_kg(), None);
     }
@@ -848,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn a_unilateral_segment_needs_both_sides() {
+    fn req_set_004_a_unilateral_segment_needs_both_sides() {
         let segment = SetSegment {
             weight_kg: 0.0,
             reps: 0,
@@ -876,29 +887,12 @@ mod tests {
     }
 
     #[test]
-    fn a_unilateral_drop_set_sums_both_sides_of_every_segment() {
-        let side_segment = |left: (f64, u32), right: (f64, u32)| SetSegment {
-            weight_kg: 0.0,
-            reps: 0,
-            momentum_reps: 0,
-            assisted_reps: 0,
-            left: Some(SideValue {
-                weight_kg: left.0,
-                reps: left.1,
-                duration_seconds: None,
-            }),
-            right: Some(SideValue {
-                weight_kg: right.0,
-                reps: right.1,
-                duration_seconds: None,
-            }),
-            duration_seconds: None,
-        };
+    fn req_set_004_a_unilateral_drop_set_sums_both_sides_of_every_segment() {
         let record = record(
             SetKind::Drop,
             vec![
-                side_segment((10.0, 5), (12.0, 4)),
-                side_segment((8.0, 6), (9.0, 5)),
+                unilateral_segment((10.0, 5), (12.0, 4), 0, 0),
+                unilateral_segment((8.0, 6), (9.0, 5), 0, 0),
             ],
         );
         assert_eq!(record.total_weight_kg(), 50.0 + 48.0 + 48.0 + 45.0);
@@ -910,26 +904,10 @@ mod tests {
     }
 
     #[test]
-    fn unilateral_weight_sums_both_sides() {
+    fn req_set_004_unilateral_weight_sums_both_sides() {
         let record = record(
             SetKind::Normal,
-            vec![SetSegment {
-                weight_kg: 0.0,
-                reps: 0,
-                momentum_reps: 0,
-                assisted_reps: 0,
-                left: Some(SideValue {
-                    weight_kg: 10.0,
-                    reps: 5,
-                    duration_seconds: None,
-                }),
-                right: Some(SideValue {
-                    weight_kg: 12.0,
-                    reps: 4,
-                    duration_seconds: None,
-                }),
-                duration_seconds: None,
-            }],
+            vec![unilateral_segment((10.0, 5), (12.0, 4), 0, 0)],
         );
         assert_eq!(record.total_weight_kg(), 50.0 + 48.0);
         assert_eq!(record.max_weight_kg(), Some(12.0));
@@ -940,7 +918,56 @@ mod tests {
     }
 
     #[test]
-    fn unilateral_time_uses_the_max_and_the_sum() {
+    fn unilateral_breakdown_applies_to_each_side() {
+        let record = record(
+            SetKind::Normal,
+            vec![unilateral_segment((10.0, 10), (20.0, 8), 2, 1)],
+        );
+        let segment = &record.segments()[0];
+        assert_eq!(segment.side(Side::Left).unwrap().strict_reps(2, 1), 7);
+        assert_eq!(segment.side(Side::Right).unwrap().strict_reps(2, 1), 5);
+        assert_eq!(record.total_weight_kg(), 230.0);
+        assert_eq!(record.strict_total_weight_kg(), 170.0);
+        assert_eq!(
+            record.estimated_one_rep_max(),
+            estimated_one_rep_max(20.0, 5)
+        );
+    }
+
+    #[test]
+    fn unilateral_assistance_must_fit_each_side() {
+        let accepted = SetRecord::new(
+            key(),
+            SetKind::Normal,
+            vec![unilateral_segment((10.0, 5), (20.0, 4), 0, 4)],
+            None,
+            None,
+            RecordMode::WeightAndReps,
+        )
+        .expect("assistance equal to the smaller side");
+        assert_eq!(accepted.total_weight_kg(), 10.0);
+        assert_eq!(accepted.strict_total_weight_kg(), 10.0);
+        assert_eq!(
+            accepted.segments()[0]
+                .side(Side::Right)
+                .unwrap()
+                .strict_reps(0, 4),
+            0
+        );
+
+        let rejected = SetRecord::new(
+            key(),
+            SetKind::Normal,
+            vec![unilateral_segment((10.0, 5), (20.0, 4), 0, 5)],
+            None,
+            None,
+            RecordMode::WeightAndReps,
+        );
+        assert_eq!(rejected, Err(SetValidationError::TooManyAssistedReps));
+    }
+
+    #[test]
+    fn req_set_004_unilateral_time_uses_the_max_and_the_sum() {
         let record = SetRecord::new(
             key(),
             SetKind::Normal,

@@ -10,7 +10,7 @@ mod support;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use support::browser::{self, Browser};
-use support::{DevServer, TestOidc};
+use support::{current_user_id, seed_profile, DevServer, TestOidc};
 use thirtyfour::components::SelectElement;
 use thirtyfour::prelude::*;
 
@@ -251,7 +251,7 @@ async fn add_set(driver: &WebDriver) -> String {
     browser::wait_for_present(driver, "[data-add-set]").await;
     browser::click(driver, "[data-add-set]").await;
     browser::wait_for_present(driver, "[data-set-row]").await;
-    let rows = set_ids(driver).await;
+    let rows = browser::set_ids(driver).await;
     rows.last().cloned().expect("the new set id")
 }
 
@@ -334,11 +334,11 @@ async fn check_the_completed_set_is_locked(driver: &WebDriver, set_id: &str) {
 
 async fn check_reorder(driver: &WebDriver, server: &DevServer, first_set: &str, second_set: &str) {
     browser::wait_for_present(driver, "[data-set-row]").await;
-    let rows = set_ids(driver).await;
+    let rows = browser::set_ids(driver).await;
     assert_eq!(rows, vec![first_set.to_owned(), second_set.to_owned()]);
     let second_row = format!("[data-set-id=\"{second_set}\"]");
     browser::click(driver, &format!("{second_row} [data-set-move-up]")).await;
-    let rows = set_ids(driver).await;
+    let rows = browser::set_ids(driver).await;
     assert_eq!(rows, vec![second_set.to_owned(), first_set.to_owned()]);
     wait_for_position(driver, server, second_set, 1).await;
     wait_for_position(driver, server, first_set, 2).await;
@@ -489,26 +489,6 @@ async fn wait_for_completed(driver: &WebDriver, set_id: &str, expected: &str) {
     .await;
 }
 
-async fn set_ids(driver: &WebDriver) -> Vec<String> {
-    let value = browser::eval_json(
-        driver,
-        "const done = arguments[arguments.length - 1]; \
-         done(JSON.stringify(Array.from(document.querySelectorAll('[data-set-row]')) \
-           .map((element) => element.getAttribute('data-set-id'))));",
-        Vec::new(),
-    )
-    .await;
-    value
-        .as_array()
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(|value| value.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 fn weight_selector(set_id: &str) -> String {
     format!("[data-set-id=\"{set_id}\"] [data-set-weight]")
 }
@@ -519,30 +499,6 @@ fn reps_selector(set_id: &str) -> String {
 
 fn complete_selector(set_id: &str) -> String {
     format!("[data-set-id=\"{set_id}\"] [data-set-complete]")
-}
-
-async fn current_user_id(driver: &WebDriver) -> String {
-    let me = browser::eval_string(
-        driver,
-        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
-        Vec::new(),
-    )
-    .await;
-    serde_json::from_str::<Value>(&me)
-        .expect("the me response is JSON")
-        .get("id")
-        .and_then(|value| value.as_str())
-        .expect("the user id")
-        .to_owned()
-}
-
-fn seed_profile(server: &DevServer, user_id: &str) {
-    server
-        .execute_d1_json(&format!(
-            "INSERT INTO profiles (user_id, weight_kg, created_at, updated_at) \
-             VALUES ('{user_id}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
-        ))
-        .expect("the profile must be seeded");
 }
 
 fn seed_previous_bench(server: &DevServer, user_id: &str) {

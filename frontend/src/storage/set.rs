@@ -4,8 +4,9 @@
 //! 操作を送信待ちの列へ積む (ADR-002)。段はセットの更新で全置換し、削除ではセットと
 //! 一緒に消す。記録した時点の体重はセットの行が持ち、段の重量は自重種目では加重である。
 
+use warrior_core::exercise::GripSelection;
 use warrior_core::sync::{
-    Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
+    Operation, OperationKind, OutboxEntry, SetCompletePayload, SetCreatePayload, SetDeletePayload,
     SetReorderPayload, SetSegmentPayload, SetUpdatePayload,
 };
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord, TrainingRecord};
@@ -13,7 +14,7 @@ use wasm_bindgen::JsValue;
 use web_sys::{IdbObjectStore, IdbTransactionMode};
 
 use super::exercise::{enqueue_operation, read_rows};
-use super::{abort, indexeddb, outbox, Storage, StorageError, Store};
+use super::{abort, indexeddb, outbox, RestoreOutcome, Storage, StorageError, Store};
 
 /// 端末に保存した 1 つのセットと、その段。
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +82,12 @@ impl Storage {
         if payload.set_id != set.id
             || payload.training_exercise_id != set.training_exercise_id
             || payload.training_id != operation.training_id
+            || set.completed != 0
+            || payload.position != set.position
+            || payload.kind.as_str() != set.kind.as_str()
+            || payload.rpe != set.rpe
+            || !same_grip(payload.grip, set.grip.as_deref())
+            || payload.body_weight_kg != set.body_weight_kg
             || !same_segments(&payload.segments, segments)
         {
             return Err(StorageError::InvalidOperation(
@@ -127,6 +134,12 @@ impl Storage {
         let payload = update_payload(operation)?;
         if payload.set_id != set.id
             || payload.training_id != operation.training_id
+            || payload.position != set.position
+            || payload.kind.as_str() != set.kind.as_str()
+            || payload.completed != (set.completed != 0)
+            || payload.rpe != set.rpe
+            || !same_grip(payload.grip, set.grip.as_deref())
+            || payload.body_weight_kg != set.body_weight_kg
             || !same_segments(&payload.segments, segments)
         {
             return Err(StorageError::InvalidOperation(
@@ -278,7 +291,10 @@ impl Storage {
         operation: &Operation,
     ) -> Result<(), StorageError> {
         let payload = complete_payload(operation)?;
-        if payload.set_id != set.id || payload.training_id != operation.training_id {
+        if payload.set_id != set.id
+            || payload.training_id != operation.training_id
+            || payload.completed != (set.completed != 0)
+        {
             return Err(StorageError::InvalidOperation(
                 "the operation is not this set completion".to_owned(),
             ));
@@ -314,15 +330,46 @@ impl Storage {
         &self,
         record: &TrainingRecord,
         set_id: &str,
+        after_sequence: u64,
     ) -> Result<(), StorageError> {
+        self.restore_set_with_outcome(record, set_id, after_sequence)
+            .await
+            .map(|_| ())
+    }
+
+    /// サーバーに保存済みの 1 つのセットと段を端末へ戻し、見送ったかを返す。
+    ///
+    /// 破棄した操作より後の、同じセットの未解決の操作または同じ種目の並べ替えがあるときは、
+    /// 端末の値を上書きしない。
+    pub async fn restore_set_with_outcome(
+        &self,
+        record: &TrainingRecord,
+        set_id: &str,
+        after_sequence: u64,
+    ) -> Result<RestoreOutcome, StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::Sets.name(), Store::SetSegments.name()],
+            &[
+                Store::Sets.name(),
+                Store::SetSegments.name(),
+                Store::Outbox.name(),
+            ],
             IdbTransactionMode::Readwrite,
         )?;
         let sets = transaction.store(Store::Sets.name())?;
         let segments = transaction.store(Store::SetSegments.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        let training_exercise_id = record
+            .sets
+            .iter()
+            .find(|set| set.id == set_id)
+            .map(|set| set.training_exercise_id.as_str());
+        if has_newer_set_change(&entries, set_id, training_exercise_id, after_sequence) {
+            transaction.finish().await?;
+            return Ok(RestoreOutcome::Deferred);
+        }
         if let Err(error) = delete_set_rows_in(&sets, &segments, set_id).await {
             return abort(transaction, error).await;
         }
@@ -340,20 +387,41 @@ impl Storage {
                 }
             }
         }
-        transaction.finish().await
+        transaction.finish().await?;
+        Ok(RestoreOutcome::Restored)
     }
 
     /// サーバーに保存済みのセットの位置を端末へ戻す。
     ///
     /// サーバーに無いセットは、端末だけにある未送信の行として残す。
     pub async fn restore_set_positions(&self, record: &TrainingRecord) -> Result<(), StorageError> {
+        self.restore_set_positions_with_outcome(record, None, 0)
+            .await
+            .map(|_| ())
+    }
+
+    /// サーバーに保存済みのセットの位置を端末へ戻し、見送ったかを返す。
+    pub async fn restore_set_positions_with_outcome(
+        &self,
+        record: &TrainingRecord,
+        training_exercise_id: Option<&str>,
+        after_sequence: u64,
+    ) -> Result<RestoreOutcome, StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::Sets.name()],
+            &[Store::Sets.name(), Store::Outbox.name()],
             IdbTransactionMode::Readwrite,
         )?;
         let sets = transaction.store(Store::Sets.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let entries = outbox::read(&outbox_store).await?;
+        if training_exercise_id.is_some_and(|training_exercise_id| {
+            has_newer_set_reorder(&entries, training_exercise_id, after_sequence)
+        }) {
+            transaction.finish().await?;
+            return Ok(RestoreOutcome::Deferred);
+        }
         let rows = read_rows::<SetRecordRow>(&sets).await?;
         for row in rows {
             let Some(server) = record.sets.iter().find(|set| set.id == row.id) else {
@@ -366,7 +434,8 @@ impl Storage {
                 return abort(transaction, error).await;
             }
         }
-        transaction.finish().await
+        transaction.finish().await?;
+        Ok(RestoreOutcome::Restored)
     }
 }
 
@@ -407,6 +476,46 @@ pub(super) fn payload_set_id(operation: &Operation) -> Result<String, StorageErr
         .and_then(|value| value.as_str())
         .map(str::to_owned)
         .ok_or_else(|| StorageError::InvalidOperation("the operation has no set id".to_owned()))
+}
+
+/// 同じセットの、指定の順序より後の未解決の変更があるか。
+///
+/// 失敗した操作の破棄で、端末に残る未送信の値をサーバーの値で上書きしないために見る。
+fn has_newer_set_change(
+    entries: &[OutboxEntry],
+    set_id: &str,
+    training_exercise_id: Option<&str>,
+    after_sequence: u64,
+) -> bool {
+    let same_set = entries.iter().any(|entry| {
+        let operation = &entry.operation;
+        operation.sequence > after_sequence
+            && matches!(
+                operation.kind,
+                OperationKind::SetCreate
+                    | OperationKind::SetUpdate
+                    | OperationKind::SetComplete
+                    | OperationKind::SetDelete
+            )
+            && super::discard::payload_text(operation, "set_id") == Some(set_id)
+    });
+    same_set
+        || training_exercise_id.is_some_and(|training_exercise_id| {
+            has_newer_set_reorder(entries, training_exercise_id, after_sequence)
+        })
+}
+
+fn has_newer_set_reorder(
+    entries: &[OutboxEntry],
+    training_exercise_id: &str,
+    after_sequence: u64,
+) -> bool {
+    entries.iter().any(|entry| {
+        entry.operation.sequence > after_sequence
+            && entry.operation.kind == OperationKind::SetReorder
+            && super::discard::payload_text(&entry.operation, "training_exercise_id")
+                == Some(training_exercise_id)
+    })
 }
 
 fn create_payload(operation: &Operation) -> Result<SetCreatePayload, StorageError> {
@@ -459,15 +568,32 @@ fn complete_payload(operation: &Operation) -> Result<SetCompletePayload, Storage
         .map_err(|error| StorageError::Serialize(error.to_string()))
 }
 
+fn same_grip(grip: Option<GripSelection>, stored: Option<&str>) -> bool {
+    match (grip, stored) {
+        (None, None) => true,
+        (Some(grip), Some(stored)) => serde_json::to_string(&grip).ok().as_deref() == Some(stored),
+        _ => false,
+    }
+}
+
 fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -> bool {
     payload.len() == segments.len()
         && payload.iter().zip(segments).all(|(payload, segment)| {
+            let is_time = payload.duration_seconds.is_some()
+                || payload
+                    .left
+                    .as_ref()
+                    .is_some_and(|side| side.duration_seconds.is_some())
+                || payload
+                    .right
+                    .as_ref()
+                    .is_some_and(|side| side.duration_seconds.is_some());
             payload.segment_id == segment.id
                 && payload.position == segment.position
                 && payload.weight_kg == segment.weight_kg.unwrap_or(0.0)
                 && payload.reps == u32::try_from(segment.reps.unwrap_or(0)).unwrap_or(0)
-                && segment.momentum_reps == i64::from(payload.momentum_reps)
-                && segment.assisted_reps == i64::from(payload.assisted_reps)
+                && i64::from(payload.momentum_reps) == segment.momentum_reps
+                && i64::from(payload.assisted_reps) == segment.assisted_reps
                 && payload.duration_seconds
                     == segment
                         .duration_seconds
@@ -477,28 +603,32 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
                     segment.left_weight_kg,
                     segment.left_reps,
                     segment.left_duration_seconds,
+                    is_time,
                 )
                 && same_side(
                     payload.right.as_ref(),
                     segment.right_weight_kg,
                     segment.right_reps,
                     segment.right_duration_seconds,
+                    is_time,
                 )
         })
 }
 
 fn same_side(
-    side: Option<&warrior_core::set_calc::SideValue>,
-    weight: Option<f64>,
+    side: Option<&warrior_core::sync::SetSidePayload>,
+    weight_kg: Option<f64>,
     reps: Option<i64>,
-    duration: Option<i64>,
+    duration_seconds: Option<i64>,
+    is_time: bool,
 ) -> bool {
     match side {
-        None => weight.is_none() && reps.is_none() && duration.is_none(),
+        None => weight_kg.is_none() && reps.is_none() && duration_seconds.is_none(),
+        Some(side) if is_time => duration_seconds == side.duration_seconds.map(i64::from),
         Some(side) => {
-            weight.unwrap_or(0.0) == side.weight_kg
-                && reps.unwrap_or(0) == i64::from(side.reps)
-                && duration == side.duration_seconds.map(i64::from)
+            weight_kg == side.weight_kg
+                && reps == Some(i64::from(side.reps))
+                && duration_seconds == side.duration_seconds.map(i64::from)
         }
     }
 }

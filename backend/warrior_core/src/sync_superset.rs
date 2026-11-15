@@ -2,7 +2,7 @@
 //!
 //! 対応する要求: `REQ-SET-005`。
 //! `warrior_core::sync` の操作の検証から呼ぶ。組の ID が UUID v4 であること、
-//! 種目の並びが空でないこと、同じ種目を含まないことを確かめる。組の種目が
+//! 種目の並びが 2 つ以上であること、同じ種目を含まないことを確かめる。組の種目が
 //! 同じトレーニングに属するかは、サーバーが保存の前に確かめる。
 
 use crate::ids::is_valid_uuid_v4;
@@ -56,7 +56,7 @@ pub(crate) fn validate_reorder(
 }
 
 fn validate_member_ids(member_ids: &[String]) -> Result<(), SyncError> {
-    if member_ids.is_empty() {
+    if member_ids.len() < 2 {
         return Err(SyncError::EmptySuperset);
     }
     let mut seen = Vec::with_capacity(member_ids.len());
@@ -154,8 +154,14 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_group_is_rejected() {
+    fn a_group_with_fewer_than_two_members_is_rejected() {
         let operation = create_operation(&[]);
+        assert_eq!(
+            validate_create(&operation, create_payload(&operation)),
+            Err(SyncError::EmptySuperset)
+        );
+
+        let operation = create_operation(&[FIRST_MEMBER_ID]);
         assert_eq!(
             validate_create(&operation, create_payload(&operation)),
             Err(SyncError::EmptySuperset)
@@ -170,7 +176,7 @@ mod tests {
             Err(SyncError::InvalidSupersetMembers)
         );
 
-        let named = create_operation(&["bench-press"]);
+        let named = create_operation(&[FIRST_MEMBER_ID, "bench-press"]);
         assert_eq!(
             validate_create(&named, create_payload(&named)),
             Err(SyncError::InvalidSupersetMembers)
@@ -223,8 +229,14 @@ mod tests {
     }
 
     #[test]
-    fn a_reorder_without_members_is_rejected() {
+    fn a_reorder_with_fewer_than_two_members_is_rejected() {
         let operation = reorder_operation(&[]);
+        assert_eq!(
+            validate_reorder(&operation, reorder_payload(&operation)),
+            Err(SyncError::EmptySuperset)
+        );
+
+        let operation = reorder_operation(&[FIRST_MEMBER_ID]);
         assert_eq!(
             validate_reorder(&operation, reorder_payload(&operation)),
             Err(SyncError::EmptySuperset)

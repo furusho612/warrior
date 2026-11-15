@@ -12,6 +12,9 @@ use warrior_core::set_calc::{
     SetValidationError,
 };
 
+#[path = "support/set.rs"]
+mod set_fixture;
+
 fn key() -> BestKey {
     BestKey {
         exercise_id: "bench-press".to_owned(),
@@ -21,15 +24,11 @@ fn key() -> BestKey {
 }
 
 fn weight() -> impl Strategy<Value = f64> {
-    0.5f64..=500.0
+    set_fixture::weight()
 }
 
 fn valid_breakdown() -> impl Strategy<Value = (u32, u32, u32)> {
-    (1u32..=30).prop_flat_map(|reps| {
-        (0..=reps).prop_flat_map(move |momentum| {
-            (0..=(reps - momentum)).prop_map(move |assisted| (reps, momentum, assisted))
-        })
-    })
+    set_fixture::valid_breakdown()
 }
 
 fn record(reps: u32, momentum: u32, assisted: u32, weight_kg: f64) -> SetRecord {

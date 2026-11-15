@@ -8,8 +8,11 @@ use warrior_core::training_record::{SupersetMemberRecord, TrainingExerciseRecord
 use wasm_bindgen::JsValue;
 use web_sys::{IdbObjectStore, IdbTransactionMode};
 
-use super::superset::{delete_members, read_superset_rows};
-use super::{abort, indexeddb, outbox, put_rows, Storage, StorageError, Store, StoredSuperset};
+use super::superset::{delete_members, put_superset, read_superset_rows};
+use super::{
+    abort, indexeddb, outbox, put_rows, RestoreOutcome, Storage, StorageError, Store,
+    StoredSuperset,
+};
 
 impl Storage {
     /// トレーニングに追加した種目を位置の昇順で返す。
@@ -230,6 +233,21 @@ impl Storage {
         record: &TrainingRecord,
         training_exercise_id: &str,
     ) -> Result<(), StorageError> {
+        self.restore_training_exercise_with_outcome(record, training_exercise_id, 0)
+            .await
+            .map(|_| ())
+    }
+
+    /// 削除した種目を戻し、見送ったかを返す。
+    ///
+    /// 破棄した操作より後の、その種目またはその種目に属するセットの未解決の操作があるときは、
+    /// 端末の値を上書きしない。
+    pub async fn restore_training_exercise_with_outcome(
+        &self,
+        record: &TrainingRecord,
+        training_exercise_id: &str,
+        after_sequence: u64,
+    ) -> Result<RestoreOutcome, StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
@@ -239,33 +257,124 @@ impl Storage {
                 Store::SetSegments.name(),
                 Store::Supersets.name(),
                 Store::SupersetMembers.name(),
+                Store::Outbox.name(),
             ],
             IdbTransactionMode::Readwrite,
         )?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let entries = super::outbox::read(&outbox_store).await?;
+        let set_ids = record
+            .sets
+            .iter()
+            .filter(|set| set.training_exercise_id == training_exercise_id)
+            .map(|set| set.id.as_str())
+            .collect::<Vec<_>>();
+        if has_newer_exercise_change(
+            &entries,
+            &record.session.id,
+            training_exercise_id,
+            &set_ids,
+            after_sequence,
+        ) {
+            transaction.finish().await?;
+            return Ok(RestoreOutcome::Deferred);
+        }
         match restore_training_exercise_steps(&transaction, record, training_exercise_id).await {
-            Ok(()) => transaction.finish().await,
+            Ok(()) => {
+                transaction.finish().await?;
+                Ok(RestoreOutcome::Restored)
+            }
             Err(error) => abort(transaction, error).await,
         }
     }
 
     /// サーバーの記録にある種目の位置を端末へ戻す。
     ///
-    /// 送信待ちの列と、種目以外の行には触れない。並べ替えの破棄で使う。
+    /// 種目の並べ替えに追随した組の並びもサーバーの記録へ戻す。送信待ちの列と、
+    /// 種目以外の行には触れない。並べ替えの破棄で使う。
     pub async fn restore_training_exercise_positions(
         &self,
         record: &TrainingRecord,
     ) -> Result<(), StorageError> {
+        self.restore_training_exercise_positions_with_outcome(record, 0)
+            .await
+            .map(|_| ())
+    }
+
+    /// サーバーの記録にある種目の位置を戻し、見送ったかを返す。
+    pub async fn restore_training_exercise_positions_with_outcome(
+        &self,
+        record: &TrainingRecord,
+        after_sequence: u64,
+    ) -> Result<RestoreOutcome, StorageError> {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::TrainingExercises.name()],
+            &[
+                Store::TrainingExercises.name(),
+                Store::Supersets.name(),
+                Store::SupersetMembers.name(),
+                Store::Outbox.name(),
+            ],
             IdbTransactionMode::Readwrite,
         )?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let entries = super::outbox::read(&outbox_store).await?;
+        if has_newer_exercise_reorder(&entries, &record.session.id, after_sequence) {
+            transaction.finish().await?;
+            return Ok(RestoreOutcome::Deferred);
+        }
         match restore_training_exercise_positions_steps(&transaction, record).await {
-            Ok(()) => transaction.finish().await,
+            Ok(()) => {
+                transaction.finish().await?;
+                Ok(RestoreOutcome::Restored)
+            }
             Err(error) => abort(transaction, error).await,
         }
     }
+}
+
+/// 種目または種目に属するセットの、指定の順序より後の未解決の操作があるか。
+fn has_newer_exercise_change(
+    entries: &[OutboxEntry],
+    training_id: &str,
+    training_exercise_id: &str,
+    set_ids: &[&str],
+    after_sequence: u64,
+) -> bool {
+    let same_change = entries.iter().any(|entry| {
+        let operation = &entry.operation;
+        if operation.sequence <= after_sequence {
+            return false;
+        }
+        let same_exercise = super::discard::payload_text(operation, "training_exercise_id")
+            == Some(training_exercise_id);
+        let same_set = super::discard::payload_text(operation, "set_id")
+            .is_some_and(|set_id| set_ids.contains(&set_id));
+        (matches!(
+            operation.kind,
+            OperationKind::SetCreate
+                | OperationKind::SetReorder
+                | OperationKind::TrainingExerciseDelete
+        ) && same_exercise)
+            || (matches!(
+                operation.kind,
+                OperationKind::SetUpdate | OperationKind::SetComplete | OperationKind::SetDelete
+            ) && same_set)
+    });
+    same_change || has_newer_exercise_reorder(entries, training_id, after_sequence)
+}
+
+fn has_newer_exercise_reorder(
+    entries: &[OutboxEntry],
+    training_id: &str,
+    after_sequence: u64,
+) -> bool {
+    entries.iter().any(|entry| {
+        entry.operation.sequence > after_sequence
+            && entry.operation.kind == OperationKind::TrainingExerciseReorder
+            && entry.operation.training_id == training_id
+    })
 }
 
 async fn restore_training_exercise_steps(
@@ -353,6 +462,32 @@ async fn restore_training_exercise_positions_steps(
         let mut updated = row.clone();
         updated.position = server.position;
         indexeddb::put(&store, &indexeddb::to_js(&updated)?).await?;
+    }
+    restore_training_supersets(transaction, record, training_id).await
+}
+
+/// サーバーの記録にある組と種目を端末へ戻す。
+async fn restore_training_supersets(
+    transaction: &indexeddb::Transaction,
+    record: &TrainingRecord,
+    training_id: &str,
+) -> Result<(), StorageError> {
+    let supersets = transaction.store(Store::Supersets.name())?;
+    let members = transaction.store(Store::SupersetMembers.name())?;
+    let local = read_superset_rows(&supersets).await?;
+    for row in local.iter().filter(|row| row.training_id == training_id) {
+        delete_members(&members, &row.id).await?;
+        indexeddb::delete_entry(&supersets, &JsValue::from_str(&row.id)).await?;
+    }
+    for superset in record
+        .supersets
+        .iter()
+        .filter(|superset| superset.training_id == training_id)
+    {
+        put_superset(&supersets, superset).await?;
+        for member in &superset.members {
+            indexeddb::put(&members, &indexeddb::to_js(member)?).await?;
+        }
     }
     Ok(())
 }

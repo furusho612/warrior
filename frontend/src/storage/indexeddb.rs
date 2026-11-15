@@ -45,6 +45,8 @@ struct StoreSpec {
     key_path: KeyPath,
     /// 索引。
     indexes: &'static [IndexSpec],
+    /// 追加したスキーマの版。
+    since: u32,
 }
 
 const STORES: &[StoreSpec] = &[
@@ -63,6 +65,7 @@ const STORES: &[StoreSpec] = &[
                 since: 2,
             },
         ],
+        since: 1,
     },
     StoreSpec {
         name: "training_exercises",
@@ -72,6 +75,7 @@ const STORES: &[StoreSpec] = &[
             key_path: KeyPath::Single("training_id"),
             since: 1,
         }],
+        since: 1,
     },
     StoreSpec {
         name: "sets",
@@ -81,6 +85,7 @@ const STORES: &[StoreSpec] = &[
             key_path: KeyPath::Single("training_exercise_id"),
             since: 1,
         }],
+        since: 1,
     },
     StoreSpec {
         name: "set_segments",
@@ -90,6 +95,7 @@ const STORES: &[StoreSpec] = &[
             key_path: KeyPath::Single("set_id"),
             since: 1,
         }],
+        since: 1,
     },
     StoreSpec {
         name: "supersets",
@@ -99,6 +105,7 @@ const STORES: &[StoreSpec] = &[
             key_path: KeyPath::Single("training_id"),
             since: 1,
         }],
+        since: 1,
     },
     StoreSpec {
         name: "superset_members",
@@ -108,6 +115,7 @@ const STORES: &[StoreSpec] = &[
             key_path: KeyPath::Single("training_exercise_id"),
             since: 1,
         }],
+        since: 1,
     },
     StoreSpec {
         name: "outbox",
@@ -117,11 +125,19 @@ const STORES: &[StoreSpec] = &[
             key_path: KeyPath::Multiple(&["operation.training_id", "operation.sequence"]),
             since: 1,
         }],
+        since: 1,
     },
     StoreSpec {
         name: "meta",
         key_path: KeyPath::Single("key"),
         indexes: &[],
+        since: 1,
+    },
+    StoreSpec {
+        name: "body_weight",
+        key_path: KeyPath::Single("key"),
+        indexes: &[],
+        since: 3,
     },
 ];
 
@@ -295,6 +311,9 @@ fn ensure_schema(
 ) -> Result<(), StorageError> {
     let names: DomStringList = database.object_store_names();
     for spec in STORES {
+        if spec.since > version {
+            continue;
+        }
         let store = if names.contains(spec.name) {
             transaction
                 .object_store(spec.name)
