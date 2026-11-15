@@ -12,6 +12,7 @@ pub mod cursor;
 pub mod datetime;
 pub mod duration;
 pub mod exercise;
+pub mod exercise_override;
 pub mod history;
 pub mod ids;
 pub mod jst;

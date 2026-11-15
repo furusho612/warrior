@@ -2,6 +2,7 @@
 //!
 //! 起動時と online イベントで送り、2xx で未保存の表示を消す (ADR-002)。
 //! セットの完了の応答が返す自己ベストは、記録中のトレーニングの端末内の行へ反映する。
+//! 種目の変更も同じ送信待ちの考え方で送り、操作 ID で再送の重複を防ぐ。
 //! 送信の再試行は固定の sleep で待たず、次の online イベントか起動で行う。
 //! テストの待機も条件で行い、固定の sleep を書かない (ADR-024)。
 
@@ -9,14 +10,15 @@ use std::cell::{Cell, RefCell};
 use std::future::poll_fn;
 use std::task::{Poll, Waker};
 
-use warrior_core::sync::{next_sendable, Operation, OperationResponse};
+use warrior_core::sync::{next_sendable, Operation, OperationResponse, OutboxState};
 use warrior_core::training_session::PersonalBestItem;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, RequestInit, Response};
 
-use crate::storage::{self, DiscardOutcome, StorageError};
+use crate::http::{self, HttpError};
+use crate::storage::{self, DiscardOutcome, ExerciseChangeKind, ExerciseOutboxEntry, StorageError};
 
 /// 画面に出す同期の状態。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -38,6 +40,7 @@ pub async fn start() {
     let _ = storage::request_persistence().await;
     listen_online();
     flush().await;
+    let _ = flush_exercise_changes().await;
 }
 
 /// 失敗した操作を再試行する。
@@ -81,6 +84,9 @@ fn listen_online() {
     };
     let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
         flush_in_background();
+        wasm_bindgen_futures::spawn_local(async {
+            let _ = flush_exercise_changes().await;
+        });
     });
     if window
         .add_event_listener_with_callback("online", closure.as_ref().unchecked_ref())
@@ -292,6 +298,161 @@ fn classify_status(status: u16) -> SendOutcome {
         403 => SendOutcome::Forbidden,
         408 | 425 | 429 | 500..=599 => SendOutcome::Transient,
         _ => SendOutcome::Permanent,
+    }
+}
+
+/// 種目の変更の送信待ちをサーバーへ送る。
+///
+/// 送信できる変更が無くなったら true を返す。通信の失敗と 5xx は Pending に戻し、
+/// 次の online イベントか起動で再送する。400 と 404 は Failed にして後続を止めない。
+pub async fn flush_exercise_changes() -> bool {
+    loop {
+        wait_until_idle().await;
+        // 待っている間に別の flush が始まることがある。もう一度確かめる。
+        if FLUSHING.with(Cell::get) {
+            continue;
+        }
+        FLUSHING.with(|flushing| flushing.set(true));
+        let _guard = FlushGuard;
+        return flush_exercise_inner().await;
+    }
+}
+
+async fn flush_exercise_inner() -> bool {
+    let Ok(storage) = storage::current().await else {
+        return false;
+    };
+    let generation = storage::generation();
+    loop {
+        let Ok(entries) = storage.exercise_changes().await else {
+            return false;
+        };
+        let Some(entry) = entries
+            .iter()
+            .find(|entry| entry.state == OutboxState::Pending)
+            .cloned()
+        else {
+            return !entries
+                .iter()
+                .any(|entry| entry.state == OutboxState::Sending);
+        };
+        if storage
+            .mark_exercise_change_sending(&entry.operation_id)
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        match send_exercise_change(&entry).await {
+            _ if storage::generation() != generation => return false,
+            Ok(status) if (200..=299).contains(&status) => {
+                if storage
+                    .mark_exercise_change_success(&entry.operation_id)
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            Ok(401) => {
+                let _ = storage
+                    .mark_exercise_change_transient(&entry.operation_id)
+                    .await;
+                return false;
+            }
+            Ok(408 | 425 | 429 | 500..=599) => {
+                let _ = storage
+                    .mark_exercise_change_transient(&entry.operation_id)
+                    .await;
+                return false;
+            }
+            Ok(400 | 404) => {
+                if storage
+                    .mark_exercise_change_permanent(&entry.operation_id)
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            Ok(_) => {
+                if storage
+                    .mark_exercise_change_permanent(&entry.operation_id)
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            Err(HttpError::Unavailable) => {
+                let _ = storage
+                    .mark_exercise_change_transient(&entry.operation_id)
+                    .await;
+                return false;
+            }
+            Err(_) => {
+                if storage
+                    .mark_exercise_change_permanent(&entry.operation_id)
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+async fn send_exercise_change(entry: &ExerciseOutboxEntry) -> Result<u16, HttpError> {
+    match entry.kind {
+        ExerciseChangeKind::Create => {
+            let input = entry.input.as_ref().ok_or(HttpError::InvalidRequest)?;
+            http::request_status_with_operation(
+                "POST",
+                "/api/exercises",
+                &entry.operation_id,
+                input,
+            )
+            .await
+        }
+        ExerciseChangeKind::Update => {
+            let id = entry
+                .exercise_id
+                .as_deref()
+                .ok_or(HttpError::InvalidRequest)?;
+            let input = entry.input.as_ref().ok_or(HttpError::InvalidRequest)?;
+            http::request_status_with_operation(
+                "PUT",
+                &format!("/api/exercises/{id}"),
+                &entry.operation_id,
+                input,
+            )
+            .await
+        }
+        ExerciseChangeKind::Delete => {
+            let id = entry
+                .exercise_id
+                .as_deref()
+                .ok_or(HttpError::InvalidRequest)?;
+            http::request_status_for_operation(
+                "DELETE",
+                &format!("/api/exercises/{id}"),
+                &entry.operation_id,
+            )
+            .await
+        }
+        ExerciseChangeKind::Reset => {
+            let id = entry
+                .exercise_id
+                .as_deref()
+                .ok_or(HttpError::InvalidRequest)?;
+            http::request_status_for_operation(
+                "POST",
+                &format!("/api/exercises/{id}/reset"),
+                &entry.operation_id,
+            )
+            .await
+        }
     }
 }
 

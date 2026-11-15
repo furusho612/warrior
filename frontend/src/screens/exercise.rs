@@ -1,16 +1,18 @@
 //! 種目の詳細。名称、部位区分、主働筋、補助筋、使用器具、やり方、注意点、コツと、
-//! お気に入りの登録、履歴とグラフへの入口を表示する。
+//! お気に入りの登録、編集、削除、初期化、履歴とグラフへの入口を表示する。
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use warrior_core::exercise::{MuscleUnit, OtherScope};
-use warrior_core::library::LibraryExercise;
+use warrior_core::exercise::{ExerciseInput, MuscleUnit, OtherScope};
+use warrior_core::library::{ExerciseSource, LibraryExercise};
 
 use crate::body_figure::{figure_muscles, figure_svg, FigureMuscles, FigureSide};
 use crate::calendar_view::part_label;
 use crate::library::{self as library_api, equipment_label};
-use crate::routes::Route;
+use crate::routes::{navigate, Route};
+use crate::screens::exercise_form::ExerciseForm;
 use crate::screens::FavoriteIcon;
+use crate::storage::ExerciseChangeKind;
 use crate::text::{text, Key};
 
 /// 種目の詳細。
@@ -20,6 +22,9 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
     let error = use_signal(|| Option::<String>::None);
     let action_error = use_signal(|| Option::<String>::None);
     let toggling = use_signal(|| false);
+    let changing = use_signal(|| false);
+    let editing = use_signal(|| false);
+    let confirming_delete = use_signal(|| false);
     let reload = use_signal(|| 0u32);
     let route_id = exercise_id.clone();
     use_effect(move || {
@@ -30,10 +35,17 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
     let current = (detail)();
     let load_error = (error)();
     let action_message = (action_error)();
-    let busy = (toggling)();
+    let busy = (toggling)() || (changing)();
     let loaded = current.is_some();
     let favorite = current.as_ref().is_some_and(|item| item.favorite);
+    let source = current.as_ref().map(|item| item.source);
+    let deleted = current.as_ref().is_some_and(|item| item.deleted);
+    let is_master = source == Some(ExerciseSource::Overridden);
     let history_id = exercise_id.clone();
+    let form_exercise = current.as_ref().map(|item| item.exercise.clone());
+    let save_id = exercise_id.clone();
+    let delete_id = exercise_id.clone();
+    let reset_id = exercise_id.clone();
 
     rsx! {
         section {
@@ -49,28 +61,33 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
                     "{text(Key::ExerciseBack)}"
                 }
                 if let Some(item) = current.as_ref() {
-                    button {
-                        class: "flex min-h-11 min-w-11 items-center justify-center border border-line text-lg text-primary",
-                        "data-exercise-favorite": "true",
-                        "aria-pressed": if favorite { "true" } else { "false" },
-                        "aria-label": if favorite { text(Key::LibraryFavoriteRemove) } else { text(Key::LibraryFavoriteAdd) },
-                        disabled: busy,
-                        onclick: {
-                            let id = item.exercise.id.clone();
-                            move |_| {
-                                toggle_favorite(id.clone(), !favorite, detail, toggling, action_error);
+                    if !deleted {
+                        button {
+                            class: "flex min-h-11 min-w-11 items-center justify-center border border-line text-lg text-primary",
+                            "data-exercise-favorite": "true",
+                            "aria-pressed": if favorite { "true" } else { "false" },
+                            "aria-label": if favorite { text(Key::LibraryFavoriteRemove) } else { text(Key::LibraryFavoriteAdd) },
+                            disabled: busy,
+                            onclick: {
+                                let id = item.exercise.id.clone();
+                                move |_| {
+                                    toggle_favorite(id.clone(), !favorite, detail, toggling, action_error);
+                                }
+                            },
+                            if favorite {
+                                FavoriteIcon { filled: true }
+                            } else {
+                                FavoriteIcon { filled: false }
                             }
-                        },
-                        if favorite {
-                            FavoriteIcon { filled: true }
-                        } else {
-                            FavoriteIcon { filled: false }
                         }
                     }
                 }
             }
             if let Some(message) = action_message {
-                p { class: "text-[13px] text-primary", "{message}" }
+                p { class: "text-[13px] text-primary", "data-exercise-action-error": "true", "{message}" }
+            }
+            if deleted {
+                p { class: "text-[13px] text-text-sub", "data-exercise-deleted": "true", "{text(Key::ExerciseDeletedNotice)}" }
             }
             if let Some(message) = load_error {
                 p { class: "text-[13px] text-primary", "data-exercise-error": "true", "{message}" }
@@ -84,11 +101,103 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
                 }
             } else if let Some(item) = current {
                 ExerciseDetailBody { item }
-                a {
-                    class: "flex min-h-11 items-center justify-center border border-primary px-3 text-[13px] font-bold text-primary",
-                    href: "/exercises/{history_id}/history",
-                    "data-exercise-history": "true",
-                    "{text(Key::ExerciseHistory)}"
+                div { class: "flex flex-wrap gap-2",
+                    if !deleted {
+                        button {
+                            class: "min-h-11 flex-1 border border-line px-3 text-[13px]",
+                            "data-exercise-edit": "true",
+                            disabled: busy,
+                            onclick: move |_| {
+                                let mut editing = editing;
+                                editing.set(true);
+                            },
+                            "{text(Key::ExerciseEdit)}"
+                        }
+                        button {
+                            class: "min-h-11 flex-1 border border-line px-3 text-[13px] text-primary",
+                            "data-exercise-delete": "true",
+                            disabled: busy,
+                            onclick: move |_| {
+                                let mut confirming_delete = confirming_delete;
+                                confirming_delete.set(true);
+                            },
+                            "{text(Key::ExerciseDelete)}"
+                        }
+                    }
+                    if source == Some(ExerciseSource::Overridden) {
+                        button {
+                            class: "min-h-11 flex-1 border border-primary px-3 text-[13px] font-bold text-primary",
+                            "data-exercise-reset": "true",
+                            disabled: busy,
+                            onclick: move |_| {
+                                reset_exercise(reset_id.clone(), changing, action_error, reload);
+                            },
+                            "{text(Key::ExerciseReset)}"
+                        }
+                    }
+                }
+                if !deleted && (editing)() {
+                    if let Some(exercise) = form_exercise.clone() {
+                        ExerciseForm {
+                            initial: ExerciseInput::from_exercise(&exercise),
+                            title: text(Key::ExerciseFormEditTitle).to_owned(),
+                            busy: busy,
+                            on_submit: move |input| {
+                                save_exercise(
+                                    save_id.clone(),
+                                    input,
+                                    changing,
+                                    editing,
+                                    action_error,
+                                    reload,
+                                );
+                            },
+                            on_cancel: move |_| {
+                                let mut editing = editing;
+                                editing.set(false);
+                            },
+                        }
+                    }
+                }
+                if !deleted && (confirming_delete)() {
+                    div { class: "flex flex-col gap-2 border border-primary p-3", "data-exercise-delete-confirm": "true",
+                        p { class: "text-[13px]", "{text(Key::ExerciseDeleteConfirm)}" }
+                        div { class: "flex gap-2",
+                            button {
+                                class: "min-h-11 flex-1 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+                                "data-exercise-delete-accept": "true",
+                                disabled: busy,
+                                onclick: move |_| {
+                                    delete_exercise(
+                                        delete_id.clone(),
+                                        is_master,
+                                        changing,
+                                        action_error,
+                                        reload,
+                                    );
+                                },
+                                "{text(Key::ExerciseDeleteAccept)}"
+                            }
+                            button {
+                                class: "min-h-11 flex-1 border border-line px-3 text-[13px]",
+                                "data-exercise-delete-cancel": "true",
+                                disabled: busy,
+                                onclick: move |_| {
+                                    let mut confirming_delete = confirming_delete;
+                                    confirming_delete.set(false);
+                                },
+                                "{text(Key::ExerciseDeleteCancel)}"
+                            }
+                        }
+                    }
+                }
+                if !deleted {
+                    a {
+                        class: "flex min-h-11 items-center justify-center border border-primary px-3 text-[13px] font-bold text-primary",
+                        href: "/exercises/{history_id}/history",
+                        "data-exercise-history": "true",
+                        "{text(Key::ExerciseHistory)}"
+                    }
                 }
             } else {
                 p { class: "text-[13px] text-text-sub", "{text(Key::RecordLoading)}" }
@@ -97,11 +206,81 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
     }
 }
 
+fn save_exercise(
+    exercise_id: String,
+    input: ExerciseInput,
+    mut changing: Signal<bool>,
+    mut editing: Signal<bool>,
+    mut action_error: Signal<Option<String>>,
+    mut reload: Signal<u32>,
+) {
+    changing.set(true);
+    spawn(async move {
+        let result =
+            library_api::change(ExerciseChangeKind::Update, Some(exercise_id), Some(input)).await;
+        changing.set(false);
+        match result {
+            Ok(true) => {
+                editing.set(false);
+                action_error.set(None);
+                reload += 1;
+            }
+            Ok(false) => action_error.set(Some(text(Key::LibraryChangePending).to_owned())),
+            Err(_) => action_error.set(Some(text(Key::LibraryChangeFailed).to_owned())),
+        }
+    });
+}
+
+fn delete_exercise(
+    exercise_id: String,
+    is_master: bool,
+    mut changing: Signal<bool>,
+    mut action_error: Signal<Option<String>>,
+    mut reload: Signal<u32>,
+) {
+    changing.set(true);
+    spawn(async move {
+        let result = library_api::change(ExerciseChangeKind::Delete, Some(exercise_id), None).await;
+        changing.set(false);
+        match result {
+            Ok(true) if is_master => {
+                action_error.set(None);
+                reload += 1;
+            }
+            Ok(true) => navigate("/exercises"),
+            Ok(false) => action_error.set(Some(text(Key::LibraryChangePending).to_owned())),
+            Err(_) => action_error.set(Some(text(Key::LibraryChangeFailed).to_owned())),
+        }
+    });
+}
+
+fn reset_exercise(
+    exercise_id: String,
+    mut changing: Signal<bool>,
+    mut action_error: Signal<Option<String>>,
+    mut reload: Signal<u32>,
+) {
+    changing.set(true);
+    spawn(async move {
+        let result = library_api::change(ExerciseChangeKind::Reset, Some(exercise_id), None).await;
+        changing.set(false);
+        match result {
+            Ok(true) => {
+                action_error.set(None);
+                reload += 1;
+            }
+            Ok(false) => action_error.set(Some(text(Key::LibraryChangePending).to_owned())),
+            Err(_) => action_error.set(Some(text(Key::LibraryChangeFailed).to_owned())),
+        }
+    });
+}
+
 /// 種目の内容。
 #[component]
 fn ExerciseDetailBody(item: LibraryExercise) -> Element {
+    let source = item.source;
     let exercise = item.exercise;
-    let muscles = figure_muscles(&exercise, None);
+    let muscles = figure_muscles(&exercise, None, source);
     let primary = muscle_names(&muscles.primary);
     let secondary = muscle_names(&muscles.secondary);
     let secondary = if secondary.is_empty() {

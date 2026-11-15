@@ -7,14 +7,16 @@
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use warrior_core::exercise::{BodyPart, Equipment, Exercise};
+use warrior_core::exercise::{BodyPart, Equipment, Exercise, ExerciseInput};
 use warrior_core::library::LibraryExercise;
 
 use crate::calendar_view::part_label;
 use crate::library::{self as library_api, equipment_label, ExercisesQuery};
 use crate::routes::{navigate, Route};
+use crate::screens::exercise_form::ExerciseForm;
 use crate::screens::FavoriteIcon;
 use crate::storage;
+use crate::storage::ExerciseChangeKind;
 use crate::sync;
 use crate::text::{text, Key};
 use crate::training_exercise;
@@ -36,6 +38,8 @@ pub fn LibraryScreen() -> Element {
     let equipment = (state.equipment)();
     let favorite_only = (state.favorite_only)();
     let query = (state.query)();
+    let form_open = use_signal(|| false);
+    let form_busy = use_signal(|| false);
 
     rsx! {
         section {
@@ -46,8 +50,62 @@ pub fn LibraryScreen() -> Element {
             "data-library-selected-part": body_part.map(BodyPart::as_str).unwrap_or("all"),
             "data-library-selected-equipment": equipment.map(Equipment::as_str).unwrap_or("all"),
             "data-library-selected-favorite": if favorite_only { "true" } else { "false" },
-            h1 { class: "text-lg font-bold", "{text(Key::LibraryTitle)}" }
+            div { class: "flex items-center justify-between gap-2",
+                h1 { class: "text-lg font-bold", "{text(Key::LibraryTitle)}" }
+                button {
+                    class: "min-h-11 border border-primary px-3 text-[13px] font-bold text-primary",
+                    "data-library-add": "true",
+                    onclick: move |_| {
+                        let mut form_open = form_open;
+                        form_open.set(!(form_open)());
+                    },
+                    "{text(Key::LibraryAdd)}"
+                }
+            }
             p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::LibraryDescription)}" }
+            if (form_open)() {
+                ExerciseForm {
+                    initial: ExerciseInput::blank(),
+                    title: text(Key::ExerciseFormCreateTitle).to_owned(),
+                    busy: (form_busy)(),
+                    on_submit: move |input| {
+                        let mut form_busy = form_busy;
+                        form_busy.set(true);
+                        spawn(async move {
+                            let result = library_api::change(
+                                ExerciseChangeKind::Create,
+                                None,
+                                Some(input),
+                            )
+                            .await;
+                            form_busy.set(false);
+                            match result {
+                                Ok(true) => {
+                                    let mut state = state;
+                                    let mut form_open = form_open;
+                                    form_open.set(false);
+                                    state.action_error.set(None);
+                                    state.reload += 1;
+                                }
+                                Ok(false) => {
+                                    let mut state = state;
+                                    let mut form_open = form_open;
+                                    form_open.set(false);
+                                    state.action_error.set(Some(text(Key::LibraryChangePending).to_owned()));
+                                }
+                                Err(_) => {
+                                    let mut state = state;
+                                    state.action_error.set(Some(text(Key::LibraryChangeFailed).to_owned()));
+                                }
+                            }
+                        });
+                    },
+                    on_cancel: move |_| {
+                        let mut form_open = form_open;
+                        form_open.set(false);
+                    },
+                }
+            }
             input {
                 class: "min-h-11 border border-line bg-surface px-3 text-[13px]",
                 r#type: "search",

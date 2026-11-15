@@ -13,7 +13,8 @@ use proptest::prelude::*;
 use warrior_core::cursor::decode_cursor;
 use warrior_core::exercise::{BodyPart, Equipment, Exercise, GripMode, Laterality, RecordMode};
 use warrior_core::library::{
-    filter_exercises, kana_sort_key, paginate, sort_exercises, ExerciseFilter, LibraryExercise,
+    filter_exercises, kana_sort_key, paginate, sort_exercises, ExerciseFilter, ExerciseSource,
+    LibraryExercise,
 };
 
 fn body_part() -> impl Strategy<Value = BodyPart> {
@@ -58,6 +59,8 @@ fn library_exercise() -> impl Strategy<Value = LibraryExercise> {
                     grip_options: Vec::new(),
                 },
                 favorite,
+                source: ExerciseSource::Master,
+                deleted: false,
             },
         )
 }

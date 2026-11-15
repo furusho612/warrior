@@ -10,12 +10,14 @@
 
 use js_sys::Promise;
 use serde_json::json;
+use warrior_core::exercise::ExerciseInput;
 use warrior_core::sync::{
     next_sendable, Operation, OperationKind, OutboxState, SessionUpdatePayload,
 };
 use warrior_core::training_record::TrainingRecord;
 use warrior_frontend::storage::{
-    request_persistence, DiscardOutcome, ReplacePurpose, Storage, StorageError, Store,
+    request_persistence, DiscardOutcome, ExerciseChangeKind, ReplacePurpose, Storage, StorageError,
+    Store,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -602,11 +604,99 @@ async fn saves_and_restores_sets_and_segments() {
 }
 
 #[wasm_bindgen_test]
+async fn exercise_changes_are_queued_and_transition_in_order() {
+    let name = database_name("exercise-outbox");
+    let storage = open(&name).await;
+    let first = storage
+        .enqueue_exercise_change(
+            ExerciseChangeKind::Create,
+            None,
+            Some(ExerciseInput::blank()),
+        )
+        .await
+        .expect("the create must be queued");
+    assert_eq!(first.sequence, 1);
+    assert_eq!(first.state, OutboxState::Pending);
+    let second = storage
+        .enqueue_exercise_change(
+            ExerciseChangeKind::Update,
+            Some("exercise-1".to_owned()),
+            Some(ExerciseInput::blank()),
+        )
+        .await
+        .expect("the update must be queued");
+    assert_eq!(second.sequence, 2);
+    let third = storage
+        .enqueue_exercise_change(
+            ExerciseChangeKind::Delete,
+            Some("exercise-1".to_owned()),
+            None,
+        )
+        .await
+        .expect("the delete must be queued");
+    assert_eq!(third.sequence, 3);
+    let fourth = storage
+        .enqueue_exercise_change(
+            ExerciseChangeKind::Reset,
+            Some("exercise-1".to_owned()),
+            None,
+        )
+        .await
+        .expect("the reset must be queued");
+    assert_eq!(fourth.sequence, 4);
+    let changes = storage
+        .exercise_changes()
+        .await
+        .expect("the exercise changes must be readable");
+    assert_eq!(
+        changes
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+
+    storage
+        .mark_exercise_change_sending(&first.operation_id)
+        .await
+        .expect("the change must be sent");
+    storage
+        .mark_exercise_change_transient(&first.operation_id)
+        .await
+        .expect("the change must return to pending");
+    let changes = storage
+        .exercise_changes()
+        .await
+        .expect("the exercise changes must be readable");
+    assert_eq!(changes[0].state, OutboxState::Pending);
+    assert_eq!(changes[0].attempts, 1);
+
+    storage
+        .mark_exercise_change_sending(&first.operation_id)
+        .await
+        .expect("the change must be sent");
+    storage
+        .mark_exercise_change_success(&first.operation_id)
+        .await
+        .expect("the change must be accepted");
+    let changes = storage
+        .exercise_changes()
+        .await
+        .expect("the exercise changes must be readable");
+    assert_eq!(changes.len(), 3);
+    assert_eq!(changes[0].operation_id, second.operation_id);
+    storage
+        .clear_account()
+        .await
+        .expect("the cleanup must work");
+}
+
+#[wasm_bindgen_test]
 async fn records_are_limited_to_record_stores() {
     let name = database_name("stores");
     let storage = open(&name).await;
 
-    for store in [Store::Outbox, Store::Meta] {
+    for store in [Store::Outbox, Store::ExerciseOutbox, Store::Meta] {
         let write = storage.put_record(store, &json!({"key": "x"})).await;
         assert_eq!(
             write,

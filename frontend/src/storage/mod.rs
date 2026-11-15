@@ -28,6 +28,7 @@ mod account;
 mod body_weight;
 mod discard;
 mod exercise;
+mod library;
 mod personal_best;
 mod rest_timer;
 mod set;
@@ -36,13 +37,14 @@ mod superset;
 
 pub use account::clear_after_deletion;
 pub use indexeddb::request_persistence;
+pub use library::{ExerciseChangeKind, ExerciseOutboxEntry};
 pub use set::StoredSet;
 pub use stopwatch::StopwatchSide;
 
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
 /// スキーマの版。
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// 端末内の保存の誤り。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +142,8 @@ pub enum Store {
     SupersetMembers,
     /// 送信待ちの操作。
     Outbox,
+    /// 種目の変更の送信待ちの操作。
+    ExerciseOutbox,
     /// 同期のメタ。
     Meta,
     /// 身体情報の体重のキャッシュ。
@@ -157,6 +161,7 @@ impl Store {
             Self::Supersets => "supersets",
             Self::SupersetMembers => "superset_members",
             Self::Outbox => "outbox",
+            Self::ExerciseOutbox => "exercise_outbox",
             Self::Meta => "meta",
             Self::BodyWeight => "body_weight",
         }
@@ -993,7 +998,7 @@ pub(super) async fn put_rows<T: serde::Serialize>(
 }
 
 fn ensure_record_store(store: Store) -> Result<(), StorageError> {
-    if matches!(store, Store::Outbox | Store::Meta) {
+    if matches!(store, Store::Outbox | Store::ExerciseOutbox | Store::Meta) {
         return Err(StorageError::InvalidOperation(
             "the store is not a record store".to_owned(),
         ));

@@ -9,6 +9,7 @@
 use warrior_core::exercise::{
     Attachment, BodyPart, Exercise, GripSelection, MuscleAssignment, MuscleRole, MuscleUnit,
 };
+use warrior_core::library::ExerciseSource;
 
 /// 種目マスターの「シーテッドロウ」の ID。
 ///
@@ -58,17 +59,25 @@ pub struct FigureMuscles {
     pub secondary: Vec<MuscleUnit>,
 }
 
-/// 種目とグリップの選択から、人体図で色を付ける筋肉を決める。
+/// 種目、出典、グリップの選択から、人体図で色を付ける筋肉を決める。
 ///
 /// グリップを指定しないときと、PRD の表にない種目や組み合わせのときは、
 /// 種目が持つ主働筋と補助筋をそのまま返す。筋肉の単位を持たない独自種目は、
 /// 部位区分に属する単位を主働筋にする (ADR-012)。
-pub fn figure_muscles(exercise: &Exercise, grip: Option<GripSelection>) -> FigureMuscles {
+/// シーテッドロウの手幅の例外は、種目マスターの元の内容にだけ適用する。
+/// 編集した種目は、利用者が編集した筋肉で色を出す。
+pub fn figure_muscles(
+    exercise: &Exercise,
+    grip: Option<GripSelection>,
+    source: ExerciseSource,
+) -> FigureMuscles {
     if exercise.body_part.is_other() {
         return FigureMuscles::default();
     }
-    if let Some(muscles) = seated_row_grip_muscles(exercise, grip) {
-        return muscles;
+    if source == ExerciseSource::Master {
+        if let Some(muscles) = seated_row_grip_muscles(exercise, grip) {
+            return muscles;
+        }
     }
     if exercise.muscles.is_empty() {
         return FigureMuscles {
@@ -456,6 +465,7 @@ mod tests {
         Attachment, BodyPart, Equipment, Exercise, GripMode, GripSelection, GripStyle, Laterality,
         MuscleAssignment, MuscleRole, MuscleUnit, OtherScope, RecordMode,
     };
+    use warrior_core::library::ExerciseSource;
 
     use super::{
         figure_muscles, figure_svg, unit_attribute, FigureMuscles, FigureSide,
@@ -573,12 +583,39 @@ mod tests {
         let resolved = figure_muscles(
             exercise,
             Some(GripSelection::Attachment { attachment, style }),
+            ExerciseSource::Master,
         );
         assert_eq!(units(&resolved.primary), units(primary), "{attachment:?}");
         assert_eq!(
             units(&resolved.secondary),
             units(secondary),
             "{attachment:?}"
+        );
+    }
+
+    #[test]
+    fn req_lib_013_an_edited_master_uses_the_edited_muscles_not_the_grip_table() {
+        let seated_row = seated_row();
+        let grip = Some(GripSelection::Attachment {
+            attachment: Attachment::WideBar,
+            style: Some(GripStyle::Pronated),
+        });
+        let master = figure_muscles(&seated_row, grip, ExerciseSource::Master);
+        assert_eq!(
+            units(&master.primary),
+            units(&[MuscleUnit::TrapeziusUpper, MuscleUnit::TrapeziusMiddleLower,])
+        );
+        let edited = figure_muscles(&seated_row, grip, ExerciseSource::Overridden);
+        assert_eq!(
+            units(&edited.primary),
+            units(&[
+                MuscleUnit::LatissimusDorsi,
+                MuscleUnit::TrapeziusMiddleLower,
+            ])
+        );
+        assert_eq!(
+            units(&edited.secondary),
+            units(&[MuscleUnit::BicepsBrachii, MuscleUnit::PosteriorDeltoid])
         );
     }
 
@@ -597,7 +634,7 @@ mod tests {
             attachment: Attachment::WideBar,
             style: Some(GripStyle::Pronated),
         });
-        let resolved = figure_muscles(&lat_pulldown, grip);
+        let resolved = figure_muscles(&lat_pulldown, grip, ExerciseSource::Master);
         assert_eq!(
             units(&resolved.primary),
             units(&[MuscleUnit::LatissimusDorsi, MuscleUnit::TeresMajor])
@@ -608,7 +645,7 @@ mod tests {
         );
 
         let seated_row = seated_row();
-        let resolved = figure_muscles(&seated_row, None);
+        let resolved = figure_muscles(&seated_row, None, ExerciseSource::Master);
         assert_eq!(
             units(&resolved.primary),
             units(&[
@@ -629,7 +666,7 @@ mod tests {
             BodyPart::Shoulders,
             vec![],
         );
-        let resolved = figure_muscles(&custom, None);
+        let resolved = figure_muscles(&custom, None, ExerciseSource::Custom);
         assert_eq!(
             units(&resolved.primary),
             units(&[
@@ -648,7 +685,7 @@ mod tests {
             BodyPart::Other,
             vec![],
         );
-        let resolved = figure_muscles(&other, None);
+        let resolved = figure_muscles(&other, None, ExerciseSource::Custom);
         assert!(resolved.primary.is_empty());
         assert!(resolved.secondary.is_empty());
     }

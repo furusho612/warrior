@@ -9,6 +9,7 @@ pub mod account;
 pub mod analysis;
 pub mod calendar;
 pub mod exercise;
+pub mod exercise_form;
 pub mod exercise_history;
 pub mod history;
 pub mod home;
