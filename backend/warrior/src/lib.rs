@@ -6,6 +6,7 @@
 use worker::{console_error, event, Context, Date, Env, Request, Response, Result};
 
 pub mod account;
+pub mod alternative;
 pub mod analysis;
 pub mod auth;
 pub mod calendar;

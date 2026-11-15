@@ -18,6 +18,7 @@ use warrior_core::previous::{
 use warrior_core::sync::MEMO_MAX_CHARS;
 use warrior_core::training_record::TrainingExerciseRecord;
 
+use super::alternatives::AlternativePanel;
 use super::errors::{clear_load_error, retain_set_errors, set_load_error, RecordErrors};
 use super::exercise_view::{
     dispatch, dissolve_superset, exercise_diff, save_superset_group, training_difference,
@@ -139,35 +140,29 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
             .iter()
             .map(|view| view.record.id.clone())
             .collect::<Vec<_>>();
-        let operation = match training_exercise::reorder(&move_training_id, &ordered) {
-            Ok(operation) => operation,
-            Err(_) => {
-                set_load_error(error, Key::RecordExerciseSaveFailed);
-                return;
-            }
-        };
         let training_id = move_training_id.clone();
-        spawn(async move {
-            let result = match storage::current().await {
-                Ok(storage) => {
-                    storage
-                        .save_training_exercise_reorder(&training_id, &ordered, &operation)
-                        .await
-                }
-                Err(error) => Err(error),
-            };
-            if result.is_err() {
-                set_load_error(error, Key::RecordExerciseSaveFailed);
-                return;
-            }
-            sync::flush_in_background();
-            reload.set((reload)() + 1);
-        });
+        spawn(save_exercise_order(training_id, ordered, reload, error));
+    });
+    let defer_training_id = training_id.clone();
+    let on_defer = EventHandler::new(move |view_id: String| {
+        let mut list = (views)();
+        let Some(index) = list.iter().position(|view| view.record.id == view_id) else {
+            return;
+        };
+        let view = list.remove(index);
+        list.push(view);
+        let ordered = list
+            .iter()
+            .map(|view| view.record.id.clone())
+            .collect::<Vec<_>>();
+        let training_id = defer_training_id.clone();
+        spawn(save_exercise_order(training_id, ordered, reload, error));
     });
     let add_training_id = training_id.clone();
     let on_add = EventHandler::new(move |_: ()| {
         navigate(&format!("/record/{add_training_id}/exercises"));
     });
+    let on_changed = EventHandler::new(move |_: ()| reload.set((reload)() + 1));
     let superset_training_id = training_id.clone();
     let mut create_busy = superset_busy;
     let on_superset_create =
@@ -287,6 +282,7 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                     let up_id = view.record.id.clone();
                     let down_id = view.record.id.clone();
                     let delete_id = view.record.id.clone();
+                    let defer_id = view.record.id.clone();
                     let drawer_mode = view.snapshot.record_mode;
                     let drawer_grip_mode = view.snapshot.grip_mode;
                     let drawer_grip_options = view.snapshot.grip_options.clone();
@@ -315,11 +311,15 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                                 on_down: EventHandler::new(move |_: ()| {
                                     on_move.call((down_id.clone(), 1));
                                 }),
+                                on_defer: EventHandler::new(move |_: ()| {
+                                    on_defer.call(defer_id.clone());
+                                }),
                                 on_delete: EventHandler::new(move |_: ()| {
                                     on_delete.call(delete_id.clone());
                                 }),
                                 on_superset_create,
                                 on_superset_delete,
+                                on_changed,
                             },
                         }
                         SetDrawer {
@@ -340,6 +340,35 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
             }
         }
     }
+}
+
+async fn save_exercise_order(
+    training_id: String,
+    ordered: Vec<String>,
+    mut reload: Signal<u32>,
+    error: Signal<RecordErrors>,
+) {
+    let operation = match training_exercise::reorder(&training_id, &ordered) {
+        Ok(operation) => operation,
+        Err(_) => {
+            set_load_error(error, Key::RecordExerciseSaveFailed);
+            return;
+        }
+    };
+    let result = match storage::current().await {
+        Ok(storage) => {
+            storage
+                .save_training_exercise_reorder(&training_id, &ordered, &operation)
+                .await
+        }
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        set_load_error(error, Key::RecordExerciseSaveFailed);
+        return;
+    }
+    sync::flush_in_background();
+    reload.set((reload)() + 1);
 }
 
 async fn load(
@@ -517,12 +546,16 @@ struct ExerciseDetailActions {
     on_up: EventHandler<()>,
     /// 後ろへ移動する。
     on_down: EventHandler<()>,
+    /// 一覧の後ろへ回す。
+    on_defer: EventHandler<()>,
     /// 削除する。
     on_delete: EventHandler<()>,
     /// 組を作る。
     on_superset_create: EventHandler<(String, Vec<String>)>,
     /// 組を解除する。
     on_superset_delete: EventHandler<String>,
+    /// 種目を入れ替えた後に記録を読み直す。
+    on_changed: EventHandler<()>,
 }
 
 #[component]
@@ -543,9 +576,11 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
         on_action,
         on_up,
         on_down,
+        on_defer,
         on_delete,
         on_superset_create,
         on_superset_delete,
+        on_changed,
     } = actions;
     let diff = exercise_diff(&view);
     let view_id = view.record.id.clone();
@@ -583,6 +618,13 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                         "{text(Key::RecordExerciseMoveDown)}"
                     }
                     button {
+                        class: "min-h-11 border border-line px-2 text-[11px]",
+                        "data-defer-exercise": "true",
+                        disabled: disabled || last,
+                        onclick: move |_| on_defer.call(()),
+                        "{text(Key::RecordExerciseDefer)}"
+                    }
+                    button {
                         class: "min-h-11 border border-line px-2 text-[11px] text-primary",
                         "data-delete-exercise": "true",
                         disabled: disabled || (has_completed && !editable_completed),
@@ -604,6 +646,13 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                 PreviousRecord { previous }
             } else if previous_error {
                 p { class: "text-[11px] text-text-sub", "{text(Key::RecordExercisePreviousFailed)}" }
+            }
+            AlternativePanel {
+                record: view.record.clone(),
+                snapshot: view.snapshot.clone(),
+                disabled,
+                has_completed,
+                on_changed,
             }
             ExerciseMemoEditor {
                 training_id: training_id.clone(),

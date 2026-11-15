@@ -21,36 +21,57 @@ pub fn create(
 ) -> Result<(TrainingExerciseRecord, Operation), StorageError> {
     let now = now_iso();
     let training_exercise_id = new_uuid()?;
-    let snapshot = ExerciseSnapshot::from(exercise);
-    let record = TrainingExerciseRecord {
-        id: training_exercise_id.clone(),
-        training_id: training_id.to_owned(),
-        exercise_id: exercise.id.clone(),
-        snapshot: serde_json::to_string(&snapshot)
-            .map_err(|error| StorageError::Serialize(error.to_string()))?,
-        memo: String::new(),
-        confirmed_memo: String::new(),
-        position,
-        created_at: now.clone(),
-        updated_at: now,
-    };
-    let payload = TrainingExerciseCreatePayload {
-        training_id: training_id.to_owned(),
+    let (record, snapshot) = build_record(
+        RecordFields {
+            training_exercise_id: training_exercise_id.clone(),
+            training_id: training_id.to_owned(),
+            memo: String::new(),
+            confirmed_memo: String::new(),
+            position,
+            created_at: now.clone(),
+            updated_at: now,
+        },
+        exercise,
+    )?;
+    let operation = create_operation(
+        training_id,
         training_exercise_id,
-        exercise_id: exercise.id.clone(),
+        &exercise.id,
         snapshot,
         position,
-    };
-    let operation = Operation {
-        operation_id: new_uuid()?,
-        training_id: training_id.to_owned(),
-        sequence: 0,
-        kind: OperationKind::TrainingExerciseCreate,
-        parent_operation_id: None,
-        payload: serde_json::to_value(payload)
-            .map_err(|error| StorageError::Serialize(error.to_string()))?,
-    };
+    )?;
     Ok((record, operation))
+}
+
+/// 記録中の種目を、選んだ種目へ入れ替える行と操作を作る。
+///
+/// 行の ID と位置、メモは保つ。セットは行の ID に結び付いているため、そのまま残る。
+/// 記録済みのセットがある場合の確認は呼び出し元の画面が担う。
+pub fn replace(
+    record: &TrainingExerciseRecord,
+    exercise: &Exercise,
+) -> Result<(TrainingExerciseRecord, Operation), StorageError> {
+    let now = now_iso();
+    let (updated, snapshot) = build_record(
+        RecordFields {
+            training_exercise_id: record.id.clone(),
+            training_id: record.training_id.clone(),
+            memo: record.memo.clone(),
+            confirmed_memo: record.confirmed_memo.clone(),
+            position: record.position,
+            created_at: record.created_at.clone(),
+            updated_at: now,
+        },
+        exercise,
+    )?;
+    let operation = create_operation(
+        &record.training_id,
+        record.id.clone(),
+        &exercise.id,
+        snapshot,
+        record.position,
+    )?;
+    Ok((updated, operation))
 }
 
 /// 種目の削除の操作を作る。
@@ -115,4 +136,56 @@ fn operation(
         parent_operation_id: None,
         payload,
     })
+}
+
+struct RecordFields {
+    training_exercise_id: String,
+    training_id: String,
+    memo: String,
+    confirmed_memo: String,
+    position: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+fn build_record(
+    fields: RecordFields,
+    exercise: &Exercise,
+) -> Result<(TrainingExerciseRecord, ExerciseSnapshot), StorageError> {
+    let snapshot = ExerciseSnapshot::from(exercise);
+    let record = TrainingExerciseRecord {
+        id: fields.training_exercise_id,
+        training_id: fields.training_id,
+        exercise_id: exercise.id.clone(),
+        snapshot: serde_json::to_string(&snapshot)
+            .map_err(|error| StorageError::Serialize(error.to_string()))?,
+        memo: fields.memo,
+        confirmed_memo: fields.confirmed_memo,
+        position: fields.position,
+        created_at: fields.created_at,
+        updated_at: fields.updated_at,
+    };
+    Ok((record, snapshot))
+}
+
+fn create_operation(
+    training_id: &str,
+    training_exercise_id: String,
+    exercise_id: &str,
+    snapshot: ExerciseSnapshot,
+    position: i64,
+) -> Result<Operation, StorageError> {
+    let payload = TrainingExerciseCreatePayload {
+        training_id: training_id.to_owned(),
+        training_exercise_id,
+        exercise_id: exercise_id.to_owned(),
+        snapshot,
+        position,
+    };
+    operation(
+        training_id,
+        OperationKind::TrainingExerciseCreate,
+        serde_json::to_value(payload)
+            .map_err(|error| StorageError::Serialize(error.to_string()))?,
+    )
 }

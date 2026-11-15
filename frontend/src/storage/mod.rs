@@ -28,6 +28,7 @@ mod account;
 mod body_weight;
 mod discard;
 mod exercise;
+mod library;
 mod personal_best;
 mod rest_timer;
 mod set;
@@ -42,7 +43,7 @@ pub use stopwatch::StopwatchSide;
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
 /// スキーマの版。
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// 端末内の保存の誤り。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +145,10 @@ pub enum Store {
     Meta,
     /// 身体情報の体重のキャッシュ。
     BodyWeight,
+    /// 種目ライブラリの候補選択用のキャッシュ。
+    LibraryExercises,
+    /// 過去に記録した種目の ID のキャッシュ。
+    RecordedExercises,
 }
 
 impl Store {
@@ -159,6 +164,8 @@ impl Store {
             Self::Outbox => "outbox",
             Self::Meta => "meta",
             Self::BodyWeight => "body_weight",
+            Self::LibraryExercises => "library_exercises",
+            Self::RecordedExercises => "recorded_exercises",
         }
     }
 }
