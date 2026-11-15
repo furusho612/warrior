@@ -378,11 +378,19 @@ fn the_old_session_personal_bests_are_migrated_to_the_table() {
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".sql") && name < "0013_personal_bests.sql")
+                .is_some_and(|name| name.ends_with(".sql"))
         })
         .collect::<Vec<_>>();
     paths.sort();
-    for path in &paths {
+    let personal_bests_migration = paths
+        .iter()
+        .position(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "0013_personal_bests.sql")
+        })
+        .expect("the personal bests migration must exist");
+    for path in &paths[..personal_bests_migration] {
         server
             .execute_d1_file(path)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
@@ -428,9 +436,12 @@ fn the_old_session_personal_bests_are_migrated_to_the_table() {
             .expect("the training must be seeded");
     }
 
-    server
-        .execute_d1_file(&migrations.join("0013_personal_bests.sql"))
-        .expect("the personal best migration must apply");
+    // 現在のスキーマでサマリーを読むため、自己ベストの移行より後の版も適用する。
+    for path in &paths[personal_bests_migration..] {
+        server
+            .execute_d1_file(path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    }
 
     let rows = d1_rows(
         &server,

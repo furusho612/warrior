@@ -74,7 +74,7 @@ fn drop_sets_reject_the_first_and_warmup_positions_and_keep_their_segments() {
     complete_the_sets(&server, &cookie);
     reject_an_invalid_completed_update(&server, &cookie);
     finish_and_check_the_summary(&server, &cookie);
-    reject_deleting_the_completed_sets(&server, &cookie);
+    delete_the_completed_sets_after_the_finish(&server, &cookie);
 }
 
 fn reject_the_first_drop_set(server: &DevServer, cookie: &str) {
@@ -410,15 +410,16 @@ fn reject_deleting_the_preceding_set(server: &DevServer, cookie: &str) {
     assert_eq!(count(server, "sets", NORMAL_SET_ID), 1);
 }
 
-fn reject_deleting_the_completed_sets(server: &DevServer, cookie: &str) {
+fn delete_the_completed_sets_after_the_finish(server: &DevServer, cookie: &str) {
     for (operation_id, set_id) in [
         (DELETE_DROP_OPERATION_ID, DROP_SET_ID),
         (DELETE_NORMAL_OPERATION_ID, NORMAL_SET_ID),
     ] {
         let delete = delete_operation(operation_id, TRAINING_ID, set_id);
         let response = post(server, cookie, &delete);
-        assert_eq!(response.status, 409, "{}", response.body);
-        assert_eq!(applied_count(server, operation_id), 0);
-        assert_eq!(count(server, "sets", set_id), 1);
+        assert_eq!(response.status, 200, "{}", response.body);
+        assert_eq!(status(&response), "applied");
+        assert_eq!(applied_count(server, operation_id), 1);
+        assert_eq!(count(server, "sets", set_id), 0);
     }
 }

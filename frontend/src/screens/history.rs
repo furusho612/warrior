@@ -215,18 +215,12 @@ fn delete_operation(training_id: &str) -> Result<Operation, StorageError> {
     let payload = SessionDeletePayload {
         training_id: training_id.to_owned(),
     };
-    let operation = Operation {
-        operation_id: new_uuid()?,
-        training_id: training_id.to_owned(),
-        sequence: 0,
-        kind: OperationKind::TrainingSessionDelete,
-        parent_operation_id: None,
-        payload: serde_json::to_value(payload)
+    pending_operation(
+        training_id,
+        OperationKind::TrainingSessionDelete,
+        serde_json::to_value(payload)
             .map_err(|error| StorageError::Serialize(error.to_string()))?,
-    };
-    validate_operation(&operation)
-        .map_err(|error| StorageError::InvalidOperation(error.code().to_owned()))?;
-    Ok(operation)
+    )
 }
 
 /// 日付を指定した追加の記録を組み立てる。開始時刻を持たず、指定した所要時間を持つ。
@@ -260,19 +254,33 @@ pub(crate) fn backfill_session(
 
 /// 日付を指定した追加の操作を組み立てる。
 pub(crate) fn backfill_operation(session: &SessionRecord) -> Result<Operation, StorageError> {
-    let operation = Operation {
-        operation_id: new_uuid()?,
-        training_id: session.id.clone(),
-        sequence: 0,
-        kind: OperationKind::TrainingSessionBackfill,
-        parent_operation_id: None,
-        payload: serde_json::to_value(warrior_core::sync::SessionBackfillPayload {
+    pending_operation(
+        &session.id,
+        OperationKind::TrainingSessionBackfill,
+        serde_json::to_value(warrior_core::sync::SessionBackfillPayload {
             id: session.id.clone(),
             date: session.date.clone(),
             duration_seconds: session.duration_seconds.unwrap_or(0),
             memo: session.memo.clone(),
         })
         .map_err(|error| StorageError::Serialize(error.to_string()))?,
+    )
+}
+
+/// 送信待ちの列へ積む前の操作を組み立てる。実際の順序は保存時に決める。
+fn pending_operation(
+    training_id: &str,
+    kind: OperationKind,
+    payload: serde_json::Value,
+) -> Result<Operation, StorageError> {
+    let operation = Operation {
+        operation_id: new_uuid()?,
+        training_id: training_id.to_owned(),
+        // 保存時に実際の順序へ置き換える。検証は 1 以上を要求する。
+        sequence: 1,
+        kind,
+        parent_operation_id: None,
+        payload,
     };
     validate_operation(&operation)
         .map_err(|error| StorageError::InvalidOperation(error.code().to_owned()))?;

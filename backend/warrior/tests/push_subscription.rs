@@ -115,7 +115,11 @@ fn the_push_endpoint_allowlist_and_the_upsert_are_enforced() {
     assert_eq!(row["p256dh"], "p256dh-1");
     assert_eq!(row["auth"], "auth-1");
     assert_eq!(row["terminal_token_id"], TERMINAL_ID);
-    assert_eq!(row["created_at"], NOW);
+    assert_eq!(
+        row["created_at"], row["updated_at"],
+        "the first registration sets both times"
+    );
+    let created_at = row["created_at"].clone();
 
     let updated = post(
         &server,
@@ -134,6 +138,10 @@ fn the_push_endpoint_allowlist_and_the_upsert_are_enforced() {
     assert_eq!(
         row["terminal_token_id"], SECOND_TERMINAL_ID,
         "the latest terminal owns the subscription"
+    );
+    assert_eq!(
+        row["created_at"], created_at,
+        "the first registration time must stay"
     );
 
     let chrome = "https://fcm.googleapis.com/fcm/send/b";
@@ -325,7 +333,7 @@ fn delete(server: &DevServer, cookie: &str, endpoint: &str) -> HttpResponse {
 }
 
 fn subscription_count(server: &DevServer, user_id: &str) -> i64 {
-    count(
+    count_with(
         server,
         &format!("SELECT COUNT(*) AS count FROM push_subscriptions WHERE user_id = '{user_id}'"),
     )
@@ -334,7 +342,7 @@ fn subscription_count(server: &DevServer, user_id: &str) -> i64 {
 fn subscription_row(server: &DevServer, user_id: &str, endpoint: &str) -> Value {
     server
         .execute_d1_json(&format!(
-            "SELECT endpoint, p256dh, auth, terminal_token_id, created_at \
+            "SELECT endpoint, p256dh, auth, terminal_token_id, created_at, updated_at \
              FROM push_subscriptions WHERE user_id = '{user_id}' AND endpoint = '{endpoint}'"
         ))
         .expect("the subscription must be readable")
@@ -346,8 +354,12 @@ fn subscription_row(server: &DevServer, user_id: &str, endpoint: &str) -> Value 
 }
 
 fn count(server: &DevServer, table: &str) -> i64 {
+    count_with(server, &format!("SELECT COUNT(*) AS count FROM {table}"))
+}
+
+fn count_with(server: &DevServer, sql: &str) -> i64 {
     server
-        .execute_d1_json(&format!("SELECT COUNT(*) AS count FROM {table}"))
+        .execute_d1_json(sql)
         .expect("the count must be readable")
         .get(0)
         .and_then(|entry| entry.get("results"))
