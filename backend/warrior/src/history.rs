@@ -419,7 +419,7 @@ fn graph_sets<'a>(
     Ok(sets)
 }
 
-fn parse_date(text: &str) -> Result<JstDate> {
+pub(crate) fn parse_date(text: &str) -> Result<JstDate> {
     JstDate::parse(text).ok_or_else(|| {
         console_error!("the stored date is invalid");
         worker::Error::RustError("the stored date is invalid".to_owned())
@@ -434,7 +434,7 @@ fn ensure_instant(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn current_date() -> Result<JstDate> {
+pub(crate) fn current_date() -> Result<JstDate> {
     UtcInstant::from_epoch_seconds(auth::now_seconds())
         .jst_date()
         .ok_or_else(|| {

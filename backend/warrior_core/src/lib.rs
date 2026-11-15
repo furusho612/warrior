@@ -4,6 +4,7 @@ pub mod account_deletion;
 pub mod ai;
 pub mod auth;
 pub mod base64url;
+pub mod body_part_analysis;
 pub mod calendar;
 pub mod cbor;
 pub mod cose;
