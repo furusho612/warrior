@@ -26,6 +26,7 @@ pub mod profile;
 pub mod push;
 pub mod pwa;
 pub mod rate_limit;
+pub mod recovery;
 pub mod rest_timer;
 pub mod rpe;
 pub mod set_calc;

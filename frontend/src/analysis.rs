@@ -1,9 +1,12 @@
-//! 部位別の分析の API と、画面の選択肢と値の文言。
+//! 部位別の分析と回復状況の API と、画面の選択肢と値の文言。
 //!
+//! 対応する要求: `REQ-ANL-005`、`REQ-ANL-006`、`REQ-ANL-007`、`REQ-ANL-008`。
 //! 画面は要求の組み立てと応答の型だけを持ち、URL と選択肢の値はここに集める。
-//! 期間と指標の意味は `warrior_core::body_part_analysis` が持つ。
+//! 期間と指標の意味は `warrior_core::body_part_analysis` が、回復の段階の意味は
+//! `warrior_core::recovery` が持つ。
 
 use warrior_core::body_part_analysis::{AnalysisMetric, AnalysisPeriod, BodyPartAnalysis};
+use warrior_core::recovery::{RecoveryState, RecoveryStatus};
 
 use crate::http::{self, HttpError};
 use crate::text::{text, Key};
@@ -23,6 +26,16 @@ pub fn body_parts_url(period: AnalysisPeriod, metric: AnalysisMetric) -> String 
         period.as_str(),
         metric.as_str()
     )
+}
+
+/// 部位区分ごとの回復状況を取る。
+pub async fn recovery() -> Result<RecoveryStatus, HttpError> {
+    http::request_json("GET", recovery_url()).await
+}
+
+/// 部位区分ごとの回復状況の URL。
+pub fn recovery_url() -> &'static str {
+    "/api/analysis/recovery"
 }
 
 /// 期間の選択肢の値と文言。
@@ -85,6 +98,20 @@ pub fn weight_change_text(change_kg: f64) -> String {
     format!("{} kg", signed_weight(change_kg))
 }
 
+/// 回復の段階の文言。
+pub fn recovery_label(state: RecoveryState) -> &'static str {
+    match state {
+        RecoveryState::Recovering => text(Key::AnalysisRecoveryRecovering),
+        RecoveryState::AlmostRecovered => text(Key::AnalysisRecoveryAlmostRecovered),
+        RecoveryState::Recovered => text(Key::AnalysisRecoveryRecovered),
+    }
+}
+
+/// 画面の属性に載せる回復の段階の値。記録の無い部位は `none` とする。
+pub fn recovery_state_value(state: Option<RecoveryState>) -> &'static str {
+    state.map_or("none", RecoveryState::as_str)
+}
+
 fn signed(change: i64) -> String {
     if change > 0 {
         format!("+{change}")
@@ -103,17 +130,19 @@ fn signed_weight(change_kg: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    //! 部位別の分析の URL と選択肢と増減の文言の単体テスト。
+    //! 部位別の分析と回復状況の URL と選択肢と文言の単体テスト。
     //!
-    //! 対応する要求: `REQ-ANL-005`、`REQ-ANL-006`、`REQ-ANL-007`。
-    //! 要求の受入基準は E2E が担い、ここは API のクエリの組み立てと、画面の文言を確かめる。
+    //! 対応する要求: `REQ-ANL-005`、`REQ-ANL-006`、`REQ-ANL-007`、`REQ-ANL-008`。
+    //! 要求の受入基準は E2E が担い、ここは API の URL の組み立てと、画面の文言を確かめる。
 
     use warrior_core::body_part_analysis::{AnalysisMetric, AnalysisPeriod};
+    use warrior_core::recovery::RecoveryState;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
-        body_parts_url, change_label, metric_options, period_options, sets_change_text, sets_text,
-        weight_change_text, weight_text,
+        body_parts_url, change_label, metric_options, period_options, recovery_label,
+        recovery_state_value, recovery_url, sets_change_text, sets_text, weight_change_text,
+        weight_text,
     };
 
     #[wasm_bindgen_test]
@@ -144,6 +173,31 @@ mod tests {
             metric_options(),
             vec![("sets", "セット数"), ("weight", "総重量")]
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_recovery_url_is_the_analysis_recovery_route() {
+        assert_eq!(recovery_url(), "/api/analysis/recovery");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_recovery_labels_and_values_follow_the_three_states() {
+        assert_eq!(recovery_label(RecoveryState::Recovering), "回復中");
+        assert_eq!(recovery_label(RecoveryState::AlmostRecovered), "ほぼ回復");
+        assert_eq!(recovery_label(RecoveryState::Recovered), "回復済み");
+        assert_eq!(
+            recovery_state_value(Some(RecoveryState::Recovering)),
+            "recovering"
+        );
+        assert_eq!(
+            recovery_state_value(Some(RecoveryState::AlmostRecovered)),
+            "almost_recovered"
+        );
+        assert_eq!(
+            recovery_state_value(Some(RecoveryState::Recovered)),
+            "recovered"
+        );
+        assert_eq!(recovery_state_value(None), "none");
     }
 
     #[wasm_bindgen_test]

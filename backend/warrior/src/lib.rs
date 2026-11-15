@@ -21,6 +21,7 @@ pub mod profile;
 pub mod push;
 pub mod random;
 pub mod rate_limit;
+pub mod recovery;
 pub mod router;
 pub mod scheduled;
 pub mod security;
