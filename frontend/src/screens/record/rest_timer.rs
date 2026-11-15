@@ -325,6 +325,24 @@ async fn clear_timer(training_id: String) {
 /// レスト時間の設定。画面の消灯防止と、全体の既定値を持つ。
 #[component]
 pub(crate) fn RestSettingsPanel() -> Element {
+    rsx! {
+        div {
+            class: "flex flex-col gap-2 border border-line bg-surface p-3",
+            "data-rest-settings": "true",
+            RestSecondsField {
+                target: RestSecondsTarget::Default,
+                disabled: false,
+            }
+            WakeLockSetting {}
+            RestNotificationSetting {}
+            PushSubscriptionSetting {}
+        }
+    }
+}
+
+/// 画面の消灯防止を有効にするかの設定。
+#[component]
+pub(crate) fn WakeLockSetting() -> Element {
     let state = use_context::<RestTimerState>();
     let mut enabled = state.wake_lock_enabled;
     let error = use_signal(|| Option::<String>::None);
@@ -340,13 +358,7 @@ pub(crate) fn RestSettingsPanel() -> Element {
     });
     let enabled_value = enabled();
     rsx! {
-        div {
-            class: "flex flex-col gap-2 border border-line bg-surface p-3",
-            "data-rest-settings": "true",
-            RestSecondsField {
-                target: RestSecondsTarget::Default,
-                disabled: false,
-            }
+        div { class: "flex flex-col gap-1", "data-wake-lock-setting": "true",
             label {
                 class: "flex min-h-11 items-center gap-2 text-[13px]",
                 input {
@@ -365,8 +377,6 @@ pub(crate) fn RestSettingsPanel() -> Element {
             if let Some(message) = error() {
                 p { class: "text-[11px] text-primary", "{message}" }
             }
-            RestNotificationSetting {}
-            PushSubscriptionSetting {}
         }
     }
 }
@@ -375,10 +385,20 @@ pub(crate) fn RestSettingsPanel() -> Element {
 ///
 /// 通知の許可は、利用者がこの設定を有効にしたときにだけ求める。画面の読み込み時には求めない。
 #[component]
-fn RestNotificationSetting() -> Element {
+pub(crate) fn RestNotificationSetting() -> Element {
     let state = use_context::<RestTimerState>();
     let mut enabled = state.notification_enabled;
-    let mut message = use_signal(|| Option::<String>::None);
+    let message = use_signal(|| Option::<String>::None);
+    use_effect(move || {
+        spawn(async move {
+            let Ok(storage) = storage::current().await else {
+                return;
+            };
+            if let Ok(value) = storage.browser_notification_enabled().await {
+                enabled.set(value);
+            }
+        });
+    });
     let enabled_value = enabled();
     rsx! {
         div {
@@ -393,12 +413,9 @@ fn RestNotificationSetting() -> Element {
                     checked: enabled_value,
                     onchange: move |event| {
                         let next = event.checked();
+                        let previous = enabled();
                         enabled.set(next);
-                        if !next {
-                            message.set(None);
-                            return;
-                        }
-                        spawn(request_notification_permission(message));
+                        spawn(save_notification_setting(previous, next, enabled, message));
                     },
                 }
                 "{text(Key::RestNotificationLabel)}"
@@ -414,16 +431,47 @@ fn RestNotificationSetting() -> Element {
     }
 }
 
-async fn request_notification_permission(mut message: Signal<Option<String>>) {
-    match notification::request_permission().await {
-        Some(Permission::Granted) => message.set(None),
-        Some(Permission::Denied) => {
-            message.set(Some(text(Key::RestNotificationDenied).to_owned()));
+async fn save_notification_setting(
+    previous: bool,
+    next: bool,
+    mut enabled: Signal<bool>,
+    mut message: Signal<Option<String>>,
+) {
+    message.set(None);
+    let saved = match storage::current().await {
+        Ok(storage) => {
+            if notification::should_request_permission(previous, next) {
+                match notification::request_permission().await {
+                    Some(Permission::Granted) => {}
+                    Some(Permission::Denied) => {
+                        enabled.set(false);
+                        let _ = storage.save_browser_notification_enabled(false).await;
+                        message.set(Some(text(Key::RestNotificationDenied).to_owned()));
+                        return;
+                    }
+                    Some(Permission::Default) => {
+                        enabled.set(false);
+                        let _ = storage.save_browser_notification_enabled(false).await;
+                        message.set(Some(text(Key::RestNotificationPending).to_owned()));
+                        return;
+                    }
+                    None => {
+                        enabled.set(false);
+                        let _ = storage.save_browser_notification_enabled(false).await;
+                        message.set(Some(text(Key::RestNotificationUnsupported).to_owned()));
+                        return;
+                    }
+                }
+            }
+            storage.save_browser_notification_enabled(next).await
         }
-        Some(Permission::Default) => {
-            message.set(Some(text(Key::RestNotificationPending).to_owned()));
-        }
-        None => message.set(Some(text(Key::RestNotificationUnsupported).to_owned())),
+        Err(_) => Err(storage::StorageError::Unavailable(
+            "the storage is missing".to_owned(),
+        )),
+    };
+    if saved.is_err() {
+        enabled.set(false);
+        message.set(Some(text(Key::NotificationSaveFailed).to_owned()));
     }
 }
 
@@ -624,7 +672,7 @@ async fn load_target_seconds(
     target: &RestSecondsTarget,
 ) -> Result<Option<u32>, storage::StorageError> {
     match target {
-        RestSecondsTarget::Default => storage.rest_default_seconds().await.map(Some),
+        RestSecondsTarget::Default => Ok(Some(crate::settings::rest_default_seconds().await)),
         RestSecondsTarget::Exercise(id) => storage.rest_exercise_seconds(id).await,
         RestSecondsTarget::Set(id) => storage.rest_set_seconds(id).await,
     }
@@ -636,7 +684,16 @@ async fn save_target_seconds(
     seconds: Option<u32>,
 ) -> Result<(), storage::StorageError> {
     match target {
-        RestSecondsTarget::Default => storage.save_rest_default_seconds(seconds).await,
+        RestSecondsTarget::Default => {
+            crate::settings::set_rest_default_seconds(seconds.unwrap_or(DEFAULT_SECONDS))
+                .await
+                .map(|_| ())
+                .map_err(|_| {
+                    storage::StorageError::InvalidOperation(
+                        "the settings could not be saved".to_owned(),
+                    )
+                })
+        }
         RestSecondsTarget::Exercise(id) => storage.save_rest_exercise_seconds(id, seconds).await,
         RestSecondsTarget::Set(id) => storage.save_rest_set_seconds(id, seconds).await,
     }

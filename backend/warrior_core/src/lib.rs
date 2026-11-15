@@ -32,6 +32,7 @@ pub mod routine;
 pub mod rpe;
 pub mod set_calc;
 pub mod set_rules;
+pub mod settings;
 pub mod sql;
 pub mod superset;
 pub mod sync;

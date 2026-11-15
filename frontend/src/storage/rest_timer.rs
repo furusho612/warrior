@@ -1,21 +1,18 @@
-//! レストタイマーの終了予定時刻と、レスト時間の設定の端末内の保存 (REQ-TMR-001、REQ-TMR-006)。
+//! レストタイマーの終了予定時刻と、種目ごととセットごとのレスト時間の端末内の保存 (REQ-TMR-001、REQ-TMR-006)。
 //!
 //! 終了予定時刻とレスト時間は `meta` ストアに保存する。再読み込みの後は、保存した
 //! 終了予定時刻からタイマーを続ける。レスト時間は全体の既定値、種目ごとの値、
 //! セットごとの値を持ち、セットの値が種目の値より優先する。
-//! 画面の消灯防止の設定も端末ごとに `meta` ストアへ保存する。
+//! 全体の既定値は利用者共通の設定として `storage::settings` が持ち、ここでは
+//! 種目ごととセットごとの値だけを扱う。
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
-use warrior_core::rest_timer::{is_valid_seconds, DEFAULT_SECONDS};
+use warrior_core::rest_timer::is_valid_seconds;
 
 use super::{abort, indexeddb, Storage, StorageError, Store};
-
-const DEFAULT_SECONDS_KEY: &str = "rest_seconds:default";
-const WAKE_LOCK_KEY: &str = "wake_lock_enabled";
-const DEFAULT_WAKE_LOCK_ENABLED: bool = true;
 
 /// 秒数を保存するメタの 1 行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,13 +28,6 @@ struct EndRecord {
     end_ms: i64,
 }
 
-/// 有効かどうかを保存するメタの 1 行。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct EnabledRecord {
-    key: String,
-    enabled: bool,
-}
-
 fn timer_key(training_id: &str) -> String {
     format!("rest_timer:{training_id}")
 }
@@ -50,7 +40,7 @@ fn set_seconds_key(set_id: &str) -> String {
     format!("rest_seconds:set:{set_id}")
 }
 
-async fn load_meta<T: DeserializeOwned>(
+pub(super) async fn load_meta<T: DeserializeOwned>(
     storage: &Storage,
     key: &str,
 ) -> Result<Option<T>, StorageError> {
@@ -67,7 +57,10 @@ async fn load_meta<T: DeserializeOwned>(
     Ok(record)
 }
 
-async fn save_meta<T: Serialize>(storage: &Storage, value: &T) -> Result<(), StorageError> {
+pub(super) async fn save_meta<T: Serialize>(
+    storage: &Storage,
+    value: &T,
+) -> Result<(), StorageError> {
     let database = storage.database().await?;
     let transaction = indexeddb::Transaction::new(
         &database,
@@ -81,7 +74,7 @@ async fn save_meta<T: Serialize>(storage: &Storage, value: &T) -> Result<(), Sto
     }
 }
 
-async fn delete_meta(storage: &Storage, key: &str) -> Result<(), StorageError> {
+pub(super) async fn delete_meta(storage: &Storage, key: &str) -> Result<(), StorageError> {
     let database = storage.database().await?;
     let transaction = indexeddb::Transaction::new(
         &database,
@@ -150,17 +143,25 @@ impl Storage {
         &self,
         seconds: Option<u32>,
     ) -> Result<(), StorageError> {
-        if seconds.is_none() {
-            return delete_meta(self, DEFAULT_SECONDS_KEY).await;
-        }
-        save_seconds(self, DEFAULT_SECONDS_KEY.to_owned(), seconds).await
+        let settings = self
+            .cached_user_settings_for_active_owner()
+            .await?
+            .unwrap_or_default();
+        let settings = warrior_core::settings::Settings {
+            rest_default_seconds: seconds.unwrap_or(warrior_core::rest_timer::DEFAULT_SECONDS),
+            ..settings
+        };
+        self.save_user_settings_for_active_owner(&settings).await
     }
 
     /// レスト時間の既定値を返す。保存が無いときは 90 秒を返す。
     pub async fn rest_default_seconds(&self) -> Result<u32, StorageError> {
-        Ok(load_seconds(self, DEFAULT_SECONDS_KEY)
+        Ok(self
+            .cached_user_settings_for_active_owner()
             .await?
-            .unwrap_or(DEFAULT_SECONDS))
+            .map_or(warrior_core::rest_timer::DEFAULT_SECONDS, |settings| {
+                settings.rest_default_seconds
+            }))
     }
 
     /// 種目ごとのレスト時間を保存する。None のときは指定を消す。
@@ -192,24 +193,5 @@ impl Storage {
     /// セットごとのレスト時間を返す。指定が無ければ None。
     pub async fn rest_set_seconds(&self, set_id: &str) -> Result<Option<u32>, StorageError> {
         load_seconds(self, &set_seconds_key(set_id)).await
-    }
-
-    /// 画面の消灯防止を有効にするかを保存する。
-    pub async fn save_wake_lock_enabled(&self, enabled: bool) -> Result<(), StorageError> {
-        save_meta(
-            self,
-            &EnabledRecord {
-                key: WAKE_LOCK_KEY.to_owned(),
-                enabled,
-            },
-        )
-        .await
-    }
-
-    /// 画面の消灯防止を有効にするかを返す。保存が無いときは有効とする。
-    pub async fn wake_lock_enabled(&self) -> Result<bool, StorageError> {
-        Ok(load_meta::<EnabledRecord>(self, WAKE_LOCK_KEY)
-            .await?
-            .map_or(DEFAULT_WAKE_LOCK_ENABLED, |record| record.enabled))
     }
 }

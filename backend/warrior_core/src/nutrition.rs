@@ -124,7 +124,8 @@ pub struct Profile {
 }
 
 /// PFC の調整値。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct MacroTarget {
     /// たんぱく質 (体重 1 kg あたりのグラム数)。
     pub protein_g_per_kg: f64,

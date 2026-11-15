@@ -33,6 +33,7 @@ mod personal_best;
 mod rest_timer;
 mod routine;
 mod set;
+mod settings;
 mod stopwatch;
 mod superset;
 
@@ -40,6 +41,7 @@ pub use account::clear_after_deletion;
 pub use indexeddb::request_persistence;
 pub use library::{ExerciseChangeKind, ExerciseOutboxEntry};
 pub use set::StoredSet;
+pub use settings::PendingUserSettings;
 pub use stopwatch::StopwatchSide;
 
 /// 既定のデータベースの名前。

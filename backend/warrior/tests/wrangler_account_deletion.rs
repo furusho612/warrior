@@ -91,6 +91,7 @@ async fn account_deletion_removes_user_rows_and_r2_objects_once() {
     assert_eq!(count(&server, "applied_operations"), 0);
     assert_eq!(count(&server, "personal_bests"), 0);
     assert_eq!(count(&server, "profiles"), 0);
+    assert_eq!(count(&server, "user_settings"), 0);
     assert_eq!(count(&server, "muscles"), 24);
     assert_eq!(count(&server, "master_exercises"), 107);
     assert_eq!(
@@ -220,6 +221,10 @@ fn seed_user(server: &DevServer, session_hash: &str) {
         format!(
             "INSERT INTO profiles (user_id, height_cm, weight_kg, birth_date, sex, training_experience, goal, training_days_per_week, activity_level, created_at, updated_at) \
              VALUES ('{USER_ID}', 175.0, 70.0, '1990-05-10', 'male', 'intermediate', 'hypertrophy', 4, 'normal', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+        format!(
+            "INSERT INTO user_settings (user_id, rest_default_seconds, display_mode, protein_g_per_kg, fat_ratio, created_at, updated_at) \
+             VALUES ('{USER_ID}', 120, 'dark', 1.8, 0.25, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
         ),
     ] {
         server

@@ -31,6 +31,11 @@ pub fn content() -> Content {
     }
 }
 
+/// 通知の許可を求める条件。無効から有効へ変えたときだけ求める。
+pub fn should_request_permission(was_enabled: bool, enabled: bool) -> bool {
+    !was_enabled && enabled
+}
+
 /// 現在の通知の許可を読む。通知の API が無い場合は None。
 pub fn permission() -> Option<Permission> {
     let constructor = notification_constructor()?;
@@ -112,6 +117,14 @@ mod tests {
 
     use super::content;
     use crate::text::{text, Key};
+
+    #[test]
+    fn req_myp_003_requests_permission_only_when_enabling_the_setting() {
+        assert!(super::should_request_permission(false, true));
+        assert!(!super::should_request_permission(true, true));
+        assert!(!super::should_request_permission(true, false));
+        assert!(!super::should_request_permission(false, false));
+    }
 
     #[test]
     fn req_tmr_007_the_notification_text_is_fixed_and_has_no_record_content() {

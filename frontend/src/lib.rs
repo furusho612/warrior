@@ -26,6 +26,7 @@ pub mod rest_timer;
 pub mod routes;
 pub mod routine;
 pub mod screens;
+pub mod settings;
 pub mod sound;
 pub mod storage;
 pub mod superset;

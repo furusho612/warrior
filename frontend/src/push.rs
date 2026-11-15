@@ -149,6 +149,23 @@ pub async fn unsubscribe() -> Result<(), RegistrationError> {
         .map_err(RegistrationError::from)
 }
 
+/// この端末にプッシュの購読があるかを返す。購読の API が無い場合は false。
+pub async fn has_subscription() -> bool {
+    let Ok(registration) = registration().await else {
+        return false;
+    };
+    let Ok(manager) = registration.push_manager() else {
+        return false;
+    };
+    let Ok(promise) = manager.get_subscription() else {
+        return false;
+    };
+    let Ok(subscription) = JsFuture::from(promise).await else {
+        return false;
+    };
+    !subscription.is_null() && !subscription.is_undefined()
+}
+
 async fn registration() -> Result<ServiceWorkerRegistration, RegistrationError> {
     let window = web_sys::window().ok_or(RegistrationError::Unavailable)?;
     let container = window.navigator().service_worker();
@@ -189,6 +206,21 @@ pub fn PushSubscriptionSetting() -> Element {
     let busy = use_signal(|| false);
     let mut message = use_signal(|| Option::<String>::None);
     let install_hint = use_signal(pwa::ios_install_hint);
+    use_effect(move || {
+        spawn(async move {
+            let Ok(storage) = crate::storage::current().await else {
+                return;
+            };
+            let saved = storage.push_notification_enabled().await.unwrap_or(false);
+            if saved && has_subscription().await {
+                enabled.set(true);
+                return;
+            }
+            if saved {
+                let _ = storage.save_push_notification_enabled(false).await;
+            }
+        });
+    });
     let enabled_value = enabled();
     rsx! {
         div {
@@ -241,7 +273,18 @@ async fn enable_push(
 ) {
     busy.set(true);
     match subscribe().await {
-        Ok(()) => enabled.set(true),
+        Ok(()) => {
+            let saved = match crate::storage::current().await {
+                Ok(storage) => storage.save_push_notification_enabled(true).await.is_ok(),
+                Err(_) => false,
+            };
+            if saved {
+                enabled.set(true);
+            } else {
+                enabled.set(false);
+                message.set(Some(text(Key::PushSettingSaveFailed).to_owned()));
+            }
+        }
         Err(error) => {
             enabled.set(false);
             message.set(Some(text(error.message_key()).to_owned()));
@@ -252,10 +295,17 @@ async fn enable_push(
 
 async fn disable_push(mut busy: Signal<bool>, mut message: Signal<Option<String>>) {
     busy.set(true);
-    if unsubscribe().await.is_err() {
+    let unsubscribe_failed = unsubscribe().await.is_err();
+    let save_failed = match crate::storage::current().await {
+        Ok(storage) => storage.save_push_notification_enabled(false).await.is_err(),
+        Err(_) => true,
+    };
+    if unsubscribe_failed {
         message.set(Some(
             text(Key::PushNotificationUnsubscribeFailed).to_owned(),
         ));
+    } else if save_failed {
+        message.set(Some(text(Key::PushSettingSaveFailed).to_owned()));
     }
     busy.set(false);
 }
