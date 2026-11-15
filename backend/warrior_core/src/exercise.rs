@@ -41,6 +41,20 @@ impl BodyPart {
         Self::ALL.into_iter().find(|part| part.as_str() == text)
     }
 
+    /// 一覧に並べる順序。`ALL` の位置と同じ。
+    pub fn order(self) -> u8 {
+        match self {
+            Self::Chest => 0,
+            Self::Back => 1,
+            Self::Shoulders => 2,
+            Self::BicepsForearm => 3,
+            Self::Triceps => 4,
+            Self::Legs => 5,
+            Self::Abs => 6,
+            Self::Other => 7,
+        }
+    }
+
     /// DB と API の文字列。
     pub fn as_str(self) -> &'static str {
         match self {
@@ -69,6 +83,35 @@ pub enum Equipment {
 }
 
 impl Equipment {
+    /// 6 区分。一覧の並びを固定する。
+    pub const ALL: [Self; 6] = [
+        Self::Barbell,
+        Self::Dumbbell,
+        Self::Machine,
+        Self::Cable,
+        Self::Bodyweight,
+        Self::Other,
+    ];
+
+    /// DB と API の文字列を器具に戻す。
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|equipment| equipment.as_str() == text)
+    }
+
+    /// 一覧に並べる順序。`ALL` の位置と同じ。
+    pub fn order(self) -> u8 {
+        match self {
+            Self::Barbell => 0,
+            Self::Dumbbell => 1,
+            Self::Machine => 2,
+            Self::Cable => 3,
+            Self::Bodyweight => 4,
+            Self::Other => 5,
+        }
+    }
+
     /// DB と API の文字列。
     pub fn as_str(self) -> &'static str {
         match self {
@@ -435,14 +478,6 @@ pub enum MuscleRole {
 pub struct MuscleAssignment {
     pub muscle: MuscleUnit,
     pub role: MuscleRole,
-}
-
-/// 種目ライブラリの一覧の応答。
-///
-/// 記録への種目の選択が使う。絞り込みと続きのページも、この形に項目を足して表す。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ExerciseList {
-    pub exercises: Vec<Exercise>,
 }
 
 /// 種目の検証の失敗。
