@@ -18,7 +18,7 @@ use warrior_core::set_rules;
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 
 pub(super) use super::set_inputs::Field;
-use crate::calendar_view::{attachment_text, grip_style_text, grip_width_text};
+use crate::grip_text::{attachment_text, grip_style_text, grip_width_text};
 use crate::storage::StoredSet;
 use crate::text::{text, Key};
 use crate::training_set::grip_json;
@@ -749,12 +749,12 @@ pub(super) fn fill_missing_grips(sets: &mut [SetView], mode: GripMode, options: 
     }
 }
 
-/// セットのグリップが期待値のままか。
-pub(super) fn set_grip_is(sets: &[SetView], set_id: &str, expected: GripSelection) -> bool {
-    sets.iter()
-        .find(|set| set.record.id == set_id)
-        .and_then(SetView::grip)
-        == Some(expected)
+/// 前回の応答を画面へ反映してよいか。
+pub(super) fn previous_response_is_current(
+    current: Option<GripSelection>,
+    expected: GripSelection,
+) -> bool {
+    current == Some(expected)
 }
 
 /// 選択肢の中の握り方を、選択肢の順に返す。

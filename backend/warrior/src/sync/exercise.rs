@@ -42,6 +42,14 @@ pub(super) async fn exercise_batch(
             "the training is being edited on another terminal",
         )));
     };
+    if let ValidatedPayload::ExerciseCreate(payload) = &validated.payload {
+        if payload.snapshot.validate().is_err() {
+            return Ok(BatchOutcome::Reject(response(
+                ErrorCode::BadRequest,
+                "invalid_snapshot",
+            )));
+        }
+    }
     match &validated.payload {
         ValidatedPayload::ExerciseDelete(payload) => {
             if !exercise_in_training(

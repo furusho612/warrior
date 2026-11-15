@@ -15,8 +15,8 @@ use wasm_bindgen_test::wasm_bindgen_test_configure;
 use super::{
     attachment_styles, attachment_with, attachment_with_style, default_grip, detail_open_label,
     fill_missing_grips, grip_attachments, grip_styles, grip_widths, grip_with_style,
-    grip_with_width, needs_segment_confirmation, parse_count_or_zero, previous_values, set_grip_is,
-    set_numbers, SegmentView, SetView,
+    grip_with_width, needs_segment_confirmation, parse_count_or_zero, previous_response_is_current,
+    previous_values, set_numbers, SegmentView, SetView,
 };
 use crate::text::Key;
 
@@ -554,11 +554,9 @@ fn req_set_011_a_previous_response_is_discarded_when_the_grip_changes() {
         style: GripStyle::Supinated,
         width: GripWidth::Narrow,
     };
-    let mut set = set_view("normal");
-    set.set_grip(first);
-    assert!(set_grip_is(&[set.clone()], "set", first));
-    assert!(!set_grip_is(&[set], "set", second));
-    assert!(!set_grip_is(&[], "set", first));
+    assert!(previous_response_is_current(Some(first), first));
+    assert!(!previous_response_is_current(Some(second), first));
+    assert!(!previous_response_is_current(None, first));
 }
 
 #[wasm_bindgen_test]
@@ -566,6 +564,13 @@ fn req_set_011_loading_keeps_grip_less_exercises_without_a_grip() {
     let options = grip_options();
     let mut sets = vec![set_view("normal")];
     fill_missing_grips(&mut sets, GripMode::None, &options);
+    assert_eq!(sets[0].grip(), None);
+}
+
+#[wasm_bindgen_test]
+fn req_set_011_loading_keeps_missing_grips_when_the_options_are_empty() {
+    let mut sets = vec![set_view("normal")];
+    fill_missing_grips(&mut sets, GripMode::Grip, &[]);
     assert_eq!(sets[0].grip(), None);
 }
 
@@ -658,7 +663,15 @@ fn req_lib_011_a_styleless_attachment_clears_the_style() {
         }
     );
     assert!(attachment_styles(&options, Attachment::ParallelGrip).is_empty());
-    assert!(attachment_styles(&options, Attachment::MagWideOver).is_empty());
+    for attachment in Attachment::ALL
+        .into_iter()
+        .filter(|attachment| !attachment.requires_style())
+    {
+        assert!(
+            attachment_styles(&options, attachment).is_empty(),
+            "{attachment:?} must not have styles"
+        );
+    }
 }
 
 #[wasm_bindgen_test]

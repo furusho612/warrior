@@ -15,7 +15,7 @@ use super::sets::{
     grip_styles, grip_widths, grip_with_style, grip_with_width, set_kind_text, SelectedSet,
     SetAction, SetView,
 };
-use crate::calendar_view::{
+use crate::grip_text::{
     attachment_from_key, attachment_text, grip_style_from_key, grip_style_text,
     grip_width_from_key, grip_width_text,
 };
@@ -173,6 +173,7 @@ fn BreakdownRow(
         }
     }
 }
+
 /// セットのグリップの選択。
 #[component]
 fn GripInput(

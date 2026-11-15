@@ -6,6 +6,7 @@ pub mod app;
 pub mod calendar;
 pub mod calendar_view;
 pub mod generated;
+pub mod grip_text;
 pub mod http;
 pub mod ids;
 pub mod layout;

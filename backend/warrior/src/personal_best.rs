@@ -116,8 +116,9 @@ pub async fn apply_candidates(
 
 /// トレーニングが保持する自己ベストを、サマリーの項目の順で返す。
 ///
-/// 表の行のうち達成したトレーニングがこのトレーニングであるものを選ぶ。種目名と記録方式は
-/// トレーニングの種目のスナップショットから補う。候補に無い行は、表の値をそのまま返す。
+/// 表の行のうち達成したトレーニングがこのトレーニングであるものを選ぶ。候補があるときは
+/// 候補と同じキーの行だけを返し、候補が無いときは移行した行をそのまま返す。
+/// 種目名と記録方式はトレーニングの種目のスナップショットから補う。
 pub async fn held_for_training(
     db: &Db,
     user_id: &str,
@@ -141,23 +142,18 @@ pub async fn held_for_training(
     }
     let keys = rows.iter().map(row_key).collect::<Result<Vec<_>>>()?;
     let metadata = exercise_metadata(db, user_id, training_id).await?;
-    let mut used = vec![false; rows.len()];
+    if candidates.is_empty() {
+        return rows
+            .iter()
+            .map(|row| held_item(row, &metadata, None))
+            .collect();
+    }
     let mut items = Vec::with_capacity(rows.len());
     for candidate in updated(&[], candidates) {
         let Some(index) = keys.iter().position(|key| *key == candidate.key()) else {
             continue;
         };
-        if used[index] {
-            continue;
-        }
-        used[index] = true;
         items.push(held_item(&rows[index], &metadata, Some(&candidate))?);
-    }
-    for (index, row) in rows.iter().enumerate() {
-        if used[index] {
-            continue;
-        }
-        items.push(held_item(row, &metadata, None)?);
     }
     Ok(items)
 }

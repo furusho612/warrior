@@ -1,6 +1,6 @@
 //! セットの追加、更新、削除、並べ替え、完了の結合テスト。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-LIB-004`、`REQ-PRF-005`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-011`、`REQ-LIB-004`、`REQ-PRF-005`。
 //! セットの操作を同期の操作の適用で行い、D1 の行と操作 ID を確かめる。段は更新で
 //! 全置換し、削除でセットと一緒に消す。自重種目は記録した時点の体重とセットごとの
 //! 加重を別の列に保存する。
@@ -900,7 +900,7 @@ fn a_takeover_moves_the_set_operations_to_the_new_terminal() {
 }
 
 #[test]
-fn grip_rejections_keep_the_stored_grip_and_the_operation_absent() {
+fn req_set_011_grip_rejections_keep_the_stored_grip_and_the_operation_absent() {
     let server = DevServer::start(GRIP_PORT);
     server
         .apply_migrations()
@@ -974,7 +974,7 @@ fn grip_rejections_keep_the_stored_grip_and_the_operation_absent() {
     let operation = json!({
         "operation_id": INVALID_SNAPSHOT_OPERATION_ID,
         "training_id": TRAINING_ID,
-        "sequence": 0,
+        "sequence": 1,
         "kind": "training_exercise_create",
         "parent_operation_id": null,
         "payload": {
@@ -996,6 +996,9 @@ fn grip_rejections_keep_the_stored_grip_and_the_operation_absent() {
     });
     let response = post(&server, &cookie, &operation);
     assert_eq!(response.status, 400, "{}", response.body);
+    let body: Value = serde_json::from_str(&response.body).expect("the error body");
+    assert_eq!(body["error"]["code"], "bad_request");
+    assert_eq!(body["error"]["message"], "invalid_snapshot");
     assert_eq!(applied_count(&server, INVALID_SNAPSHOT_OPERATION_ID), 0);
     assert_eq!(
         count(&server, "training_exercises", INVALID_SNAPSHOT_ROW_ID),

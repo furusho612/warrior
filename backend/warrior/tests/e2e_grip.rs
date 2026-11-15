@@ -77,6 +77,22 @@ async fn records_the_grip_and_limits_the_previous_and_the_personal_bests() {
     seed_profile(&server, &user_id);
     seed_past(&server, &user_id);
     start_training(&driver).await;
+    let training_id = current_training_id(&driver).await;
+    wait_for_training_row(&server, &training_id).await;
+    seed_empty_key_personal_bests(
+        &server,
+        &user_id,
+        GRIP_EXERCISE_ID,
+        &training_id,
+        "2026-11-15",
+    );
+    seed_empty_key_personal_bests(
+        &server,
+        &user_id,
+        ATTACHMENT_EXERCISE_ID,
+        &training_id,
+        "2026-11-15",
+    );
     browser::wait_for_attribute(
         &driver,
         "[data-profile-checked]",
@@ -91,6 +107,7 @@ async fn records_the_grip_and_limits_the_previous_and_the_personal_bests() {
     check_the_grip_exercise(&driver, &server).await;
     check_the_attachment_exercise(&driver, &server).await;
     check_the_gripless_exercise(&driver, &server).await;
+    finish_and_check_the_summary(&driver).await;
 
     browser::assert_no_panic(&driver).await;
     driver.quit().await.expect("the browser must close");
@@ -270,6 +287,34 @@ async fn start_training(driver: &WebDriver) {
         .await
         .expect("the start button must be clickable");
     browser::wait_for_route(driver, "/record/:training_id").await;
+}
+
+async fn current_training_id(driver: &WebDriver) -> String {
+    let path = browser::eval_string(
+        driver,
+        "const done = arguments[arguments.length - 1]; done(location.pathname);",
+        Vec::new(),
+    )
+    .await;
+    path.rsplit('/').next().unwrap_or_default().to_owned()
+}
+
+async fn wait_for_training_row(server: &DevServer, training_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let row = optional_row(
+            server,
+            &format!("SELECT id FROM training_sessions WHERE id = '{training_id}'"),
+        );
+        if row.is_some() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the training {training_id} was not synced"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 async fn add_set(driver: &WebDriver, detail: &str) -> String {
@@ -564,20 +609,6 @@ fn seed_past(server: &DevServer, user_id: &str) {
     ] {
         seed_past_exercise(server, user_id, &past);
     }
-    seed_empty_key_personal_bests(
-        server,
-        user_id,
-        GRIP_EXERCISE_ID,
-        "a7c4e2f0-0000-4000-8000-000000000101",
-        "2026-01-01",
-    );
-    seed_empty_key_personal_bests(
-        server,
-        user_id,
-        ATTACHMENT_EXERCISE_ID,
-        "a7c4e2f0-0000-4000-8000-000000000105",
-        "2026-01-05",
-    );
 }
 
 fn seed_empty_key_personal_bests(
@@ -710,6 +741,49 @@ fn optional_row(server: &DevServer, sql: &str) -> Option<Value> {
         .and_then(|entry| entry.get("results"))
         .and_then(|rows| rows.get(0))
         .cloned()
+}
+
+async fn finish_and_check_the_summary(driver: &WebDriver) {
+    browser::click(driver, "[data-finish]").await;
+    browser::wait_for_route(driver, "/summary/:training_id").await;
+    let values = browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         done(JSON.stringify(Array.from(document.querySelectorAll('[data-personal-best]')) \
+           .map((element) => [element.getAttribute('data-personal-best'), \
+             Number(element.getAttribute('data-personal-best-value'))])));",
+        Vec::new(),
+    )
+    .await;
+    let items = values
+        .as_array()
+        .expect("the summary personal bests")
+        .iter()
+        .map(|item| {
+            (
+                item[0].as_str().expect("a kind").to_owned(),
+                item[1].as_f64().expect("a value"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !items
+            .iter()
+            .any(|(_, value)| { (*value - 999.0).abs() < 1e-9 || (*value - 9_999.0).abs() < 1e-9 }),
+        "another key's personal best must not appear in the summary: {items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|(kind, value)| kind == "max_weight" && (*value - 85.0).abs() < 1e-9),
+        "the grip personal best must appear in the summary: {items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|(kind, value)| kind == "max_weight" && (*value - 55.0).abs() < 1e-9),
+        "the attachment personal best must appear in the summary: {items:?}"
+    );
 }
 
 async fn current_user_id(driver: &WebDriver) -> String {

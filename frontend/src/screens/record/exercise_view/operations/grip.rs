@@ -8,7 +8,7 @@ use super::set_io::save_set_loop;
 use super::SetSaver;
 use crate::previous as previous_api;
 use crate::screens::record::errors::RecordErrors;
-use crate::screens::record::sets::set_grip_is;
+use crate::screens::record::sets::previous_response_is_current;
 
 /// セットのグリップを画面へ反映し、その種目の前回を取り直して保存する。
 pub(super) async fn change_grip(
@@ -98,7 +98,12 @@ pub(super) async fn refresh_previous(
     let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) else {
         return;
     };
-    if !set_grip_is(&view.sets, set_id, expected) {
+    let current = view
+        .sets
+        .iter()
+        .find(|set| set.record.id == set_id)
+        .and_then(|set| set.grip());
+    if !previous_response_is_current(current, expected) {
         return;
     }
     view.previous = previous;
