@@ -7,9 +7,12 @@ use serde_json::json;
 use super::{
     discard, mark_permanent_failure, mark_sending, mark_success, mark_transient_failure,
     next_sendable, pending_update, recover_interrupted, retry, unresolved_create, unsaved_count,
-    validate_operation, Operation, OperationKind, OutboxEntry, OutboxState, SessionRecord,
-    SyncError, MEMO_MAX_CHARS,
+    validate_operation, Operation, OperationKind, OperationResponse, OutboxEntry, OutboxState,
+    SessionRecord, SyncError, MEMO_MAX_CHARS,
 };
+use crate::exercise::Laterality;
+use crate::set_calc::RecordMode;
+use crate::training_session::{BestKind, PersonalBestItem};
 
 const TRAINING_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3302";
@@ -314,6 +317,43 @@ fn a_transient_failure_returns_to_pending_and_counts_an_attempt() {
     assert!(mark_transient_failure(&mut entries, OPERATION_ID));
     assert_eq!(entries[0].state, OutboxState::Pending);
     assert_eq!(entries[0].attempts, 1);
+}
+
+#[test]
+fn an_empty_personal_best_list_is_omitted_from_the_operation_response() {
+    let response = OperationResponse {
+        status: "applied".to_owned(),
+        personal_bests: Vec::new(),
+    };
+    assert_eq!(
+        serde_json::to_value(&response).expect("the response is JSON"),
+        json!({ "status": "applied" })
+    );
+    let parsed: OperationResponse =
+        serde_json::from_value(json!({ "status": "applied" })).expect("the response");
+    assert!(parsed.personal_bests.is_empty());
+}
+
+#[test]
+fn an_updated_personal_best_is_carried_in_the_operation_response() {
+    let item = PersonalBestItem {
+        exercise_id: "bench-press".to_owned(),
+        exercise_name: Some("ベンチプレス".to_owned()),
+        record_mode: RecordMode::WeightAndReps,
+        laterality: Laterality::Bilateral,
+        grip: None,
+        attachment: None,
+        kind: BestKind::MaxWeight,
+        value: 100.0,
+    };
+    let response = OperationResponse {
+        status: "applied".to_owned(),
+        personal_bests: vec![item.clone()],
+    };
+    let value = serde_json::to_value(&response).expect("the response is JSON");
+    assert_eq!(value["personal_bests"][0]["kind"], "max_weight");
+    let parsed: OperationResponse = serde_json::from_value(value).expect("the response");
+    assert_eq!(parsed.personal_bests, vec![item]);
 }
 
 #[test]

@@ -2,7 +2,7 @@
 //!
 //! 時間で記録する種目は時間、左右別の種目は左右の値、それ以外は重量と回数を
 //! 表示する。時間の入力にはストップウォッチを添える。入力は画面の状態だけを変え、
-//! 保存は `frontend/src/screens/record/exercise_view.rs` が担う。
+//! 保存は `frontend/src/screens/record/exercise_view/operations.rs` が担う。
 
 use dioxus::prelude::*;
 use warrior_core::exercise::RecordMode;
@@ -51,6 +51,8 @@ pub(super) struct SegmentInputsState {
     pub(super) mode: RecordMode,
     /// 左右の列を使うか。
     pub(super) lateral: bool,
+    /// セットを完了したか。
+    pub(super) completed: bool,
     /// 編集できないか。
     pub(super) disabled: bool,
 }
@@ -66,6 +68,7 @@ pub(super) fn SegmentInputs(
         set_id,
         mode,
         lateral,
+        completed,
         disabled,
     } = state;
     if mode == RecordMode::Time {
@@ -78,6 +81,7 @@ pub(super) fn SegmentInputs(
                     set_id,
                     side: StopwatchSide::Left,
                     field: Field::LeftDuration,
+                    completed,
                     disabled,
                     on_action,
                 }
@@ -86,6 +90,7 @@ pub(super) fn SegmentInputs(
                     set_id: right_set_id,
                     side: StopwatchSide::Right,
                     field: Field::RightDuration,
+                    completed,
                     disabled,
                     on_action,
                 }
@@ -97,6 +102,7 @@ pub(super) fn SegmentInputs(
                 set_id,
                 side: StopwatchSide::Whole,
                 field: Field::Duration,
+                completed,
                 disabled,
                 on_action,
             }
@@ -261,6 +267,7 @@ fn TimeInput(
     set_id: String,
     side: StopwatchSide,
     field: Field,
+    completed: bool,
     disabled: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
@@ -314,6 +321,7 @@ fn TimeInput(
             segment_id: stopwatch_segment_id,
             side,
             field,
+            completed,
             disabled,
             on_action,
         }

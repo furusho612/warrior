@@ -181,26 +181,23 @@ async fn adds_and_copies_a_drop_set_and_counts_the_record_sets() {
     )
     .await;
     wait_for_drop_set(&server, &drop_set).await;
-
-    browser::set_input(&driver, &segment_reps(&segments[1]), "0").await;
-    browser::wait_for_attribute(
-        &driver,
-        &format!("[data-set-id=\"{drop_set}\"]"),
-        "data-set-completed",
-        "false",
-    )
-    .await;
-    browser::set_input(&driver, &segment_reps(&segments[1]), "10").await;
-    wait_for_complete_ready(&driver, &drop_set).await;
-    browser::click(&driver, &complete_selector(&drop_set)).await;
-    browser::wait_for_attribute(
-        &driver,
-        &format!("[data-set-id=\"{drop_set}\"]"),
-        "data-set-completed",
-        "true",
-    )
-    .await;
-    wait_for_drop_set(&server, &drop_set).await;
+    assert!(
+        element_disabled(&driver, &segment_reps(&segments[1])).await,
+        "a completed set must lock its segment inputs"
+    );
+    assert!(
+        element_disabled(&driver, &complete_selector(&drop_set)).await,
+        "a completed set must not be reopened"
+    );
+    assert_eq!(
+        browser::attribute(
+            &driver,
+            &format!("[data-set-id=\"{drop_set}\"]"),
+            "data-set-completed"
+        )
+        .await,
+        "true"
+    );
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
     assert!(

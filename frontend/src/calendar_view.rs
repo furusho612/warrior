@@ -277,7 +277,7 @@ fn set_kind_label(kind: SetKind) -> &'static str {
     }
 }
 
-fn grip_label(key: &str) -> String {
+pub(crate) fn grip_label(key: &str) -> String {
     let (style, width) = key.split_once('_').unwrap_or((key, ""));
     let style = match style {
         "pronated" => text(Key::CalendarGripPronated),
@@ -298,7 +298,7 @@ fn grip_label(key: &str) -> String {
     }
 }
 
-fn attachment_label(key: &str) -> String {
+pub(crate) fn attachment_label(key: &str) -> String {
     match key {
         "wide_bar" => text(Key::CalendarAttachmentWideBar).to_owned(),
         "straight_bar" => text(Key::CalendarAttachmentStraightBar).to_owned(),

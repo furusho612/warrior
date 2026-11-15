@@ -4,14 +4,15 @@
 //! セット詳細の drawer で反動と補助の回数、RPE を入力し、保存した値を開き直して
 //! 表示することを確かめる。回数の内訳と RPE の無効値を拒否してエラーを表示し、
 //! 正しい値に直すとエラーが消えて保存されることを確かめる。別のセットを保存しても、
-//! あるセットのエラーが消えないことを確かめる。RPE を空にしたセットも保存できることを
-//! 確かめる。終了のサマリーで、補助の回数だけを除いた総重量を確かめる。
+//! あるセットのエラーが消えないことを確かめる。完了したセットの RPE は編集できない
+//! ことを確かめる。終了のサマリーで、補助の回数だけを除いた総重量を確かめる。
 
 mod support;
 
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use support::browser::{self, Browser};
+use support::record_browser::element_disabled;
 use support::record_common;
 use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
@@ -127,9 +128,11 @@ async fn records_the_breakdown_and_rpe_from_the_set_drawer() {
     browser::wait_for_absent(&driver, "[data-record-error]").await;
     browser::click(&driver, &complete_selector(&second_set)).await;
     wait_for_set(&server, &second_set, Some("10.0"), 0, 0).await;
-    clear_input(&driver, &rpe_selector()).await;
-    browser::wait_for_absent(&driver, "[data-record-error]").await;
-    wait_for_set(&server, &second_set, None, 0, 0).await;
+    browser::wait_for_present(&driver, "[data-set-drawer-locked]").await;
+    assert!(
+        element_disabled(&driver, &rpe_selector()).await,
+        "a completed set must lock the RPE input"
+    );
     browser::wait_for_attribute(&driver, "[data-sync-status]", "data-sync-status", "saved").await;
 
     finish_and_check_the_summary(&driver).await;
@@ -227,21 +230,6 @@ async fn set_ids(driver: &WebDriver) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-async fn clear_input(driver: &WebDriver, selector: &str) {
-    let length = browser::value(driver, selector).await.chars().count();
-    for _ in 0..length {
-        let input = driver
-            .find(By::Css(selector))
-            .await
-            .unwrap_or_else(|error| panic!("the input {selector} must exist: {error}"));
-        input
-            .send_keys(Key::Backspace)
-            .await
-            .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
-    }
-    browser::wait_for_value(driver, selector, "").await;
 }
 
 async fn wait_for_set(

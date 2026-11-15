@@ -9,7 +9,8 @@ use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::SetSegmentPayload;
 use worker::{Response, Result};
 
-use super::{parse_rules, set_row, CountRow, ExerciseRules};
+use super::precheck::{set_row, CountRow};
+use super::{parse_rules, ExerciseRules};
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
 use crate::stored_sets::{segment_from_row, SetSegmentRow, SET_SEGMENT_COLUMNS};

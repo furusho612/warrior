@@ -22,7 +22,7 @@ use crate::ownership;
 
 const SESSION_QUERY: &str = "SELECT id, date, started_at, memo, source_kind, routine_id, \
      program_day_id, custom_program_day_id, finished_at, duration_seconds, total_weight_kg, \
-     exercise_count, set_count, personal_bests, created_at, updated_at \
+     exercise_count, set_count, created_at, updated_at \
      FROM training_sessions WHERE id = ? AND user_id = ?";
 
 const EXERCISES_QUERY: &str = "SELECT id, training_id, exercise_id, snapshot, position, \
@@ -65,7 +65,6 @@ struct SessionRecordRow {
     total_weight_kg: Option<f64>,
     exercise_count: Option<i64>,
     set_count: Option<i64>,
-    personal_bests: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -278,11 +277,6 @@ async fn load_rows<T: serde::de::DeserializeOwned>(
 fn stored_session(row: SessionRecordRow) -> Result<SessionRecord, StoredRecordError> {
     let source_kind =
         SessionSource::parse(&row.source_kind).ok_or(StoredRecordError::UnknownSourceKind)?;
-    let personal_bests = match row.personal_bests {
-        Some(personal_bests) => serde_json::from_str(&personal_bests)
-            .map_err(|_| StoredRecordError::InvalidPersonalBests)?,
-        None => Vec::new(),
-    };
     Ok(SessionRecord {
         id: row.id,
         date: row.date,
@@ -299,7 +293,7 @@ fn stored_session(row: SessionRecordRow) -> Result<SessionRecord, StoredRecordEr
         total_weight_kg: row.total_weight_kg,
         exercise_count: to_u32(row.exercise_count),
         set_count: to_u32(row.set_count),
-        personal_bests,
+        personal_bests: Vec::new(),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -314,8 +308,6 @@ fn to_u32(value: Option<i64>) -> Option<u32> {
 enum StoredRecordError {
     /// 開始元の文字列が既知の値でない。
     UnknownSourceKind,
-    /// 自己ベストの JSON を復元できない。
-    InvalidPersonalBests,
 }
 
 fn invalid_stored_data(error: StoredRecordError) -> worker::Error {
@@ -325,8 +317,6 @@ fn invalid_stored_data(error: StoredRecordError) -> worker::Error {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::{
         stored_session, takeover_rejection, SessionRecordRow, SessionStateRow, StoredRecordError,
         TakeoverRejection,
@@ -348,7 +338,6 @@ mod tests {
             total_weight_kg: None,
             exercise_count: None,
             set_count: Some(3),
-            personal_bests: None,
             created_at: "2026-11-12T03:00:00Z".to_owned(),
             updated_at: "2026-11-12T04:00:00Z".to_owned(),
         }
@@ -370,40 +359,12 @@ mod tests {
     }
 
     #[test]
-    fn stored_personal_bests_are_parsed() {
-        let mut row = row();
-        row.personal_bests = Some(
-            json!([{
-                "exercise_id": "bench-press",
-                "record_mode": "weight_and_reps",
-                "laterality": "bilateral",
-                "kind": "max_weight",
-                "value": 100.0
-            }])
-            .to_string(),
-        );
-        let session = stored_session(row).expect("a stored session");
-        assert_eq!(session.personal_bests.len(), 1);
-        assert_eq!(session.personal_bests[0].value, 100.0);
-    }
-
-    #[test]
     fn an_unknown_source_kind_is_rejected() {
         let mut row = row();
         row.source_kind = "unknown".to_owned();
         assert_eq!(
             stored_session(row),
             Err(StoredRecordError::UnknownSourceKind)
-        );
-    }
-
-    #[test]
-    fn invalid_personal_bests_are_rejected() {
-        let mut row = row();
-        row.personal_bests = Some("not-json".to_owned());
-        assert_eq!(
-            stored_session(row),
-            Err(StoredRecordError::InvalidPersonalBests)
         );
     }
 

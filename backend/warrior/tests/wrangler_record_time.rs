@@ -711,24 +711,24 @@ fn update_the_plank_set_with_duration_only(server: &DevServer, cookie: &str) {
         vec![duration_segment(PLANK_SEGMENT_ID, 1, 120)],
     );
     let response = post(server, cookie, &again);
-    assert_eq!(response.status, 200, "{}", response.body);
-    assert_eq!(status(&response), "applied");
+    assert_eq!(response.status, 409, "{}", response.body);
     assert_eq!(
         first_row(
             server,
             &format!("SELECT completed FROM sets WHERE id = '{PLANK_SET_ID}'")
         )["completed"],
         1,
-        "a completed time set stays complete after a duration-only update"
+        "a completed time set stays complete after a rejected update"
     );
     assert_eq!(
         first_row(
             server,
             &format!("SELECT duration_seconds FROM set_segments WHERE id = '{PLANK_SEGMENT_ID}'")
         )["duration_seconds"],
-        120
+        60,
+        "a completed time set keeps the stored duration"
     );
-    assert_eq!(applied_count(server, PLANK_UPDATE_AGAIN_OPERATION_ID), 1);
+    assert_eq!(applied_count(server, PLANK_UPDATE_AGAIN_OPERATION_ID), 0);
 }
 
 fn complete_the_sets(server: &DevServer, cookie: &str) {

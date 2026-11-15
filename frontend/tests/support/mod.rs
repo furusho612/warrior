@@ -11,6 +11,7 @@ use warrior_core::training_session::SessionSource;
 use warrior_frontend::storage::{Storage, Store};
 
 pub mod exercise_tree;
+pub mod set;
 
 thread_local! {
     static SEQUENCE: Cell<u32> = const { Cell::new(0) };

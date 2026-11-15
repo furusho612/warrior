@@ -2,7 +2,7 @@
 //! スーパーセットの組の作成と解除もここから始める。
 //!
 //! 対応する要求: `REQ-REC-002`、`REQ-REC-003`、`REQ-REC-004`、`REQ-SET-001`、`REQ-SET-002`、
-//! `REQ-SET-005`。
+//! `REQ-SET-005`、`REQ-SET-010`。
 //! 種目の行とセットの行は端末内の IndexedDB に保存し、送信待ちの列を通す (ADR-002)。
 //! セットの入力は画面へすぐ反映し、端末内の保存は入力の版が変わるたびに行う。
 //! セットの完了は `SetCompleted` を 1 回発行する。前回の選択と差の計算は
@@ -517,6 +517,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
     let superset_view_id = view.record.id.clone();
     let superset = view.superset.clone();
     let rows = view.sets.clone();
+    let has_completed = rows.iter().any(SetView::completed);
 
     rsx! {
         div {
@@ -543,7 +544,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                     button {
                         class: "min-h-11 border border-line px-2 text-[11px] text-primary",
                         "data-delete-exercise": "true",
-                        disabled,
+                        disabled: disabled || has_completed,
                         onclick: move |_| on_delete.call(()),
                         "{text(Key::RecordExerciseDelete)}"
                     }
@@ -551,7 +552,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                         button {
                             class: "min-h-11 border border-primary px-2 text-[11px] font-bold text-primary",
                             "data-copy-previous": "true",
-                            disabled,
+                            disabled: disabled || has_completed,
                             onclick: move |_| on_action.call(SetAction::Copy { view_id: copy_id.clone() }),
                             "{text(Key::RecordExerciseCopy)}"
                         }

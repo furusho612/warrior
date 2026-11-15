@@ -617,7 +617,7 @@ pub fn seed_exercise_set(server: &DevServer, row_id: &str, set_id: &str, segment
     for sql in [
         format!(
             "INSERT INTO sets (id, user_id, training_exercise_id, position, kind, completed, created_at, updated_at) \
-             VALUES ('{set_id}', '{USER_ID}', '{row_id}', 1, 'normal', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+             VALUES ('{set_id}', '{USER_ID}', '{row_id}', 1, 'normal', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
         ),
         format!(
             "INSERT INTO set_segments (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, created_at, updated_at) \

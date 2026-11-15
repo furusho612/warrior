@@ -118,6 +118,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の端末から適用した同期の操作。",
     },
     Table {
+        name: "personal_bests",
+        class: TableClass::Owned,
+        reason: "利用者の種目別の自己ベスト。",
+    },
+    Table {
         name: "profiles",
         class: TableClass::Owned,
         reason: "利用者の身体情報、目的、日数、活動量の最新値。",
@@ -163,6 +168,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "supersets",
     "training_exercises",
     "applied_operations",
+    "personal_bests",
     "training_sessions",
     "profiles",
     "users",
@@ -209,6 +215,7 @@ mod tests {
             "supersets",
             "superset_members",
             "applied_operations",
+            "personal_bests",
             "oauth_states",
             "profiles",
         ] {

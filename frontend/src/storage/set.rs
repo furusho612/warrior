@@ -579,6 +579,15 @@ fn same_grip(grip: Option<GripSelection>, stored: Option<&str>) -> bool {
 fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -> bool {
     payload.len() == segments.len()
         && payload.iter().zip(segments).all(|(payload, segment)| {
+            let is_time = payload.duration_seconds.is_some()
+                || payload
+                    .left
+                    .as_ref()
+                    .is_some_and(|side| side.duration_seconds.is_some())
+                || payload
+                    .right
+                    .as_ref()
+                    .is_some_and(|side| side.duration_seconds.is_some());
             payload.segment_id == segment.id
                 && payload.position == segment.position
                 && payload.weight_kg == segment.weight_kg.unwrap_or(0.0)
@@ -594,12 +603,14 @@ fn same_segments(payload: &[SetSegmentPayload], segments: &[SetSegmentRecord]) -
                     segment.left_weight_kg,
                     segment.left_reps,
                     segment.left_duration_seconds,
+                    is_time,
                 )
                 && same_side(
                     payload.right.as_ref(),
                     segment.right_weight_kg,
                     segment.right_reps,
                     segment.right_duration_seconds,
+                    is_time,
                 )
         })
 }
@@ -609,9 +620,11 @@ fn same_side(
     weight_kg: Option<f64>,
     reps: Option<i64>,
     duration_seconds: Option<i64>,
+    is_time: bool,
 ) -> bool {
     match side {
         None => weight_kg.is_none() && reps.is_none() && duration_seconds.is_none(),
+        Some(side) if is_time => duration_seconds == side.duration_seconds.map(i64::from),
         Some(side) => {
             weight_kg == side.weight_kg
                 && reps.unwrap_or(0) == i64::from(side.reps)

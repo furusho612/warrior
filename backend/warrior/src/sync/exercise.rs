@@ -57,6 +57,18 @@ pub(super) async fn exercise_batch(
                     "resource not found",
                 )));
             }
+            if crate::training_session_exercise::has_completed_sets(
+                db,
+                user_id,
+                &payload.training_exercise_id,
+            )
+            .await?
+            {
+                return Ok(BatchOutcome::Reject(response(
+                    ErrorCode::Conflict,
+                    "the exercise has completed sets",
+                )));
+            }
         }
         ValidatedPayload::ExerciseReorder(payload) => {
             let current =

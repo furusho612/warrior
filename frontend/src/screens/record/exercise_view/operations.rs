@@ -1,8 +1,10 @@
 //! セットの入力、追加、削除、並べ替え、完了と、端末内への保存。
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::future::poll_fn;
 use std::rc::Rc;
+use std::task::{Poll, Waker};
 
 use dioxus::prelude::*;
 use warrior_core::exercise::RecordMode;
@@ -10,6 +12,8 @@ use warrior_core::rpe;
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::superset::rest_timer_starts;
+use warrior_core::sync::Operation;
+use warrior_core::training_record::SetRecordRow;
 
 use super::super::errors::{clear_set_error, set_load_error, set_set_error, RecordErrors};
 use super::super::set_events::{SetCompleted, SetCompletedEvents};
@@ -18,24 +22,77 @@ use super::super::sets::{
 };
 use super::view::ExerciseView;
 use crate::ids::{new_uuid, now_iso};
-use crate::storage;
+use crate::storage::{self, StopwatchSide};
 use crate::sync;
 use crate::text::Key;
 use crate::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
 
-/// セットの保存が同時に走らないようにする印。
+/// セットごとの保存の状態。
+#[derive(Default)]
+struct SaveStates {
+    /// 保存のループが走っているセット。
+    in_flight: HashSet<String>,
+    /// 完了の書き込みのために、保存のループを止めたセット。
+    stopped: HashSet<String>,
+    /// 保存の終わりを待つ処理。
+    waiters: HashMap<String, Vec<Waker>>,
+}
+
+/// セットごとの保存の実行と、完了のための停止を管理する印。
 #[derive(Clone, Default)]
 pub(in crate::screens::record) struct SetSaver {
-    in_flight: Rc<RefCell<HashSet<String>>>,
+    states: Rc<RefCell<SaveStates>>,
 }
 
 impl SetSaver {
     fn start(&self, set_id: &str) -> bool {
-        self.in_flight.borrow_mut().insert(set_id.to_owned())
+        let mut states = self.states.borrow_mut();
+        if states.stopped.contains(set_id) {
+            return false;
+        }
+        states.in_flight.insert(set_id.to_owned())
     }
 
     fn finish(&self, set_id: &str) {
-        self.in_flight.borrow_mut().remove(set_id);
+        let waiters = {
+            let mut states = self.states.borrow_mut();
+            states.in_flight.remove(set_id);
+            states.waiters.remove(set_id)
+        };
+        for waker in waiters.unwrap_or_default() {
+            waker.wake();
+        }
+    }
+
+    /// セットの保存を止める。実行中の保存は終わるまで走る。
+    pub(in crate::screens::record) fn stop(&self, set_id: &str) {
+        self.states.borrow_mut().stopped.insert(set_id.to_owned());
+    }
+
+    /// 止めたセットの保存を再び許す。
+    pub(in crate::screens::record) fn resume(&self, set_id: &str) {
+        self.states.borrow_mut().stopped.remove(set_id);
+    }
+
+    /// セットの保存を止めているか。
+    fn is_stopped(&self, set_id: &str) -> bool {
+        self.states.borrow().stopped.contains(set_id)
+    }
+
+    /// セットの実行中の保存が終わるまで待つ。
+    pub(in crate::screens::record) async fn wait_finished(&self, set_id: &str) {
+        poll_fn(|context| {
+            let mut states = self.states.borrow_mut();
+            if !states.in_flight.contains(set_id) {
+                return Poll::Ready(());
+            }
+            let waiters = states.waiters.entry(set_id.to_owned()).or_default();
+            if !waiters.iter().any(|waker| waker.will_wake(context.waker())) {
+                waiters.push(context.waker().clone());
+            }
+            Poll::Pending
+        })
+        .await;
     }
 }
 
@@ -343,6 +400,9 @@ async fn save_set_loop(
         return;
     };
     while let Some(set) = find_set(views, &set_id) {
+        if saver.is_stopped(&set_id) || set.completed() {
+            break;
+        }
         if let Some(key) = set.validation_error(lateral) {
             set_set_error(error, &set_id, key);
             break;
@@ -364,6 +424,10 @@ async fn save_set_loop(
             };
         let result = match storage::current().await {
             Ok(storage) => {
+                if saving_stopped(views, &saver, &set_id) {
+                    saver.finish(&set_id);
+                    return;
+                }
                 storage
                     .save_set_update(&rows.set, &rows.segments, &operation)
                     .await
@@ -376,17 +440,19 @@ async fn save_set_loop(
         }
         clear_set_error(error, &set_id);
         sync::flush_in_background();
+        if saving_stopped(views, &saver, &set_id) {
+            saver.finish(&set_id);
+            return;
+        }
         match find_set(views, &set_id) {
-            None => {
-                saver.finish(&set_id);
-                return;
-            }
             Some(latest) if latest.revision == revision => {
                 // 版を確かめてから保存の印を外すまでの間にも入力が届く。
                 // 印を外した後にもう一度確かめ、変わっていれば自分で続ける。
                 saver.finish(&set_id);
+                if saving_stopped(views, &saver, &set_id) {
+                    return;
+                }
                 match find_set(views, &set_id) {
-                    None => return,
                     Some(latest) if latest.revision == revision => return,
                     _ => {
                         if !saver.start(&set_id) {
@@ -395,7 +461,7 @@ async fn save_set_loop(
                     }
                 }
             }
-            Some(_) => {}
+            _ => {}
         }
     }
     saver.finish(&set_id);
@@ -494,11 +560,15 @@ async fn copy_sets(
 }
 
 /// セットの完了の状態を変え、完了したらイベントを 1 回発行する。
+///
+/// 完了の書き込みは、そのセットの実行中の保存が終わってから行う。完了の後ろに
+/// 値の更新を積むと、サーバーが完了済みのセットの更新を 409 で拒否するためである。
 async fn complete_set(
     training_id: String,
     set_id: String,
     views: Signal<Vec<ExerciseView>>,
     error: Signal<RecordErrors>,
+    saver: SetSaver,
     completed_events: SetCompletedEvents,
 ) {
     let Some((view, set)) = find_view_and_set(views, &set_id) else {
@@ -527,47 +597,36 @@ async fn complete_set(
             return;
         }
     };
+    if completed {
+        // 保存のループを止める前に画面の印を付けて、待つ間の入力を閉じる。
+        update_completed(views, &set_id, true);
+    }
     let storage = match storage::current().await {
         Ok(storage) => storage,
         Err(_) => {
-            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
+            abort_completion(views, &set_id, completed, &saver, error);
             return;
         }
     };
-    // 完了の操作より先に、いまの値の更新を並べる。完了したセットは値を持つ。
     if completed {
         let values = set.values(lateral, view.snapshot.record_mode);
-        let segments = set
-            .segments
-            .iter()
-            .map(|segment| segment.record.clone())
-            .collect::<Vec<_>>();
-        let (rows, update_operation) =
-            match training_set::update(&training_id, &set.record, &segments, &values) {
-                Ok(rows) => rows,
-                Err(_) => {
-                    set_set_error(error, &set_id, Key::RecordSetSaveFailed);
-                    return;
-                }
-            };
-        if storage
-            .save_set_update(&rows.set, &rows.segments, &update_operation)
+        if save_completed_set(&storage, &set, &values, &updated, &operation, &saver)
             .await
             .is_err()
         {
-            set_set_error(error, &set_id, Key::RecordSetSaveFailed);
+            abort_completion(views, &set_id, completed, &saver, error);
             return;
         }
-    }
-    update_completed(views, &set_id, completed);
-    if storage
-        .save_set_complete(&updated, &operation)
-        .await
-        .is_err()
-    {
-        update_completed(views, &set_id, !completed);
-        set_set_error(error, &set_id, Key::RecordSetSaveFailed);
-        return;
+    } else {
+        update_completed(views, &set_id, false);
+        if storage
+            .save_set_complete(&updated, &operation)
+            .await
+            .is_err()
+        {
+            abort_completion(views, &set_id, completed, &saver, error);
+            return;
+        }
     }
     clear_set_error(error, &set_id);
     if completed {
@@ -583,8 +642,84 @@ async fn complete_set(
             set_id,
             starts_rest_timer,
         });
+    } else {
+        saver.resume(&set_id);
     }
     sync::flush_in_background();
+}
+
+/// 完了するセットの値の更新と完了を、保存の終わりを待ってこの順に保存する。
+///
+/// 時間で記録するセットのストップウォッチは、完了の前に止めて開始時刻を消す。
+/// 完了したセットは編集できないため、開始時刻を残すと計測中の表示のまま戻せなくなる。
+async fn save_completed_set(
+    storage: &storage::Storage,
+    set: &SetView,
+    values: &SetValues,
+    updated: &SetRecordRow,
+    operation: &Operation,
+    saver: &SetSaver,
+) -> Result<(), storage::StorageError> {
+    stop_saving_for_completion(saver, &set.record.id).await;
+    save_completed_values(storage, &operation.training_id, set, values).await?;
+    if values.mode == RecordMode::Time {
+        clear_set_stopwatch(storage, &set.record.id).await?;
+    }
+    storage.save_set_complete(updated, operation).await
+}
+
+/// セットの全 side のストップウォッチの開始時刻を消す。
+async fn clear_set_stopwatch(
+    storage: &storage::Storage,
+    set_id: &str,
+) -> Result<(), storage::StorageError> {
+    for side in [
+        StopwatchSide::Whole,
+        StopwatchSide::Left,
+        StopwatchSide::Right,
+    ] {
+        storage.clear_stopwatch_started_at(set_id, side).await?;
+    }
+    Ok(())
+}
+
+/// セットの保存のループを止め、実行中の保存が終わるまで待つ。
+async fn stop_saving_for_completion(saver: &SetSaver, set_id: &str) {
+    saver.stop(set_id);
+    saver.wait_finished(set_id).await;
+}
+
+/// 完了するセットの値の更新を端末内へ保存する。
+async fn save_completed_values(
+    storage: &storage::Storage,
+    training_id: &str,
+    set: &SetView,
+    values: &SetValues,
+) -> Result<(), storage::StorageError> {
+    let segments = set
+        .segments
+        .iter()
+        .map(|segment| segment.record.clone())
+        .collect::<Vec<_>>();
+    let (rows, operation) = training_set::update(training_id, &set.record, &segments, values)?;
+    storage
+        .save_set_update(&rows.set, &rows.segments, &operation)
+        .await
+}
+
+/// 完了を書き込めなかったときに、画面の印と保存の停止を戻す。
+fn abort_completion(
+    views: Signal<Vec<ExerciseView>>,
+    set_id: &str,
+    completed: bool,
+    saver: &SetSaver,
+    error: Signal<RecordErrors>,
+) {
+    update_completed(views, set_id, !completed);
+    if completed {
+        saver.resume(set_id);
+    }
+    set_set_error(error, set_id, Key::RecordSetSaveFailed);
 }
 
 fn update_completed(mut views: Signal<Vec<ExerciseView>>, set_id: &str, completed: bool) {
@@ -751,6 +886,11 @@ fn find_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<SetView> {
         .cloned()
 }
 
+/// 保存を続けない状態か。止めたセット、完了したセット、画面から消えたセット。
+fn saving_stopped(views: Signal<Vec<ExerciseView>>, saver: &SetSaver, set_id: &str) -> bool {
+    saver.is_stopped(set_id) || find_set(views, set_id).is_none_or(|set| set.completed())
+}
+
 fn settings_for_set(views: Signal<Vec<ExerciseView>>, set_id: &str) -> Option<(RecordMode, bool)> {
     (views)()
         .iter()
@@ -828,6 +968,7 @@ pub(in crate::screens::record) fn dispatch(
                 set_id,
                 views,
                 error,
+                saver,
                 completed_events,
             ));
         }
@@ -839,3 +980,6 @@ pub(in crate::screens::record) fn dispatch(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

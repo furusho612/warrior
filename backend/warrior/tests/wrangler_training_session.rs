@@ -118,7 +118,8 @@ fn a_past_session_limits_the_updated_personal_bests() {
     ];
     assert_items(&summary.personal_bests, &updated);
     check_summary_endpoint(&server, &cookie, TRAINING_ID, &updated);
-    assert_items(&stored_bests(&server, TRAINING_ID), &session_bests());
+    check_stored_bests(&server, TRAINING_ID, &updated);
+    check_past_summary(&server, &cookie);
 }
 
 fn start_server(port: u16) -> DevServer {
@@ -217,6 +218,35 @@ fn check_summary_endpoint(
     let summary: TrainingSessionSummary =
         serde_json::from_str(&response.body).expect("the summary response is a summary");
     assert_items(&summary.personal_bests, expected);
+}
+
+fn check_past_summary(server: &DevServer, cookie: &str) {
+    let response = get(
+        server,
+        cookie,
+        &format!("/api/trainings/{PAST_TRAINING_ID}/summary"),
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let summary: TrainingSessionSummary =
+        serde_json::from_str(&response.body).expect("the past summary is a summary");
+    assert_eq!(summary.personal_bests.len(), 3);
+    let mut max_weights = summary
+        .personal_bests
+        .iter()
+        .filter(|item| item.kind == BestKind::MaxWeight)
+        .collect::<Vec<_>>();
+    max_weights.sort_by(|left, right| left.grip.cmp(&right.grip));
+    assert_eq!(max_weights[0].grip.as_deref(), Some(BENCH_GRIP_KEY));
+    assert_eq!(max_weights[0].value, 105.0);
+    assert_eq!(max_weights[1].grip.as_deref(), Some("supinated_medium"));
+    assert_eq!(max_weights[1].value, 999.0);
+    let total = summary
+        .personal_bests
+        .iter()
+        .find(|item| item.kind == BestKind::TotalWeight)
+        .expect("the past total weight");
+    assert_eq!(total.value, 2_000.0);
+    assert_eq!(total.grip.as_deref(), Some(BENCH_GRIP_KEY));
 }
 
 fn check_replayed_finish(server: &DevServer, cookie: &str, summary: &TrainingSessionSummary) {
@@ -361,21 +391,30 @@ fn seed_past_session(server: &DevServer) {
     let finished_at = datetime::format_utc(now_seconds() - 86_400);
     let started_at = datetime::format_utc(now_seconds() - 90_000);
     let date = datetime::japan_date_from_utc(&started_at).expect("a Japan date");
-    let personal_bests = json!([
-        session_item(BENCH_EXERCISE_ID, BestKind::MaxWeight, 105.0),
-        session_item(BENCH_EXERCISE_ID, BestKind::TotalWeight, 2_000.0),
-        different_grip_best(BENCH_EXERCISE_ID, "supinated_medium", 999.0),
-    ]);
     server
         .execute_d1_json(&format!(
             "INSERT INTO training_sessions \
              (id, user_id, date, started_at, memo, finished_at, duration_seconds, total_weight_kg, \
-             exercise_count, set_count, personal_bests, created_at, updated_at) \
+             exercise_count, set_count, created_at, updated_at) \
              VALUES ('{PAST_TRAINING_ID}', '{USER_ID}', '{date}', '{started_at}', '', \
-             '{finished_at}', 3600, 2000.0, 1, 2, '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-            personal_bests.to_string().replace('\'', "''")
+             '{finished_at}', 3600, 2000.0, 1, 2, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
         ))
         .expect("the past session must be seeded");
+    for (kind, value, grip) in [
+        ("max_weight", 105.0, BENCH_GRIP_KEY),
+        ("total_weight", 2_000.0, BENCH_GRIP_KEY),
+        ("max_weight", 999.0, "supinated_medium"),
+    ] {
+        server
+            .execute_d1_json(&format!(
+                "INSERT INTO personal_bests \
+                 (user_id, exercise_id, grip, attachment, kind, value, achieved_on, training_id, \
+                 created_at, updated_at) \
+                 VALUES ('{USER_ID}', '{BENCH_EXERCISE_ID}', '{grip}', '', '{kind}', {value}, \
+                 '{date}', '{PAST_TRAINING_ID}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+            ))
+            .expect("the past personal bests must be seeded");
+    }
 }
 
 fn seed_sets(server: &DevServer, training_id: &str) {
@@ -507,13 +546,6 @@ fn session_item(exercise_id: &str, kind: BestKind, value: f64) -> PersonalBestIt
     }
 }
 
-fn different_grip_best(exercise_id: &str, grip: &str, value: f64) -> PersonalBestItem {
-    PersonalBestItem {
-        grip: Some(grip.to_owned()),
-        ..session_item(exercise_id, BestKind::MaxWeight, value)
-    }
-}
-
 fn assert_items(actual: &[PersonalBestItem], expected: &[PersonalBestItem]) {
     assert_eq!(actual.len(), expected.len(), "{actual:?}");
     for (item, expected) in actual.iter().zip(expected) {
@@ -535,24 +567,43 @@ fn assert_items(actual: &[PersonalBestItem], expected: &[PersonalBestItem]) {
 }
 
 fn check_stored_bests(server: &DevServer, training_id: &str, expected: &[PersonalBestItem]) {
-    assert_items(&stored_bests(server, training_id), expected);
+    let rows = personal_best_rows(server, training_id);
+    assert_eq!(rows.len(), expected.len(), "{rows:?}");
+    for item in expected {
+        let row = rows
+            .iter()
+            .find(|row| {
+                row["exercise_id"] == item.exercise_id
+                    && row["kind"] == item.kind.as_str()
+                    && row["grip"].as_str().unwrap_or_default()
+                        == item.grip.as_deref().unwrap_or_default()
+                    && row["attachment"].as_str().unwrap_or_default()
+                        == item.attachment.as_deref().unwrap_or_default()
+            })
+            .unwrap_or_else(|| panic!("the personal best {item:?} must exist: {rows:?}"));
+        assert!((row["value"].as_f64().expect("a value") - item.value).abs() < 1e-9);
+    }
 }
 
-fn stored_bests(server: &DevServer, training_id: &str) -> Vec<PersonalBestItem> {
-    let row = summary_row(server, training_id);
-    serde_json::from_str(
-        row["personal_bests"]
-            .as_str()
-            .expect("stored personal bests"),
-    )
-    .expect("the stored personal bests are JSON")
+fn personal_best_rows(server: &DevServer, training_id: &str) -> Vec<Value> {
+    server
+        .execute_d1_json(&format!(
+            "SELECT exercise_id, grip, attachment, kind, value, achieved_on, training_id \
+             FROM personal_bests WHERE training_id = '{training_id}' ORDER BY kind, exercise_id"
+        ))
+        .expect("the personal bests must be readable")
+        .get(0)
+        .and_then(|entry| entry.get("results"))
+        .and_then(Value::as_array)
+        .cloned()
+        .expect("the personal best rows")
 }
 
 fn summary_row(server: &DevServer, training_id: &str) -> Value {
     first_row(
         server,
         &format!(
-            "SELECT finished_at, duration_seconds, total_weight_kg, exercise_count, set_count, personal_bests \
+            "SELECT finished_at, duration_seconds, total_weight_kg, exercise_count, set_count \
              FROM training_sessions WHERE id = '{training_id}'"
         ),
     )

@@ -214,22 +214,34 @@ pub async fn click_text(driver: &WebDriver, label: &str) {
 }
 
 /// セレクタの要素を押す。
+///
+/// 前回の記録や自己ベストの読み込みで要素が動くと、押す位置が別の要素に当たる。
+/// 要素を取り直して、押せるようになるまで繰り返す。
 pub async fn click(driver: &WebDriver, selector: &str) {
-    driver
-        .execute(
-            "document.querySelector(arguments[0]).scrollIntoView({block: 'center', inline: 'center'});",
-            vec![serde_json::json!(selector)],
-        )
-        .await
-        .ok();
-    let element = driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
-    element
-        .click()
-        .await
-        .unwrap_or_else(|error| panic!("the element {selector} must be clickable: {error}"));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        driver
+            .execute(
+                "document.querySelector(arguments[0]).scrollIntoView({block: 'center', inline: 'center'});",
+                vec![serde_json::json!(selector)],
+            )
+            .await
+            .ok();
+        let element = driver
+            .find(By::Css(selector))
+            .await
+            .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
+        match element.click().await {
+            Ok(()) => return,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the element {selector} must be clickable: {error}"
+                );
+                std::thread::sleep(POLL_INTERVAL);
+            }
+        }
+    }
 }
 
 /// 数値の入力要素を空にして、値を入れる。

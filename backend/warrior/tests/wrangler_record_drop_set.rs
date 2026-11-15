@@ -69,11 +69,12 @@ fn drop_sets_reject_the_first_and_warmup_positions_and_keep_their_segments() {
     reject_changing_the_previous_set_to_a_warmup(&server, &cookie);
     reject_reordering_the_drop_set_to_the_first_position(&server, &cookie);
     accept_the_current_order(&server, &cookie);
+    reject_deleting_the_preceding_set(&server, &cookie);
     reject_incomplete_drop_set_completion(&server, &cookie);
     complete_the_sets(&server, &cookie);
     reject_an_invalid_completed_update(&server, &cookie);
     finish_and_check_the_summary(&server, &cookie);
-    delete_the_preceding_set_last(&server, &cookie);
+    reject_deleting_the_completed_sets(&server, &cookie);
 }
 
 fn reject_the_first_drop_set(server: &DevServer, cookie: &str) {
@@ -342,7 +343,7 @@ fn reject_an_invalid_completed_update(server: &DevServer, cookie: &str) {
         ],
     );
     let response = post(server, cookie, &update);
-    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(response.status, 409, "{}", response.body);
     assert_eq!(
         applied_count(server, INVALID_COMPLETED_UPDATE_OPERATION_ID),
         0
@@ -394,7 +395,7 @@ fn finish_and_check_the_summary(server: &DevServer, cookie: &str) {
     assert_eq!(summary["total_weight_kg"].as_f64(), Some(1_780.0));
 }
 
-fn delete_the_preceding_set_last(server: &DevServer, cookie: &str) {
+fn reject_deleting_the_preceding_set(server: &DevServer, cookie: &str) {
     let blocked = delete_operation(
         DELETE_NORMAL_BEFORE_DROP_OPERATION_ID,
         TRAINING_ID,
@@ -407,14 +408,17 @@ fn delete_the_preceding_set_last(server: &DevServer, cookie: &str) {
         0
     );
     assert_eq!(count(server, "sets", NORMAL_SET_ID), 1);
+}
 
-    let drop = delete_operation(DELETE_DROP_OPERATION_ID, TRAINING_ID, DROP_SET_ID);
-    let response = post(server, cookie, &drop);
-    assert_eq!(response.status, 200, "{}", response.body);
-    assert_eq!(count(server, "sets", DROP_SET_ID), 0);
-
-    let normal = delete_operation(DELETE_NORMAL_OPERATION_ID, TRAINING_ID, NORMAL_SET_ID);
-    let response = post(server, cookie, &normal);
-    assert_eq!(response.status, 200, "{}", response.body);
-    assert_eq!(count(server, "sets", NORMAL_SET_ID), 0);
+fn reject_deleting_the_completed_sets(server: &DevServer, cookie: &str) {
+    for (operation_id, set_id) in [
+        (DELETE_DROP_OPERATION_ID, DROP_SET_ID),
+        (DELETE_NORMAL_OPERATION_ID, NORMAL_SET_ID),
+    ] {
+        let delete = delete_operation(operation_id, TRAINING_ID, set_id);
+        let response = post(server, cookie, &delete);
+        assert_eq!(response.status, 409, "{}", response.body);
+        assert_eq!(applied_count(server, operation_id), 0);
+        assert_eq!(count(server, "sets", set_id), 1);
+    }
 }

@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 use warrior_core::training_session::{BestKind, PersonalBestItem, TrainingSessionSummary};
 
+use crate::calendar_view::{attachment_label, grip_label};
 use crate::text::{text, Key};
 use crate::training_session;
 
@@ -123,6 +124,7 @@ fn PersonalBestRow(item: PersonalBestItem) -> Element {
     let label = best_label(item.kind);
     let value = best_value(&item);
     let name = item.exercise_name.clone();
+    let equipment = best_equipment(&item);
     rsx! {
         li {
             class: "flex min-h-11 items-center gap-2 border-b border-line",
@@ -136,6 +138,13 @@ fn PersonalBestRow(item: PersonalBestItem) -> Element {
                 }
             } else {
                 span { class: "min-w-0 flex-1" }
+            }
+            if let Some(equipment) = equipment {
+                span {
+                    class: "shrink-0 text-[10px] text-text-sub",
+                    "data-personal-best-equipment": "true",
+                    "{equipment}"
+                }
             }
             span {
                 class: "shrink-0 text-[11px] text-text-sub",
@@ -151,7 +160,7 @@ fn PersonalBestRow(item: PersonalBestItem) -> Element {
     }
 }
 
-fn best_label(kind: BestKind) -> &'static str {
+pub(crate) fn best_label(kind: BestKind) -> &'static str {
     match kind {
         BestKind::MaxWeight => text(Key::SummaryBestMaxWeight),
         BestKind::EstimatedOneRepMax => text(Key::SummaryBestEstimatedOneRepMax),
@@ -160,13 +169,25 @@ fn best_label(kind: BestKind) -> &'static str {
     }
 }
 
-fn best_value(item: &PersonalBestItem) -> String {
+pub(crate) fn best_value(item: &PersonalBestItem) -> String {
     match item.kind {
         BestKind::LongestDuration => format_duration(item.value as i64),
         BestKind::EstimatedOneRepMax | BestKind::TotalWeight => {
             format!("{:.1} kg", item.value)
         }
         BestKind::MaxWeight => format!("{} kg", item.value),
+    }
+}
+
+/// 自己ベストのグリップとアタッチメントの表示。
+pub(crate) fn best_equipment(item: &PersonalBestItem) -> Option<String> {
+    let grip = item.grip.as_deref().map(grip_label);
+    let attachment = item.attachment.as_deref().map(attachment_label);
+    match (grip, attachment) {
+        (Some(grip), Some(attachment)) => Some(format!("{grip} / {attachment}")),
+        (Some(grip), None) => Some(grip),
+        (None, Some(attachment)) => Some(attachment),
+        (None, None) => None,
     }
 }
 
@@ -191,7 +212,7 @@ mod tests {
     use warrior_core::training_session::{BestKind, PersonalBestItem};
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use super::{best_label, best_value, format_duration};
+    use super::{best_equipment, best_label, best_value, format_duration};
 
     #[wasm_bindgen_test]
     fn format_duration_uses_hours_minutes_and_seconds() {
@@ -226,6 +247,23 @@ mod tests {
             best_value(&item(BestKind::LongestDuration, 90.0)),
             "1分30秒"
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn personal_bests_show_the_grip_and_the_attachment() {
+        let mut grip = item(BestKind::MaxWeight, 100.0);
+        grip.grip = Some("pronated_medium".to_owned());
+        assert_eq!(best_equipment(&grip).as_deref(), Some("順手 ミディアム"));
+
+        let mut attachment = item(BestKind::MaxWeight, 80.0);
+        attachment.grip = Some("pronated".to_owned());
+        attachment.attachment = Some("wide_bar".to_owned());
+        assert_eq!(
+            best_equipment(&attachment).as_deref(),
+            Some("順手 / ワイドバー")
+        );
+
+        assert_eq!(best_equipment(&item(BestKind::TotalWeight, 500.0)), None);
     }
 
     fn item(kind: BestKind, value: f64) -> PersonalBestItem {

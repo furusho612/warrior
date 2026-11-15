@@ -15,6 +15,7 @@ pub mod ids;
 pub mod jst;
 pub mod nutrition;
 pub mod ownership;
+pub mod personal_best;
 pub mod previous;
 pub mod profile;
 pub mod pwa;

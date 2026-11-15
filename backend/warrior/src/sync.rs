@@ -9,9 +9,10 @@ use warrior_core::datetime;
 use warrior_core::ownership::{decide_write, WriteDecision};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
-    validate_operation, Operation, OperationKind, SessionCreatePayload, SessionUpdatePayload,
-    ValidatedPayload,
+    validate_operation, Operation, OperationKind, OperationResponse, SessionCreatePayload,
+    SessionUpdatePayload, ValidatedPayload,
 };
+use warrior_core::training_session::PersonalBestItem;
 use worker::d1::D1Result;
 use worker::{console_error, Request, Response, Result, RouteContext};
 
@@ -77,7 +78,10 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
 
     if let Some(existing) = applied(&db, &operation.operation_id).await? {
         if existing.user_id == authenticated.id && existing.training_id == operation.training_id {
-            return status_response("already_applied");
+            let bests =
+                crate::set::personal_bests_after_completion(&db, &authenticated.id, &validated)
+                    .await;
+            return applied_response("already_applied", bests.held);
         }
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     }
@@ -156,7 +160,13 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
                 if existing.user_id == authenticated.id
                     && existing.training_id == operation.training_id
                 {
-                    return status_response("already_applied");
+                    let bests = crate::set::personal_bests_after_completion(
+                        &db,
+                        &authenticated.id,
+                        &validated,
+                    )
+                    .await;
+                    return applied_response("already_applied", bests.held);
                 }
             }
             if is_superset_member_conflict(&error) {
@@ -179,7 +189,9 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         return reject_or_reapply(&db, &authenticated.id, &operation, &validated, &now).await;
     }
 
-    status_response("applied")
+    let bests =
+        crate::set::personal_bests_after_completion(&db, &authenticated.id, &validated).await;
+    applied_response("applied", bests.updated)
 }
 
 /// スーパーセットの種目の一意制約に違反したか。
@@ -580,6 +592,13 @@ fn update_statement(
 
 fn status_response(status: &str) -> Result<Response> {
     Response::from_json(&serde_json::json!({ "status": status }))
+}
+
+fn applied_response(status: &str, personal_bests: Vec<PersonalBestItem>) -> Result<Response> {
+    Response::from_json(&OperationResponse {
+        status: status.to_owned(),
+        personal_bests,
+    })
 }
 
 #[cfg(test)]

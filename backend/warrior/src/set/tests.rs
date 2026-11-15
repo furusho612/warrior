@@ -12,9 +12,8 @@ use warrior_core::sync::{
 };
 
 use super::bindings::{applied_exists, ownership_condition_placeholder, segment_bindings};
-use super::{
-    delete_set_statement, same_set_ids, set_statements, update_set_statement, ExerciseOwnership,
-};
+use super::precheck::same_set_ids;
+use super::{delete_set_statement, set_statements, update_set_statement, ExerciseOwnership};
 
 fn weight_mode() -> RecordMode {
     RecordMode::WeightAndReps

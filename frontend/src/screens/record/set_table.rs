@@ -9,6 +9,7 @@ use warrior_core::exercise::{Laterality, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 
+use super::one_rep_max::OneRepMaxBadge;
 use super::set_inputs::{SegmentInputs, SegmentInputsState};
 use super::sets::{
     detail_open_label, is_lateral, kind_change_allowed, move_candidate_valid,
@@ -44,6 +45,7 @@ pub(super) fn SetTable(state: SetTableState, on_action: EventHandler<SetAction>)
         .map(|row| row.segments.len())
         .sum::<usize>();
     let lateral = is_lateral(state.laterality, state.mode);
+    let has_completed = state.rows.iter().any(SetView::completed);
     let rows = state.rows;
     let disabled = state.disabled;
     rsx! {
@@ -95,6 +97,13 @@ pub(super) fn SetTable(state: SetTableState, on_action: EventHandler<SetAction>)
             }
             if disabled {
                 p { class: "text-[11px] text-text-sub", "{text(Key::RecordViewOnly)}" }
+            }
+            if has_completed {
+                p {
+                    class: "text-[11px] text-text-sub",
+                    "data-set-completed-locked": "true",
+                    "{text(Key::RecordSetCompletedLocked)}"
+                }
             }
         }
     }
@@ -174,6 +183,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
         completed,
     };
     let disabled = row.disabled;
+    let locked = disabled || completed;
     let confirm_set_id = set_id.clone();
     rsx! {
         div {
@@ -196,7 +206,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                 }
                 KindSelect {
                     kind,
-                    disabled,
+                    disabled: locked,
                     drop_allowed: row.drop_allowed,
                     warmup_allowed: row.warmup_allowed,
                     on_kind,
@@ -212,13 +222,15 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                                 set_id: set_id.clone(),
                                 mode: row.mode,
                                 lateral: row.lateral,
-                                disabled,
+                                completed,
+                                disabled: locked,
                             },
                             on_action,
                         }
                     }
                 }
                 RowButtons { buttons, disabled, on_action }
+                OneRepMaxBadge { value: row.set.one_rep_max(row.mode, row.lateral) }
             }
             if !can_delete {
                 p {
@@ -266,7 +278,8 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                         segment_index,
                         mode: row.mode,
                         lateral: row.lateral,
-                        disabled,
+                        completed,
+                        disabled: locked,
                     },
                     on_action,
                 }
@@ -275,7 +288,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                 button {
                     class: "min-h-9 border-t border-line px-2 text-left text-[10px] font-bold text-primary",
                     "data-add-segment": "true",
-                    disabled,
+                    disabled: locked,
                     onclick: move |_| on_action.call(SetAction::AddSegment { set_id: add_segment_id.clone() }),
                     "{text(Key::RecordSetSegmentAdd)}"
                 }
@@ -373,7 +386,7 @@ fn RowButtons(
             class: "min-h-8 shrink-0 border border-primary px-1 text-[10px] font-bold text-primary",
             "data-set-complete": "true",
             "data-set-complete-ready": if ready { "true" } else { "false" },
-            disabled: disabled || (!completed && !ready),
+            disabled: disabled || completed || !ready,
             onclick: move |_| on_action.call(SetAction::Complete { set_id: complete_id.clone() }),
             if completed {
                 "{text(Key::RecordSetCompleted)}"
@@ -386,7 +399,7 @@ fn RowButtons(
                 button {
                     class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
                     "data-delete-segment": "true",
-                    disabled: disabled || !can_delete_first_segment,
+                    disabled: disabled || completed || !can_delete_first_segment,
                     onclick: move |_| on_action.call(SetAction::DeleteSegment {
                         set_id: delete_segment_set_id.clone(),
                         segment_id: segment_id.clone(),
@@ -398,7 +411,7 @@ fn RowButtons(
         button {
             class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
             "data-delete-set": "true",
-            disabled: disabled || !can_delete,
+            disabled: disabled || completed || !can_delete,
             onclick: move |_| on_action.call(SetAction::Delete { set_id: delete_id.clone() }),
             "{text(Key::RecordSetDelete)}"
         }
@@ -418,6 +431,8 @@ struct SegmentRowState {
     mode: RecordMode,
     /// 左右の列を使うか。
     lateral: bool,
+    /// セットを完了したか。
+    completed: bool,
     /// 編集できないか。
     disabled: bool,
 }
@@ -440,6 +455,7 @@ fn SegmentRow(row: SegmentRowState, on_action: EventHandler<SetAction>) -> Eleme
                     set_id: row.set_id,
                     mode: row.mode,
                     lateral: row.lateral,
+                    completed: row.completed,
                     disabled: row.disabled,
                 },
                 on_action,

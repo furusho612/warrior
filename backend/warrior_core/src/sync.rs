@@ -105,6 +105,16 @@ pub struct Operation {
     pub payload: serde_json::Value,
 }
 
+/// 同期の操作の応答。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperationResponse {
+    /// 操作の適用の結果。
+    pub status: String,
+    /// セットの完了で更新した自己ベスト。他の操作と、更新が無いときは応答に含めない。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub personal_bests: Vec<PersonalBestItem>,
+}
+
 /// トレーニングの作成の本文。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -375,10 +385,9 @@ pub struct SessionRecord {
     /// トレーニングのセット数。
     #[serde(default)]
     pub set_count: Option<u32>,
-    /// 終了時に更新した自己ベスト。
+    /// 記録中の端末が完了の応答で受け取った自己ベスト。
     ///
-    /// サーバーの `training_sessions.personal_bests` はセッションのベスト全部を持つため、
-    /// 端末のこの値とは意味が異なる。端末は応答で受け取った更新分だけを保存する。
+    /// サーバーの `personal_bests` の表が正本であり、この項目は記録画面の表示に使う。
     #[serde(default)]
     pub personal_bests: Vec<PersonalBestItem>,
     /// 作成した時刻。

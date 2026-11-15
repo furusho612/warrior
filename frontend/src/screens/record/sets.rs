@@ -1,7 +1,7 @@
 //! 記録のセットの表と、セットの行の状態。
 //!
 //! セットの行は端末内の保存の行と入力を一緒に持つ。入力は画面へすぐ反映し、
-//! 保存は `frontend/src/screens/record/exercise_view.rs` が端末内の保存へ送る。
+//! 保存は `frontend/src/screens/record/exercise_view/operations.rs` が端末内の保存へ送る。
 //! セットの表は `frontend/src/screens/record/set_table.rs` が描く。
 //! セットの集計は `warrior_core::set_calc` の `SetRecord` に変換して行う。
 
@@ -11,7 +11,7 @@ use warrior_core::exercise::{GripSelection, Laterality, RecordMode};
 use warrior_core::previous::PreviousSet;
 use warrior_core::profile::bodyweight_set_weight;
 use warrior_core::rpe;
-use warrior_core::set_calc::{BestKey, SetKind, SetRecord, SetSegment, SideValue};
+use warrior_core::set_calc::{BestKey, OneRepMax, SetKind, SetRecord, SetSegment, SideValue};
 use warrior_core::set_rules;
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 
@@ -209,13 +209,18 @@ impl SegmentView {
                 reps: 0,
                 momentum_reps,
                 assisted_reps,
-                left: Some(self.to_side(mode, body_weight_kg, &self.left_weight, &self.left_reps)),
+                left: Some(self.to_side(
+                    mode,
+                    body_weight_kg,
+                    &self.left_weight,
+                    &self.left_reps,
+                )?),
                 right: Some(self.to_side(
                     mode,
                     body_weight_kg,
                     &self.right_weight,
                     &self.right_reps,
-                )),
+                )?),
                 duration_seconds: None,
             });
         }
@@ -289,22 +294,22 @@ impl SegmentView {
         body_weight_kg: Option<f64>,
         weight: &str,
         reps: &str,
-    ) -> SideValue {
-        let weight = bodyweight_weight(mode, body_weight_kg, parse_number(weight).unwrap_or(0.0));
-        SideValue {
+    ) -> Option<SideValue> {
+        let weight = parse_number(weight)?;
+        let reps = parse_count(reps)?;
+        let weight = bodyweight_weight(mode, body_weight_kg, weight);
+        Some(SideValue {
             weight_kg: weight,
-            reps: parse_count(reps).unwrap_or(0),
+            reps,
             duration_seconds: None,
-        }
+        })
     }
 }
 
 /// 種目の左右の指定から、左右の列を使うか決める。
 ///
 /// 時間で記録する種目も左右別の入力を持つ。
-pub(super) fn is_lateral(laterality: Laterality, _mode: RecordMode) -> bool {
-    laterality == Laterality::Unilateral
-}
+pub(super) use warrior_core::exercise::is_lateral;
 
 /// 重量種目は入力した重量を、自重種目は記録した体重に加重を足した値を返す。
 fn bodyweight_weight(mode: RecordMode, body_weight_kg: Option<f64>, weight: f64) -> f64 {
@@ -382,6 +387,17 @@ impl SetView {
             rpe: rpe::parse(&self.rpe).ok().flatten(),
             grip: grip_selection(&self.record),
         }
+    }
+
+    /// このセットの推定 1RM。時間で記録する種目、ウォームアップ、重量か回数が空のときは None。
+    pub(super) fn one_rep_max(&self, mode: RecordMode, lateral: bool) -> Option<OneRepMax> {
+        if mode == RecordMode::Time || self.kind() == SetKind::Warmup {
+            return None;
+        }
+        self.segments
+            .first()?
+            .to_set_segment(mode, self.record.body_weight_kg, lateral)?
+            .one_rep_max()
     }
 
     /// 入力の誤りを返す。RPE と回数の内訳を確かめる。

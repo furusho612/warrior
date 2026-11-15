@@ -439,6 +439,30 @@ pub fn create_statements(
     )])
 }
 
+#[derive(Debug, Deserialize)]
+struct CompletedSetCountRow {
+    count: i64,
+}
+
+/// 種目に完了済みのセットがあるかを返す。
+pub async fn has_completed_sets(
+    db: &Db,
+    user_id: &str,
+    training_exercise_id: &str,
+) -> Result<bool> {
+    let row = db
+        .first::<CompletedSetCountRow>(&SqlStatement::new(
+            "SELECT COUNT(*) AS count FROM sets \
+             WHERE user_id = ? AND training_exercise_id = ? AND completed = 1",
+            vec![
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_exercise_id.to_owned()),
+            ],
+        ))
+        .await?;
+    Ok(row.is_some_and(|row| row.count > 0))
+}
+
 /// 種目の削除の文。セット、段、スーパーセットの参照も消す。
 pub fn delete_statements(
     user_id: &str,
