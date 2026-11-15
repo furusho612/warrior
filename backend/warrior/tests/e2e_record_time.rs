@@ -2,6 +2,8 @@
 //!
 //! 対応する要求: `REQ-SET-010`、`REQ-REC-005`。
 //! ストップウォッチを開始し、表示の経過時間が 1 秒以上になったことを条件に停止する。
+//! 計測中にセットを完了したときは、開始時刻が消えて計測中の表示が再読み込みの後も
+//! 残らないことを確かめる。
 //! 停止した時間と手入力した時間を保存し、左右別の時間も保存する。
 //! 種目を切り替えてもストップウォッチの状態が別の種目へ移らないことを確かめる。
 //! 終了のサマリーで、総重量が 0、セット数が 3、最長時間の自己ベストが
@@ -21,8 +23,8 @@ use warrior_core::duration;
 const PLANK_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-00000000005d";
 const SIDE_PLANK_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-00000000005a";
 const BIKE_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000060";
-const SERVER_PORT: u16 = 8836;
-const PROVIDER_PORT: u16 = 8837;
+const SERVER_PORT: u16 = 8856;
+const PROVIDER_PORT: u16 = 8857;
 
 #[tokio::test]
 async fn records_time_sets_with_the_stopwatch_and_manual_input() {
@@ -146,8 +148,50 @@ async fn records_time_sets_with_the_stopwatch_and_manual_input() {
     )
     .await;
     wait_for_complete_ready(&driver, &manual_row).await;
+    start_the_stopwatch(&driver, &manual_row).await;
+    assert_eq!(
+        stopwatch_started_at_keys(&driver, &manual_set).await,
+        vec![format!("stopwatch_started_at:{manual_set}")],
+        "the running stopwatch must keep the start of the whole set"
+    );
     complete_set(&driver, &manual_row).await;
+    browser::wait_for_attribute(
+        &driver,
+        &format!("{manual_row} [data-stopwatch-elapsed]"),
+        "data-stopwatch-running",
+        "false",
+    )
+    .await;
+    assert!(
+        !is_enabled(&driver, &format!("{manual_row} [data-stopwatch-stop]")).await,
+        "the stopwatch of a completed set must be stopped"
+    );
     wait_for_duration(&server, &manual_set, 125, None).await;
+    assert_eq!(
+        stopwatch_started_at_keys(&driver, &manual_set).await,
+        Vec::<String>::new(),
+        "completing a time set must clear the stopwatch start"
+    );
+
+    driver.refresh().await.expect("the page must reload");
+    browser::wait_for_route(&driver, "/record/:training_id").await;
+    browser::select_exercise(&driver, PLANK_EXERCISE_ID).await;
+    browser::wait_for_present(&driver, &format!("{manual_row} [data-stopwatch-elapsed]")).await;
+    assert_eq!(
+        browser::attribute(
+            &driver,
+            &format!("{manual_row} [data-stopwatch-elapsed]"),
+            "data-stopwatch-running"
+        )
+        .await,
+        "false",
+        "the stopwatch of a completed set must not run after a reload"
+    );
+    assert_eq!(
+        stopwatch_started_at_keys(&driver, &manual_set).await,
+        Vec::<String>::new(),
+        "the stopwatch start of a completed set must not come back after a reload"
+    );
 
     browser::select_exercise(&driver, SIDE_PLANK_EXERCISE_ID).await;
     let side_plank = detail_selector(SIDE_PLANK_EXERCISE_ID);
@@ -390,6 +434,35 @@ async fn wait_for_complete_ready(driver: &WebDriver, set: &str) {
 
 async fn complete_set(driver: &WebDriver, set: &str) {
     browser::click(driver, &format!("{set} [data-set-complete]")).await;
+}
+
+/// 端末内に保存された、セットのストップウォッチの開始時刻のキーを返す。
+async fn stopwatch_started_at_keys(driver: &WebDriver, set_id: &str) -> Vec<String> {
+    let keys = browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         const prefix = 'stopwatch_started_at:' + arguments[0]; \
+         const request = indexedDB.open('warrior'); \
+         request.onerror = () => done(JSON.stringify('open-error')); \
+         request.onsuccess = () => { \
+           const transaction = request.result.transaction('meta', 'readonly'); \
+           const all = transaction.objectStore('meta').getAllKeys(); \
+           all.onerror = () => done(JSON.stringify('keys-error')); \
+           all.onsuccess = () => done(JSON.stringify( \
+             Array.from(all.result).filter((key) => String(key).startsWith(prefix)))); \
+         };",
+        vec![json!(set_id)],
+    )
+    .await;
+    keys.as_array()
+        .unwrap_or_else(|| panic!("the stopwatch keys must be a list: {keys}"))
+        .iter()
+        .map(|key| {
+            key.as_str()
+                .expect("a stopwatch key must be a string")
+                .to_owned()
+        })
+        .collect()
 }
 
 async fn wait_for_duration(server: &DevServer, set: &str, expected: u32, rpe: Option<f64>) {

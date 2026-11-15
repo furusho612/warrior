@@ -309,9 +309,7 @@ impl SegmentView {
 /// 種目の左右の指定から、左右の列を使うか決める。
 ///
 /// 時間で記録する種目も左右別の入力を持つ。
-pub(super) fn is_lateral(laterality: Laterality, _mode: RecordMode) -> bool {
-    laterality == Laterality::Unilateral
-}
+pub(super) use warrior_core::exercise::is_lateral;
 
 /// 重量種目は入力した重量を、自重種目は記録した体重に加重を足した値を返す。
 fn bodyweight_weight(mode: RecordMode, body_weight_kg: Option<f64>, weight: f64) -> f64 {

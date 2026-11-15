@@ -22,7 +22,7 @@ use super::super::sets::{
 };
 use super::view::ExerciseView;
 use crate::ids::{new_uuid, now_iso};
-use crate::storage;
+use crate::storage::{self, StopwatchSide};
 use crate::sync;
 use crate::text::Key;
 use crate::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
@@ -649,6 +649,9 @@ async fn complete_set(
 }
 
 /// 完了するセットの値の更新と完了を、保存の終わりを待ってこの順に保存する。
+///
+/// 時間で記録するセットのストップウォッチは、完了の前に止めて開始時刻を消す。
+/// 完了したセットは編集できないため、開始時刻を残すと計測中の表示のまま戻せなくなる。
 async fn save_completed_set(
     storage: &storage::Storage,
     set: &SetView,
@@ -659,7 +662,25 @@ async fn save_completed_set(
 ) -> Result<(), storage::StorageError> {
     stop_saving_for_completion(saver, &set.record.id).await;
     save_completed_values(storage, &operation.training_id, set, values).await?;
+    if values.mode == RecordMode::Time {
+        clear_set_stopwatch(storage, &set.record.id).await?;
+    }
     storage.save_set_complete(updated, operation).await
+}
+
+/// セットの全 side のストップウォッチの開始時刻を消す。
+async fn clear_set_stopwatch(
+    storage: &storage::Storage,
+    set_id: &str,
+) -> Result<(), storage::StorageError> {
+    for side in [
+        StopwatchSide::Whole,
+        StopwatchSide::Left,
+        StopwatchSide::Right,
+    ] {
+        storage.clear_stopwatch_started_at(set_id, side).await?;
+    }
+    Ok(())
 }
 
 /// セットの保存のループを止め、実行中の保存が終わるまで待つ。

@@ -222,6 +222,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                                 set_id: set_id.clone(),
                                 mode: row.mode,
                                 lateral: row.lateral,
+                                completed,
                                 disabled: locked,
                             },
                             on_action,
@@ -277,6 +278,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                         segment_index,
                         mode: row.mode,
                         lateral: row.lateral,
+                        completed,
                         disabled: locked,
                     },
                     on_action,
@@ -429,6 +431,8 @@ struct SegmentRowState {
     mode: RecordMode,
     /// 左右の列を使うか。
     lateral: bool,
+    /// セットを完了したか。
+    completed: bool,
     /// 編集できないか。
     disabled: bool,
 }
@@ -451,6 +455,7 @@ fn SegmentRow(row: SegmentRowState, on_action: EventHandler<SetAction>) -> Eleme
                     set_id: row.set_id,
                     mode: row.mode,
                     lateral: row.lateral,
+                    completed: row.completed,
                     disabled: row.disabled,
                 },
                 on_action,

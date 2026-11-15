@@ -3,6 +3,7 @@
 //! 対応する要求: `REQ-SET-010`。
 //! 開始ボタンで開始時刻を保存し、停止ボタンで保存した開始時刻と現在時刻の差を
 //! 時間の入力欄に入れる。再読み込みの後は、保存した開始時刻から経過時間を復元する。
+//! セットを完了すると、完了の書き込みが開始時刻を消し、計測中の表示も止める。
 
 use dioxus::prelude::*;
 use warrior_core::duration;
@@ -39,6 +40,7 @@ pub(super) fn StopwatchControl(
     side: StopwatchSide,
     field: Field,
     disabled: bool,
+    completed: bool,
     on_action: EventHandler<SetAction>,
 ) -> Element {
     let started_at = use_signal(|| Option::<i64>::None);
@@ -54,6 +56,17 @@ pub(super) fn StopwatchControl(
     use_effect(move || {
         load_started_at(load_set_id.clone(), side, signals);
     });
+    // セットを完了すると、完了の書き込みが全 side の開始時刻を消す。
+    // 計測中の表示を残さないよう、画面の状態も止める。
+    use_effect(use_reactive((&completed,), move |(completed,)| {
+        if !completed {
+            return;
+        }
+        let mut started_at = signals.started_at;
+        let mut last_elapsed = signals.last_elapsed;
+        started_at.set(None);
+        last_elapsed.set(None);
+    }));
     // 経過時間は保存した開始時刻との差で求める。tick は表示の再描画だけを促す。
     use_future(move || {
         let mut tick = tick;
