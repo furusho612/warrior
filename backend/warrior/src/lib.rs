@@ -11,6 +11,7 @@ pub mod calendar;
 pub mod db;
 pub mod error;
 pub mod exercise;
+pub mod history;
 pub mod library;
 pub mod log;
 pub mod ownership;

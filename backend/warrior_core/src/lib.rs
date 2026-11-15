@@ -11,6 +11,7 @@ pub mod cursor;
 pub mod datetime;
 pub mod duration;
 pub mod exercise;
+pub mod history;
 pub mod ids;
 pub mod jst;
 pub mod nutrition;

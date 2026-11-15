@@ -5,9 +5,9 @@ use dioxus_router::Routable;
 
 use crate::layout::AppShell;
 use crate::screens::{
-    AnalysisScreen, CalendarScreen, ExerciseScreen, ExerciseSelectScreen, HomeScreen,
-    LibraryScreen, LoginScreen, MyPageScreen, NotFoundScreen, RecordScreen, RecordSessionScreen,
-    RoutinesScreen, SummaryScreen,
+    AnalysisScreen, CalendarScreen, ExerciseHistoryScreen, ExerciseScreen, ExerciseSelectScreen,
+    HomeScreen, LibraryScreen, LoginScreen, MyPageScreen, NotFoundScreen, RecordScreen,
+    RecordSessionScreen, RoutinesScreen, SummaryScreen,
 };
 use crate::text::Key;
 
@@ -28,7 +28,7 @@ const fn route(pattern: &'static str) -> AppRoute {
 }
 
 /// 画面の経路の台帳。
-pub const APP_ROUTES: [AppRoute; 13] = [
+pub const APP_ROUTES: [AppRoute; 14] = [
     route("/login"),
     route("/login/error"),
     route("/"),
@@ -38,6 +38,7 @@ pub const APP_ROUTES: [AppRoute; 13] = [
     route("/calendar"),
     route("/library"),
     route("/library/:exercise_id"),
+    route("/exercises/:id/history"),
     route("/analysis"),
     route("/routines"),
     route("/summary/:training_id"),
@@ -75,6 +76,9 @@ pub enum Route {
     /// 種目詳細。
     #[route("/library/:exercise_id", ExerciseScreen)]
     Exercise { exercise_id: String },
+    /// 種目別の履歴とグラフ。
+    #[route("/exercises/:id/history", ExerciseHistoryScreen)]
+    ExerciseHistory { id: String },
     /// 分析。
     #[route("/analysis", AnalysisScreen)]
     Analysis {},
@@ -103,6 +107,7 @@ pub fn screen_key(route: &Route) -> Key {
         Route::Calendar {} => Key::CalendarTitle,
         Route::Library {} => Key::LibraryTitle,
         Route::Exercise { .. } => Key::ExerciseTitle,
+        Route::ExerciseHistory { .. } => Key::ExerciseHistoryTitle,
         Route::Analysis {} => Key::AnalysisTitle,
         Route::Routines {} => Key::RoutinesTitle,
         Route::Summary { .. } => Key::SummaryTitle,
@@ -123,6 +128,7 @@ pub fn route_name(route: &Route) -> &'static str {
         Route::Calendar {} => "/calendar",
         Route::Library {} => "/library",
         Route::Exercise { .. } => "/library/:exercise_id",
+        Route::ExerciseHistory { .. } => "/exercises/:id/history",
         Route::Analysis {} => "/analysis",
         Route::Routines {} => "/routines",
         Route::Summary { .. } => "/summary/:training_id",
@@ -182,7 +188,10 @@ pub fn tab_is_active(current: &Route, tab: Tab) -> bool {
     match tab {
         Tab::Home => matches!(current, Route::Home {}),
         Tab::Calendar => matches!(current, Route::Calendar {}),
-        Tab::Library => matches!(current, Route::Library {} | Route::Exercise { .. }),
+        Tab::Library => matches!(
+            current,
+            Route::Library {} | Route::Exercise { .. } | Route::ExerciseHistory { .. }
+        ),
         Tab::Analysis => matches!(current, Route::Analysis {}),
         Tab::MyPage => matches!(current, Route::MyPage {}),
     }
@@ -212,7 +221,7 @@ mod tests {
     use crate::text::{text, Key};
 
     #[test]
-    fn the_ledger_has_the_thirteen_routes() {
+    fn the_ledger_has_the_fourteen_routes() {
         let patterns = [
             "/login",
             "/login/error",
@@ -223,6 +232,7 @@ mod tests {
             "/calendar",
             "/library",
             "/library/:exercise_id",
+            "/exercises/:id/history",
             "/analysis",
             "/routines",
             "/summary/:training_id",
@@ -283,6 +293,12 @@ mod tests {
                 training_id: "abc".to_owned()
             }
         );
+        assert_eq!(
+            Route::from_str("/exercises/abc/history").unwrap(),
+            Route::ExerciseHistory {
+                id: "abc".to_owned()
+            }
+        );
     }
 
     #[test]
@@ -302,6 +318,12 @@ mod tests {
             "/record/:training_id/exercises"
         );
         assert_eq!(
+            route_name(&Route::ExerciseHistory {
+                id: "abc".to_owned()
+            }),
+            "/exercises/:id/history"
+        );
+        assert_eq!(
             route_name(&Route::NotFound { segments: vec![] }),
             "/:..segments"
         );
@@ -316,6 +338,12 @@ mod tests {
                 exercise_id: "abc".to_owned()
             }),
             Key::ExerciseTitle
+        );
+        assert_eq!(
+            screen_key(&Route::ExerciseHistory {
+                id: "abc".to_owned()
+            }),
+            Key::ExerciseHistoryTitle
         );
         assert_eq!(screen_key(&Route::Login {}), Key::LoginTitle);
     }
@@ -336,6 +364,12 @@ mod tests {
         assert!(tab_is_active(
             &Route::Exercise {
                 exercise_id: "abc".to_owned()
+            },
+            Tab::Library
+        ));
+        assert!(tab_is_active(
+            &Route::ExerciseHistory {
+                id: "abc".to_owned()
             },
             Tab::Library
         ));

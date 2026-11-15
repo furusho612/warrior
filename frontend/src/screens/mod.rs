@@ -1,6 +1,6 @@
-//! 画面の部品。
+//! 画面と共通の枠。
 //!
-//! 画面の中身は後続の変更で実装する。このモジュールは共通の枠と、経路ごとの空の画面を持つ。
+//! 経路ごとの画面と、画面の共通の枠を持つ。
 
 use dioxus::prelude::*;
 
@@ -22,7 +22,7 @@ pub mod summary;
 pub use account::AccountSettings;
 pub use analysis::AnalysisScreen;
 pub use calendar::CalendarScreen;
-pub use exercise::ExerciseScreen;
+pub use exercise::{ExerciseHistoryScreen, ExerciseScreen};
 pub use home::HomeScreen;
 pub use library::{ExerciseSelectScreen, LibraryScreen};
 pub use login::LoginScreen;
