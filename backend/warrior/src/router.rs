@@ -13,6 +13,7 @@ use crate::history;
 use crate::library;
 use crate::profile;
 use crate::push;
+use crate::settings;
 use crate::sync;
 use crate::training_record;
 use crate::training_session;
@@ -58,6 +59,8 @@ pub const CALENDAR_MONTH_ROUTE_NAME: &str = "calendar_month";
 pub const CALENDAR_DAY_ROUTE_NAME: &str = "calendar_day";
 /// 身体情報を取得し、更新する経路の名前。
 pub const PROFILE_ROUTE_NAME: &str = "profile";
+/// 利用者共通の設定を取得し、更新する経路の名前。
+pub const SETTINGS_ROUTE_NAME: &str = "settings";
 /// VAPID の公開鍵を返す経路の名前。
 pub const PUSH_PUBLIC_KEY_ROUTE_NAME: &str = "push_public_key";
 /// プッシュ通知の購読を登録し、解除する経路の名前。
@@ -75,6 +78,8 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/me", session::me)
         .get_async("/api/profile", profile::get)
         .put_async("/api/profile", profile::update)
+        .get_async("/api/settings", settings::get)
+        .put_async("/api/settings", settings::update)
         .get_async("/api/push/public-key", push::public_key)
         .post_async("/api/push/subscriptions", push::create)
         .delete_async("/api/push/subscriptions", push::delete)
@@ -162,6 +167,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/auth/logout" => LOGOUT_ROUTE_NAME,
         "/api/me" => ME_ROUTE_NAME,
         "/api/profile" => PROFILE_ROUTE_NAME,
+        "/api/settings" => SETTINGS_ROUTE_NAME,
         "/api/push/public-key" => PUSH_PUBLIC_KEY_ROUTE_NAME,
         "/api/push/subscriptions" => PUSH_SUBSCRIPTIONS_ROUTE_NAME,
         "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
@@ -211,9 +217,9 @@ mod tests {
         route_name, EXERCISES_ROUTE_NAME, EXERCISE_FAVORITE_ROUTE_NAME, EXERCISE_ROUTE_NAME,
         GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME, HEALTH_ROUTE_NAME, LOGOUT_ROUTE_NAME,
         ME_ROUTE_NAME, NOT_FOUND_ROUTE_NAME, PROFILE_ROUTE_NAME, PUSH_PUBLIC_KEY_ROUTE_NAME,
-        PUSH_SUBSCRIPTIONS_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME, TRAINING_FINISH_ROUTE_NAME,
-        TRAINING_GET_ROUTE_NAME, TRAINING_PREVIOUS_ROUTE_NAME, TRAINING_SUMMARY_ROUTE_NAME,
-        TRAINING_TAKEOVER_ROUTE_NAME,
+        PUSH_SUBSCRIPTIONS_ROUTE_NAME, SETTINGS_ROUTE_NAME, SYNC_OPERATION_ROUTE_NAME,
+        TRAINING_FINISH_ROUTE_NAME, TRAINING_GET_ROUTE_NAME, TRAINING_PREVIOUS_ROUTE_NAME,
+        TRAINING_SUMMARY_ROUTE_NAME, TRAINING_TAKEOVER_ROUTE_NAME,
     };
     use super::{
         CALENDAR_DAY_ROUTE_NAME, CALENDAR_MONTH_ROUTE_NAME, EXERCISE_GRAPH_ROUTE_NAME,
@@ -242,6 +248,11 @@ mod tests {
     #[test]
     fn names_the_profile_route() {
         assert_eq!(route_name("/api/profile"), PROFILE_ROUTE_NAME);
+    }
+
+    #[test]
+    fn names_the_settings_route() {
+        assert_eq!(route_name("/api/settings"), SETTINGS_ROUTE_NAME);
     }
 
     #[test]

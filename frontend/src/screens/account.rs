@@ -277,6 +277,7 @@ async fn logout(mut logging_out: Signal<bool>, mut error: Signal<Option<String>>
     error.set(None);
     match http::request_status("POST", "/api/auth/logout").await {
         Ok(status) if (200..300).contains(&status) => {
+            crate::settings::forget_session().await;
             dioxus_router::router().push(Route::Login {});
             return;
         }

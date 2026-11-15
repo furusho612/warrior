@@ -37,6 +37,7 @@ thread_local! {
 pub async fn start() {
     let _ = storage::request_persistence().await;
     listen_online();
+    crate::settings::flush().await;
     flush().await;
 }
 
@@ -80,6 +81,7 @@ fn listen_online() {
         return;
     };
     let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        crate::settings::flush_in_background();
         flush_in_background();
     });
     if window

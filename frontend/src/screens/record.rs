@@ -46,7 +46,10 @@ use failed_operations::FailedOperations;
 use memo_save::{run_save_loop, MemoSaveState};
 use ownership::RecordOwnership;
 use personal_bests::RecordPersonalBests;
-pub(crate) use rest_timer::{RecordWakeLock, RestSettingsPanel, RestTimerBar, RestTimerEvents};
+pub(crate) use rest_timer::{
+    RecordWakeLock, RestNotificationSetting, RestSettingsPanel, RestTimerBar, RestTimerEvents,
+    WakeLockSetting,
+};
 use set_events::{SetCompleted, SetCompletedEvents};
 
 #[component]

@@ -31,12 +31,14 @@ mod exercise;
 mod personal_best;
 mod rest_timer;
 mod set;
+mod settings;
 mod stopwatch;
 mod superset;
 
 pub use account::clear_after_deletion;
 pub use indexeddb::request_persistence;
 pub use set::StoredSet;
+pub use settings::PendingUserSettings;
 pub use stopwatch::StopwatchSide;
 
 /// 既定のデータベースの名前。

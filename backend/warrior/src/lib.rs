@@ -25,6 +25,7 @@ pub mod router;
 pub mod scheduled;
 pub mod security;
 pub mod set;
+pub mod settings;
 pub mod stored_sets;
 pub mod superset;
 pub mod sync;
