@@ -1,14 +1,16 @@
-//! 推移のグラフの SVG の組み立て。
+//! 推移と部位別の比較のグラフの SVG の組み立て。
 //!
 //! 点の配置と目盛りの文言を、画面に依存しない純粋な関数として持つ。
 //! 線と点の色はテーマのカスタムプロパティを使い、ライトとダークの両方で
-//! 背景から判別できるようにする (REQ-ANL-002)。
+//! 背景から判別できるようにする (REQ-ANL-002、REQ-ANL-006)。
 
 use dioxus::prelude::*;
+use warrior_core::body_part_analysis::{AnalysisMetric, AnalysisPeriod, BodyPartAnalysisEntry};
+use warrior_core::exercise::BodyPart;
 use warrior_core::history::{GraphMetric, GraphPoint};
 use warrior_core::jst::JstDate;
 
-use crate::calendar_view::format_seconds;
+use crate::calendar_view::{format_seconds, part_label};
 use crate::text::{text, Key};
 
 /// グラフの描画領域の幅。
@@ -269,19 +271,181 @@ pub fn GraphChart(points: Vec<GraphPoint>, metric: GraphMetric) -> Element {
     }
 }
 
+/// 部位別の比較のグラフのラベルの幅。
+const BAR_LABEL_WIDTH: f64 = 64.0;
+/// 部位別の比較のグラフの値の幅。
+const BAR_VALUE_WIDTH: f64 = 48.0;
+/// 部位別の比較のグラフの 1 行の高さ。
+const BAR_ROW_HEIGHT: f64 = 22.0;
+/// 部位別の比較のグラフの棒の高さ。
+const BAR_HEIGHT: f64 = 14.0;
+/// 部位別の比較のグラフの上下の余白。
+const BAR_PADDING: f64 = 8.0;
+/// 記録が無いときの部位別の比較のグラフの高さ。
+const BAR_EMPTY_HEIGHT: f64 = 60.0;
+
+/// 部位別の比較の 1 本の棒。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BodyPartBar {
+    pub body_part: BodyPart,
+    pub value: f64,
+    pub label: String,
+    pub y: f64,
+    pub width: f64,
+}
+
+/// 部位別の比較のグラフの配置。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BodyPartBarLayout {
+    pub bars: Vec<BodyPartBar>,
+    pub height: f64,
+    pub empty: bool,
+}
+
+/// 部位区分ごとの値から、横棒の配置を作る。
+///
+/// 最も大きい値を描画領域の幅に合わせ、ほかの値はその比で縮める。全ての値が 0 の
+/// ときは棒の幅を 0 にし、部位の並びと値の文言は残す。
+pub(crate) fn body_part_bar_layout(
+    entries: &[BodyPartAnalysisEntry],
+    metric: AnalysisMetric,
+) -> BodyPartBarLayout {
+    let max = entries
+        .iter()
+        .map(|entry| entry.value(metric))
+        .fold(0.0, f64::max);
+    let empty = entries.is_empty();
+    let height = if empty {
+        BAR_EMPTY_HEIGHT
+    } else {
+        BAR_PADDING * 2.0 + entries.len() as f64 * BAR_ROW_HEIGHT
+    };
+    let plot_width = WIDTH - BAR_LABEL_WIDTH - BAR_VALUE_WIDTH;
+    let bars = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let value = entry.value(metric);
+            BodyPartBar {
+                body_part: entry.body_part,
+                value,
+                label: bar_value_text(metric, value),
+                y: BAR_PADDING + index as f64 * BAR_ROW_HEIGHT,
+                width: if max > 0.0 {
+                    plot_width * value / max
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect();
+    BodyPartBarLayout {
+        bars,
+        height,
+        empty,
+    }
+}
+
+/// 部位別の比較のグラフの値の文言。
+fn bar_value_text(metric: AnalysisMetric, value: f64) -> String {
+    match metric {
+        AnalysisMetric::Sets => format!("{}", value.round() as u32),
+        AnalysisMetric::Weight => format!("{value:.0} kg"),
+    }
+}
+
+/// 部位区分の棒の色。テーマの部位の色を使い、ライトとダークの両方で判別できるようにする。
+pub(crate) fn part_fill_class(part: BodyPart) -> &'static str {
+    match part {
+        BodyPart::Chest => "fill-part-chest",
+        BodyPart::Back => "fill-part-back",
+        BodyPart::Shoulders => "fill-part-shoulders",
+        BodyPart::BicepsForearm => "fill-part-biceps-forearm",
+        BodyPart::Triceps => "fill-part-triceps",
+        BodyPart::Legs => "fill-part-legs",
+        BodyPart::Abs => "fill-part-abs",
+        BodyPart::Other => "fill-part-other",
+    }
+}
+
+/// 部位別のセット数または総重量を 1 つのグラフで比較する横棒のグラフ。
+#[component]
+pub fn BodyPartBarChart(
+    entries: Vec<BodyPartAnalysisEntry>,
+    period: AnalysisPeriod,
+    metric: AnalysisMetric,
+) -> Element {
+    let layout = body_part_bar_layout(&entries, metric);
+    let aria = text(Key::AnalysisChart);
+    let bars = layout.bars.len();
+    rsx! {
+        svg {
+            class: "h-auto w-full",
+            view_box: "0 0 {WIDTH} {layout.height}",
+            role: "img",
+            "aria-label": "{aria}",
+            "data-analysis-chart": "true",
+            "data-analysis-chart-period": "{period.as_str()}",
+            "data-analysis-chart-metric": "{metric.as_str()}",
+            "data-analysis-bars": "{bars}",
+            if layout.empty {
+                text {
+                    class: LABEL_CLASS,
+                    x: "{WIDTH / 2.0}",
+                    y: "{BAR_EMPTY_HEIGHT / 2.0}",
+                    "text-anchor": "middle",
+                    font_size: "11",
+                    "{text(Key::AnalysisChartEmpty)}"
+                }
+            } else {
+                for bar in layout.bars.iter() {
+                    text {
+                        class: LABEL_CLASS,
+                        x: "0",
+                        y: "{bar.y + BAR_HEIGHT - 3.0}",
+                        font_size: "10",
+                        "{part_label(bar.body_part)}"
+                    }
+                    rect {
+                        class: part_fill_class(bar.body_part),
+                        x: "{BAR_LABEL_WIDTH}",
+                        y: "{bar.y}",
+                        width: "{bar.width.max(0.0)}",
+                        height: "{BAR_HEIGHT}",
+                        "data-analysis-bar": "{bar.body_part.as_str()}",
+                        "data-analysis-bar-value": "{bar.value}",
+                        title { "{part_label(bar.body_part)}: {bar.label}" }
+                    }
+                    text {
+                        class: LABEL_CLASS,
+                        x: "{WIDTH}",
+                        y: "{bar.y + BAR_HEIGHT - 3.0}",
+                        "text-anchor": "end",
+                        font_size: "10",
+                        "{bar.label}"
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! グラフの配置と、ライトとダークの色の判別の単体テスト。
     //!
-    //! 対応する要求: `REQ-ANL-002`。
-    //! 要求の受入基準は E2E が担い、ここは点の位置、目盛り、色の選択を確かめる。
+    //! 対応する要求: `REQ-ANL-002`、`REQ-ANL-006`。
+    //! 要求の受入基準は E2E が担い、ここは点と棒の位置、目盛り、色の選択を確かめる。
 
+    use warrior_core::body_part_analysis::{AnalysisMetric, BodyPartAnalysisEntry};
+    use warrior_core::exercise::BodyPart;
     use warrior_core::history::{GraphMetric, GraphPoint};
     use warrior_core::jst::JstDate;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
-        layout, point_value_text, AXIS_CLASS, HEIGHT, LABEL_CLASS, LINE_CLASS, PADDING_LEFT,
+        body_part_bar_layout, layout, part_fill_class, point_value_text, AXIS_CLASS, BAR_HEIGHT,
+        BAR_LABEL_WIDTH, BAR_VALUE_WIDTH, HEIGHT, LABEL_CLASS, LINE_CLASS, PADDING_LEFT,
         PADDING_RIGHT, PADDING_TOP, WIDTH,
     };
     use crate::generated::tokens;
@@ -394,6 +558,135 @@ mod tests {
     #[wasm_bindgen_test]
     fn the_date_labels_use_the_japan_date() {
         assert_eq!(super::date_text(JstDate::new(2026, 1, 5).unwrap()), "1/5");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_largest_part_fills_the_plot_and_the_others_keep_the_ratio() {
+        let entries = vec![
+            part_entry(BodyPart::Chest, 2, 1_740.0),
+            part_entry(BodyPart::Back, 1, 870.0),
+        ];
+        let graph = body_part_bar_layout(&entries, AnalysisMetric::Sets);
+        assert!(!graph.empty);
+        assert_eq!(graph.bars.len(), 2);
+        let plot_width = WIDTH - BAR_LABEL_WIDTH - BAR_VALUE_WIDTH;
+        assert_eq!(graph.bars[0].body_part, BodyPart::Chest);
+        assert_eq!(graph.bars[0].width, plot_width);
+        assert_eq!(graph.bars[0].y, super::BAR_PADDING);
+        assert_eq!(graph.bars[1].width, plot_width / 2.0);
+        assert_eq!(graph.bars[1].label, "1");
+        assert_eq!(
+            graph.height,
+            super::BAR_PADDING * 2.0 + 2.0 * super::BAR_ROW_HEIGHT
+        );
+
+        let weighted = body_part_bar_layout(&entries, AnalysisMetric::Weight);
+        assert_eq!(weighted.bars[0].label, "1740 kg");
+        assert!(weighted.bars[0].width > weighted.bars[1].width);
+        assert_eq!(
+            weighted.bars[0].y + BAR_HEIGHT,
+            super::BAR_PADDING + BAR_HEIGHT
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_bars_without_records_have_no_width() {
+        let entries = BodyPart::ALL
+            .into_iter()
+            .map(|part| part_entry(part, 0, 0.0))
+            .collect::<Vec<_>>();
+        let graph = body_part_bar_layout(&entries, AnalysisMetric::Weight);
+        assert!(!graph.empty);
+        assert_eq!(graph.bars.len(), BodyPart::ALL.len());
+        assert!(graph.bars.iter().all(|bar| bar.width == 0.0));
+        assert_eq!(graph.bars[0].label, "0 kg");
+
+        let empty = body_part_bar_layout(&[], AnalysisMetric::Sets);
+        assert!(empty.empty);
+        assert!(empty.bars.is_empty());
+        assert_eq!(empty.height, super::BAR_EMPTY_HEIGHT);
+    }
+
+    #[wasm_bindgen_test]
+    fn every_part_has_its_own_fill_class() {
+        let classes = BodyPart::ALL.map(part_fill_class);
+        let mut unique = classes.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), BodyPart::ALL.len());
+        assert_eq!(part_fill_class(BodyPart::Chest), "fill-part-chest");
+        assert_eq!(
+            part_fill_class(BodyPart::BicepsForearm),
+            "fill-part-biceps-forearm"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn every_part_bar_keeps_a_readable_contrast_in_both_themes() {
+        let colors = [
+            (
+                BodyPart::Chest,
+                tokens::part_color::dark::CHEST,
+                tokens::part_color::light::CHEST,
+            ),
+            (
+                BodyPart::Back,
+                tokens::part_color::dark::BACK,
+                tokens::part_color::light::BACK,
+            ),
+            (
+                BodyPart::Shoulders,
+                tokens::part_color::dark::SHOULDERS,
+                tokens::part_color::light::SHOULDERS,
+            ),
+            (
+                BodyPart::BicepsForearm,
+                tokens::part_color::dark::BICEPS_FOREARM,
+                tokens::part_color::light::BICEPS_FOREARM,
+            ),
+            (
+                BodyPart::Triceps,
+                tokens::part_color::dark::TRICEPS,
+                tokens::part_color::light::TRICEPS,
+            ),
+            (
+                BodyPart::Legs,
+                tokens::part_color::dark::LEGS,
+                tokens::part_color::light::LEGS,
+            ),
+            (
+                BodyPart::Abs,
+                tokens::part_color::dark::ABS,
+                tokens::part_color::light::ABS,
+            ),
+            (
+                BodyPart::Other,
+                tokens::part_color::dark::OTHER,
+                tokens::part_color::light::OTHER,
+            ),
+        ];
+        for (part, dark, light) in colors {
+            assert!(
+                contrast_ratio(dark, tokens::color::dark::BG) >= 3.0,
+                "{part:?} in the dark theme"
+            );
+            assert!(
+                contrast_ratio(light, tokens::color::light::BG) >= 3.0,
+                "{part:?} in the light theme"
+            );
+        }
+    }
+
+    fn part_entry(body_part: BodyPart, sets: u32, weight_kg: f64) -> BodyPartAnalysisEntry {
+        BodyPartAnalysisEntry {
+            body_part,
+            sets,
+            weight_kg,
+            previous_sets: 0,
+            previous_weight_kg: 0.0,
+            sets_change: i64::from(sets),
+            weight_change_kg: weight_kg,
+        }
     }
 
     struct Point {
