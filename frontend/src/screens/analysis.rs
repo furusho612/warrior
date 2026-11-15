@@ -1,11 +1,14 @@
-//! 部位別のセット数と総重量の分析の画面。
+//! 部位別のセット数と総重量の分析と、部位区分ごとの回復状況の画面。
 //!
-//! 対応する要求: `REQ-ANL-005`、`REQ-ANL-006`、`REQ-ANL-007`。
+//! 対応する要求: `REQ-ANL-005`、`REQ-ANL-006`、`REQ-ANL-007`、`REQ-ANL-008`、
+//! `REQ-ANL-009`、`REQ-ANL-010`。
 //! 期間と指標の選択肢は `warrior_core::body_part_analysis` から作り、集計はサーバーの
-//! 応答を使う (ADR-016)。前の週と前の月との増減は応答の値をそのまま表示する。
+//! 応答を使う (ADR-016)。前の週と前の月との増減は応答の値をそのまま表示する。回復状況も
+//! サーバーの応答を表示し、目安であることの注記を添える。
 
 use dioxus::prelude::*;
 use warrior_core::body_part_analysis::{AnalysisMetric, AnalysisPeriod, BodyPartAnalysis};
+use warrior_core::recovery::RecoveryStatus;
 
 use crate::analysis as analysis_api;
 use crate::calendar_view::part_label;
@@ -18,12 +21,15 @@ pub fn AnalysisScreen() -> Element {
     let state = use_analysis_state();
     let analysis_now = (state.analysis)();
     let error = (state.error)();
+    let recovery_now = (state.recovery)();
+    let recovery_error = (state.recovery_error)();
     let period = (state.period)();
     let metric = (state.metric)();
     let loading = analysis_now.is_none() && error.is_none();
     let period_state = state;
     let metric_state = state;
     let retry_state = state;
+    let recovery_retry_state = state;
 
     rsx! {
         section {
@@ -111,11 +117,26 @@ pub fn AnalysisScreen() -> Element {
             } else if loading {
                 p { class: "text-[13px] text-text-sub", "{text(Key::AnalysisLoading)}" }
             }
+            if let Some(recovery) = recovery_now {
+                RecoveryParts { status: recovery.clone() }
+            } else if let Some(message) = recovery_error {
+                p { class: "text-[13px] text-primary", "{message}" }
+                button {
+                    class: "min-h-11 border border-line px-3 text-[13px]",
+                    "data-recovery-retry": "true",
+                    onclick: move |_| {
+                        let mut state = recovery_retry_state;
+                        state.recovery.set(None);
+                        state.recovery_reload += 1;
+                    },
+                    "{text(Key::AnalysisRecoveryRetry)}"
+                }
+            }
         }
     }
 }
 
-/// 部位別の分析の読み込み状態。
+/// 部位別の分析と回復状況の読み込み状態。
 #[derive(Clone, Copy)]
 struct AnalysisSignals {
     period: Signal<AnalysisPeriod>,
@@ -124,9 +145,13 @@ struct AnalysisSignals {
     error: Signal<Option<String>>,
     generation: Signal<u32>,
     reload: Signal<u32>,
+    recovery: Signal<Option<RecoveryStatus>>,
+    recovery_error: Signal<Option<String>>,
+    recovery_generation: Signal<u32>,
+    recovery_reload: Signal<u32>,
 }
 
-/// 画面の状態を作り、分析の読み込みを始める効果を登録する。
+/// 画面の状態を作り、分析と回復状況の読み込みを始める効果を登録する。
 fn use_analysis_state() -> AnalysisSignals {
     let state = AnalysisSignals {
         period: use_signal(|| AnalysisPeriod::Week),
@@ -135,6 +160,10 @@ fn use_analysis_state() -> AnalysisSignals {
         error: use_signal(|| Option::<String>::None),
         generation: use_signal(|| 0u32),
         reload: use_signal(|| 0u32),
+        recovery: use_signal(|| Option::<RecoveryStatus>::None),
+        recovery_error: use_signal(|| Option::<String>::None),
+        recovery_generation: use_signal(|| 0u32),
+        recovery_reload: use_signal(|| 0u32),
     };
 
     use_effect(move || {
@@ -146,6 +175,15 @@ fn use_analysis_state() -> AnalysisSignals {
         state.generation.set(generation);
         state.error.set(None);
         spawn(load_analysis(period, metric, generation, state));
+    });
+
+    use_effect(move || {
+        let mut state = state;
+        let _ = (state.recovery_reload)();
+        let generation = state.recovery_generation.peek().wrapping_add(1);
+        state.recovery_generation.set(generation);
+        state.recovery_error.set(None);
+        spawn(load_recovery(generation, state));
     });
 
     state
@@ -174,6 +212,25 @@ async fn load_analysis(
             state
                 .error
                 .set(Some(text(Key::AnalysisLoadFailed).to_owned()));
+        }
+    }
+}
+
+async fn load_recovery(generation: u32, mut state: AnalysisSignals) {
+    let result = analysis_api::recovery().await;
+    if generation != *state.recovery_generation.peek() {
+        return;
+    }
+    match result {
+        Ok(recovery) => {
+            state.recovery.set(Some(recovery));
+            state.recovery_error.set(None);
+        }
+        Err(_) => {
+            state.recovery.set(None);
+            state
+                .recovery_error
+                .set(Some(text(Key::AnalysisRecoveryLoadFailed).to_owned()));
         }
     }
 }
@@ -219,6 +276,41 @@ fn AnalysisParts(analysis: BodyPartAnalysis) -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// 部位区分ごとの回復状況と、目安であることの注記。
+#[component]
+fn RecoveryParts(status: RecoveryStatus) -> Element {
+    let count = status.parts.len();
+    rsx! {
+        section {
+            class: "flex flex-col gap-1 border-t border-line pt-3",
+            "data-recovery": "true",
+            "data-recovery-part-count": "{count}",
+            h2 { class: "text-sm font-bold", "{text(Key::AnalysisRecoveryTitle)}" }
+            ul { class: "flex flex-col gap-1",
+                for part in status.parts {
+                    li {
+                        class: "flex min-h-11 items-center justify-between gap-2 border-b border-line",
+                        "data-recovery-part": "{part.body_part.as_str()}",
+                        "data-recovery-state": "{analysis_api::recovery_state_value(part.state)}",
+                        span { class: "text-[13px] font-bold", "{part_label(part.body_part)}" }
+                        span { class: "text-[13px]",
+                            {match part.state {
+                                Some(state) => analysis_api::recovery_label(state),
+                                None => text(Key::AnalysisRecoveryNoRecord),
+                            }}
+                        }
+                    }
+                }
+            }
+            p {
+                class: "text-[11px] leading-5 text-text-sub",
+                "data-recovery-note": "true",
+                "{text(Key::AnalysisRecoveryNote)}"
             }
         }
     }

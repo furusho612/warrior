@@ -16,6 +16,7 @@ use crate::history;
 use crate::library;
 use crate::profile;
 use crate::push;
+use crate::recovery;
 use crate::routine;
 use crate::settings;
 use crate::sync;
@@ -61,6 +62,8 @@ pub const EXERCISE_HISTORY_ROUTE_NAME: &str = "exercise_history";
 pub const EXERCISE_GRAPH_ROUTE_NAME: &str = "exercise_graph";
 /// 部位別の分析を返す経路の名前。
 pub const ANALYSIS_BODY_PARTS_ROUTE_NAME: &str = "analysis_body_parts";
+/// 部位区分ごとの回復状況を返す経路の名前。
+pub const ANALYSIS_RECOVERY_ROUTE_NAME: &str = "analysis_recovery";
 /// トレーニングの編集権を引き継ぐ経路の名前。
 pub const TRAINING_TAKEOVER_ROUTE_NAME: &str = "training_takeover";
 /// カレンダーの月を返す経路の名前。
@@ -123,6 +126,7 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/exercises/:id/history", history::history)
         .get_async("/api/exercises/:id/graph", history::graph)
         .get_async("/api/analysis/body-parts", analysis::body_parts)
+        .get_async("/api/analysis/recovery", recovery::recovery)
         .get_async("/api/calendar", calendar::month)
         .get_async("/api/calendar/:date", calendar::day)
         .delete_async("/api/me/passkeys/:id", passkey::delete)
@@ -207,6 +211,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/exercises" => EXERCISES_ROUTE_NAME,
         "/api/exercises/:id" => EXERCISE_ROUTE_NAME,
         "/api/analysis/body-parts" => ANALYSIS_BODY_PARTS_ROUTE_NAME,
+        "/api/analysis/recovery" => ANALYSIS_RECOVERY_ROUTE_NAME,
         "/api/calendar" => CALENDAR_MONTH_ROUTE_NAME,
         "/api/me/passkeys" => "passkeys_list",
         "/api/me/passkeys/:id" => "passkeys_delete",
@@ -256,6 +261,7 @@ fn export_id_path(path: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::ANALYSIS_BODY_PARTS_ROUTE_NAME;
+    use super::ANALYSIS_RECOVERY_ROUTE_NAME;
     use super::{
         route_name, EXERCISES_ROUTE_NAME, EXERCISE_FAVORITE_ROUTE_NAME, EXERCISE_RESET_ROUTE_NAME,
         EXERCISE_ROUTE_NAME, GOOGLE_CALLBACK_ROUTE_NAME, GOOGLE_START_ROUTE_NAME,
@@ -417,6 +423,14 @@ mod tests {
         assert_eq!(
             route_name("/api/analysis/body-parts"),
             ANALYSIS_BODY_PARTS_ROUTE_NAME
+        );
+    }
+
+    #[test]
+    fn names_the_recovery_route() {
+        assert_eq!(
+            route_name("/api/analysis/recovery"),
+            ANALYSIS_RECOVERY_ROUTE_NAME
         );
     }
 
