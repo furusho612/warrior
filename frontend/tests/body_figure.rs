@@ -63,47 +63,30 @@ fn req_lib_003_and_012_every_muscle_unit_changes_color_with_the_theme() {
             .expect("the figure colors must be set");
         for unit in MuscleUnit::ALL {
             let id = unit_attribute(unit);
-
-            container.set_inner_html(&both_sides(&FigureMuscles {
-                primary: Vec::new(),
-                secondary: Vec::new(),
-            }));
-            assert_color(&container, &unit_selector("m", id), "fill", colors.rest);
-            assert_color(
-                &container,
-                &unit_selector("f", id),
-                "stroke",
-                colors.rest_line,
-            );
-
-            container.set_inner_html(&both_sides(&FigureMuscles {
-                primary: vec![unit],
-                secondary: Vec::new(),
-            }));
-            assert_color(&container, &unit_selector("m", id), "fill", colors.primary);
-            assert_color(
-                &container,
-                &unit_selector("f", id),
-                "stroke",
-                colors.primary_line,
-            );
-
-            container.set_inner_html(&both_sides(&FigureMuscles {
-                primary: Vec::new(),
-                secondary: vec![unit],
-            }));
-            assert_color(
-                &container,
-                &unit_selector("m", id),
-                "fill",
-                colors.secondary,
-            );
-            assert_color(
-                &container,
-                &unit_selector("f", id),
-                "stroke",
-                colors.secondary_line,
-            );
+            let states = [
+                (FigureMuscles::default(), colors.rest, colors.rest_line),
+                (
+                    FigureMuscles {
+                        primary: vec![unit],
+                        secondary: Vec::new(),
+                    },
+                    colors.primary,
+                    colors.primary_line,
+                ),
+                (
+                    FigureMuscles {
+                        primary: Vec::new(),
+                        secondary: vec![unit],
+                    },
+                    colors.secondary,
+                    colors.secondary_line,
+                ),
+            ];
+            for (muscles, fill, stroke) in states {
+                container.set_inner_html(&both_sides(&muscles));
+                assert_color(&container, &unit_selector("m", id), "fill", fill);
+                assert_color(&container, &unit_selector("f", id), "stroke", stroke);
+            }
         }
     }
 
