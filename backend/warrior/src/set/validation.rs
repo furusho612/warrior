@@ -3,10 +3,11 @@
 //! 完了したセットは、すべての段に値を持ち、SetRecord の検証を通る必要がある。
 //! 空の段を含む完了済みのセットで、終了のサマリーが 500 になるのを防ぐ。
 
-use warrior_core::exercise::{ExerciseSnapshot, GripSelection};
+use warrior_core::exercise::{ExerciseSnapshot, GripMode, GripSelection};
 use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::SetSegmentPayload;
+use warrior_core::sync::ValidatedPayload;
 use worker::{Response, Result};
 
 use super::precheck::{set_row, CountRow};
@@ -26,7 +27,7 @@ pub(super) async fn completed_set_has_values(
         return Ok(false);
     };
     let rules = parse_rules(&row.snapshot)?;
-    let condition = completed_segment_condition(rules);
+    let condition = completed_segment_condition(&rules);
     let total = count_segments(db, user_id, set_id, "").await?;
     let with_values = count_segments(db, user_id, set_id, &format!("AND ({condition})")).await?;
     Ok(total > 0 && total == with_values)
@@ -35,7 +36,7 @@ pub(super) async fn completed_set_has_values(
 /// 段の形が種目の左右の指定と一致するか。
 pub(super) fn segments_shape_rejection(
     segments: &[SetSegmentPayload],
-    rules: ExerciseRules,
+    rules: &ExerciseRules,
 ) -> Option<Response> {
     if segments.iter().all(|segment| {
         segment.has_matching_sides(rules.lateral())
@@ -79,8 +80,42 @@ pub(super) fn time_values_rejection(
     ))
 }
 
+/// セットのグリップが種目の選択肢に合うか返す。
+pub(super) fn grip_allowed(selection: GripSelection, rules: &ExerciseRules) -> bool {
+    selection.validate_for(rules.grip_mode).is_ok()
+        && (rules.grip_mode == GripMode::None || rules.grip_options.contains(&selection))
+}
+
+/// セットのグリップが種目の選択肢に合わないときのエラー。
+pub(super) fn grip_error(
+    payload: &ValidatedPayload,
+    rules: &ExerciseRules,
+) -> Option<(ErrorCode, &'static str)> {
+    let grip = match payload {
+        ValidatedPayload::SetCreate(payload) => payload.grip,
+        ValidatedPayload::SetUpdate(payload) => payload.grip,
+        _ => return None,
+    };
+    if grip_allowed(grip.unwrap_or(GripSelection::None), rules) {
+        return None;
+    }
+    Some((
+        ErrorCode::BadRequest,
+        "the grip does not match the exercise",
+    ))
+}
+
+/// セットのグリップが種目の選択肢に合わないときの応答。
+pub(super) fn grip_rejection(
+    payload: &ValidatedPayload,
+    rules: &ExerciseRules,
+) -> Option<Response> {
+    let (code, message) = grip_error(payload, rules)?;
+    Some(response(code, message))
+}
+
 /// 段が完了に必要な値を持つ条件。
-fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
+fn completed_segment_condition(rules: &ExerciseRules) -> &'static str {
     if rules.lateral() {
         return match rules.record_mode {
             RecordMode::Time => {

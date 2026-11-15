@@ -739,30 +739,30 @@ mod tests {
     #[test]
     fn the_grip_comparison_key_separates_every_selection() {
         assert_eq!(GripSelection::None.comparison_key(), (None, None));
-        assert_eq!(
-            GripSelection::Grip {
-                style: GripStyle::Pronated,
-                width: GripWidth::Medium,
+        for style in GripStyle::ALL {
+            for width in GripWidth::ALL {
+                assert_eq!(
+                    GripSelection::Grip { style, width }.comparison_key(),
+                    (Some(format!("{}_{}", style.as_str(), width.as_str())), None)
+                );
             }
-            .comparison_key(),
-            (Some("pronated_medium".to_owned()), None)
-        );
-        assert_eq!(
-            GripSelection::Attachment {
-                attachment: super::Attachment::WideBar,
-                style: Some(GripStyle::Supinated),
+        }
+        for attachment in super::Attachment::ALL {
+            let styles = if attachment.requires_style() {
+                vec![Some(GripStyle::Pronated), Some(GripStyle::Supinated)]
+            } else {
+                vec![None]
+            };
+            for style in styles {
+                assert_eq!(
+                    GripSelection::Attachment { attachment, style }.comparison_key(),
+                    (
+                        style.map(|style| style.as_str().to_owned()),
+                        Some(attachment.as_str().to_owned())
+                    )
+                );
             }
-            .comparison_key(),
-            (Some("supinated".to_owned()), Some("wide_bar".to_owned()))
-        );
-        assert_eq!(
-            GripSelection::Attachment {
-                attachment: super::Attachment::ParallelGrip,
-                style: None,
-            }
-            .comparison_key(),
-            (None, Some("parallel_grip".to_owned()))
-        );
+        }
     }
 
     #[test]

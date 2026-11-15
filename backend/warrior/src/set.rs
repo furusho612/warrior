@@ -8,7 +8,7 @@
 //! 完了の操作の後には、自己ベストを判定し、更新した項目を応答へ返す。
 
 use serde::Deserialize;
-use warrior_core::exercise::{is_lateral, Laterality, RecordMode};
+use warrior_core::exercise::{is_lateral, GripMode, GripSelection, Laterality, RecordMode};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
     SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetUpdatePayload,
@@ -32,19 +32,24 @@ mod validation;
 use bindings::{applied_exists, grip_json, optional_real};
 pub(crate) use completion::personal_bests_after_completion;
 use precheck::precheck;
+use validation::grip_rejection;
 
-/// 種目の記録方式と左右の指定。
-#[derive(Debug, Clone, Copy, Deserialize)]
+/// 種目の記録方式、左右の指定、グリップの選択肢。
+#[derive(Debug, Clone, Deserialize)]
 struct ExerciseRules {
     /// 左右別に行うか。
     laterality: Laterality,
     /// 記録方式。
     record_mode: RecordMode,
+    /// グリップの指定の種類。
+    grip_mode: GripMode,
+    /// 選べるグリップ。グリップを選ばない種目では空である。
+    grip_options: Vec<GripSelection>,
 }
 
 impl ExerciseRules {
     /// 左右の列を使う種目か。
-    fn lateral(self) -> bool {
+    fn lateral(&self) -> bool {
         is_lateral(self.laterality, self.record_mode)
     }
 }
@@ -108,8 +113,13 @@ pub(crate) async fn set_batch(
         )));
     }
 
-    if let Some(rejection) = precheck(db, user_id, validated, rules).await? {
+    if let Some(rejection) = precheck(db, user_id, validated, rules.as_ref()).await? {
         return Ok(BatchOutcome::Reject(rejection));
+    }
+    if let Some(rules) = rules.as_ref() {
+        if let Some(rejection) = grip_rejection(&validated.payload, rules) {
+            return Ok(BatchOutcome::Reject(rejection));
+        }
     }
     let ownership = match owner {
         OwnerCondition::Claim(terminal_id) | OwnerCondition::Owned(terminal_id) => {
@@ -120,8 +130,8 @@ pub(crate) async fn set_batch(
     let Some(data) = set_statements(
         user_id,
         validated,
-        rules.map(|rules| rules.record_mode),
-        rules.is_some_and(|rules| rules.lateral()),
+        rules.as_ref().map(|rules| rules.record_mode),
+        rules.as_ref().is_some_and(|rules| rules.lateral()),
         ownership,
         now,
     ) else {

@@ -1,8 +1,11 @@
 //! セットの操作の SQL の組み立ての例示テスト。
 //!
-//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-010`。
+//! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-010`、`REQ-SET-011`、`REQ-LIB-011`。
 
 use serde_json::json;
+use warrior_core::exercise::{
+    Attachment, GripMode, GripSelection, GripStyle, GripWidth, Laterality,
+};
 use warrior_core::set_calc::{RecordMode, SetKind};
 use warrior_core::sql::SqlValue;
 use warrior_core::sync::{
@@ -13,7 +16,11 @@ use warrior_core::sync::{
 
 use super::bindings::{applied_exists, ownership_condition_placeholder, segment_bindings};
 use super::precheck::same_set_ids;
-use super::{delete_set_statement, set_statements, update_set_statement, ExerciseOwnership};
+use super::validation::{grip_allowed, grip_error};
+use super::{
+    delete_set_statement, set_statements, update_set_statement, ExerciseOwnership, ExerciseRules,
+};
+use crate::error::ErrorCode;
 
 fn weight_mode() -> RecordMode {
     RecordMode::WeightAndReps
@@ -65,6 +72,36 @@ fn create_payload() -> SetCreatePayload {
         grip: None,
         body_weight_kg: Some(70.0),
         segments: vec![segment()],
+    }
+}
+
+fn update_payload() -> SetUpdatePayload {
+    SetUpdatePayload {
+        training_id: TRAINING_ID.to_owned(),
+        set_id: SET_ID.to_owned(),
+        position: 2,
+        kind: SetKind::Drop,
+        completed: false,
+        rpe: Some(8.0),
+        grip: None,
+        body_weight_kg: None,
+        segments: vec![segment()],
+    }
+}
+
+fn grip_rules(mode: GripMode, options: Vec<GripSelection>) -> ExerciseRules {
+    ExerciseRules {
+        laterality: Laterality::Bilateral,
+        record_mode: RecordMode::WeightAndReps,
+        grip_mode: mode,
+        grip_options: options,
+    }
+}
+
+fn pronated_medium() -> GripSelection {
+    GripSelection::Grip {
+        style: GripStyle::Pronated,
+        width: GripWidth::Medium,
     }
 }
 
@@ -134,17 +171,7 @@ fn the_create_statements_scope_the_set_and_the_segments() {
 
 #[test]
 fn the_update_and_delete_statements_keep_the_training_scope() {
-    let update = SetUpdatePayload {
-        training_id: TRAINING_ID.to_owned(),
-        set_id: SET_ID.to_owned(),
-        position: 2,
-        kind: SetKind::Drop,
-        completed: false,
-        rpe: Some(8.0),
-        grip: None,
-        body_weight_kg: None,
-        segments: vec![segment()],
-    };
+    let update = update_payload();
     let statement = update_set_statement(
         USER_ID,
         TRAINING_ID,
@@ -282,6 +309,108 @@ fn the_complete_statement_sets_the_completed_flag() {
     assert!(data.main.sql().contains("UPDATE sets SET completed = ?"));
     assert_eq!(data.main.bindings()[0], SqlValue::Integer(1));
     assert_eq!(data.main.bindings()[2], SqlValue::Text(SET_ID.to_owned()));
+}
+
+#[test]
+fn a_grip_selection_must_match_the_exercise_mode() {
+    let none = grip_rules(GripMode::None, Vec::new());
+    assert!(grip_allowed(GripSelection::None, &none));
+    assert!(!grip_allowed(pronated_medium(), &none));
+
+    let grip = grip_rules(GripMode::Grip, vec![pronated_medium()]);
+    assert!(grip_allowed(pronated_medium(), &grip));
+    assert!(!grip_allowed(GripSelection::None, &grip));
+
+    let attachment = GripSelection::Attachment {
+        attachment: Attachment::WideBar,
+        style: Some(GripStyle::Pronated),
+    };
+    let attachment_rules = grip_rules(GripMode::Attachment, vec![attachment]);
+    assert!(grip_allowed(attachment, &attachment_rules));
+    assert!(!grip_allowed(
+        GripSelection::Grip {
+            style: GripStyle::Pronated,
+            width: GripWidth::Medium,
+        },
+        &attachment_rules
+    ));
+}
+
+#[test]
+fn a_grip_selection_must_be_one_of_the_exercise_options() {
+    let grip = grip_rules(GripMode::Grip, vec![pronated_medium()]);
+    assert!(!grip_allowed(
+        GripSelection::Grip {
+            style: GripStyle::Supinated,
+            width: GripWidth::Medium,
+        },
+        &grip
+    ));
+
+    let attachment = GripSelection::Attachment {
+        attachment: Attachment::WideBar,
+        style: Some(GripStyle::Pronated),
+    };
+    let attachment_rules = grip_rules(GripMode::Attachment, vec![attachment]);
+    assert!(!grip_allowed(
+        GripSelection::Attachment {
+            attachment: Attachment::WideBar,
+            style: Some(GripStyle::Supinated),
+        },
+        &attachment_rules
+    ));
+    assert!(!grip_allowed(
+        GripSelection::Attachment {
+            attachment: Attachment::MagWideOver,
+            style: None,
+        },
+        &attachment_rules
+    ));
+}
+
+#[test]
+fn set_create_and_update_reject_a_grip_outside_the_exercise_options() {
+    let rules = grip_rules(GripMode::Grip, vec![pronated_medium()]);
+    let mut create = create_payload();
+    create.grip = Some(GripSelection::Grip {
+        style: GripStyle::Supinated,
+        width: GripWidth::Medium,
+    });
+    let create = validated(
+        OperationKind::SetCreate,
+        ValidatedPayload::SetCreate(create),
+    );
+    let rejection = grip_error(&create.payload, &rules).expect("a rejection");
+    assert_eq!(
+        rejection,
+        (
+            ErrorCode::BadRequest,
+            "the grip does not match the exercise"
+        )
+    );
+
+    let mut update = update_payload();
+    update.grip = Some(pronated_medium());
+    let update = validated(
+        OperationKind::SetUpdate,
+        ValidatedPayload::SetUpdate(update),
+    );
+    assert!(grip_error(&update.payload, &rules).is_none());
+
+    let mut missing = update_payload();
+    missing.grip = None;
+    let missing = validated(
+        OperationKind::SetUpdate,
+        ValidatedPayload::SetUpdate(missing),
+    );
+    let rejection = grip_error(&missing.payload, &rules).expect("a rejection");
+    assert_eq!(
+        rejection,
+        (
+            ErrorCode::BadRequest,
+            "the grip does not match the exercise"
+        )
+    );
 }
 
 #[test]
