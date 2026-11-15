@@ -48,6 +48,7 @@ depends = ["tokens"]
 run = [
   "cargo test --workspace --exclude warrior --exclude warrior_pbt",
   "cargo test -p warrior --lib",
+  "cargo test -p warrior --test fuzz_corpus",
 ]
 
 [tasks."test-integration"]
@@ -106,6 +107,25 @@ cargo test -p warrior_frontend --target wasm32-unknown-unknown
 description = "性質テストを実行する"
 depends = ["tokens"]
 run = "cargo test -p warrior_pbt"
+
+[tasks."fuzz:check"]
+description = "Fuzzing の対象の型検査を nightly のツールチェーンで実行する"
+# cargo-fuzz は sanitizer を使うため nightly を要求する。nightly の要求は Fuzzing の
+# タスクだけに閉じ、root の rust-toolchain.toml は変えない。
+run = """
+set -e
+RUSTUP_TOOLCHAIN=nightly cargo fuzz check --fuzz-dir backend/fuzz
+"""
+
+[tasks.fuzz]
+description = "Fuzzing を実行する (既定の上限は 1 つの対象あたり 60 秒)"
+run = """
+set -e
+seconds="${WARRIOR_FUZZ_SECONDS:-60}"
+for target in $(RUSTUP_TOOLCHAIN=nightly cargo fuzz list --fuzz-dir backend/fuzz); do
+  RUSTUP_TOOLCHAIN=nightly cargo fuzz run --fuzz-dir backend/fuzz "$target" -- -max_total_time="$seconds" -timeout=10
+done
+"""
 
 [tasks."backend:build"]
 description = "利用者向けの Worker をビルドする"
@@ -183,7 +203,7 @@ java -cp formal/.cache/tla2tools.jar tlc2.TLC -workers 1 -cleanup -metadir forma
 
 [tasks.check]
 description = "静的検査と全ての自動テスト、ビルドを実行する (CI と手元の共通の入口)"
-depends = ["tokens", "fmt", "lint", "test", "test-pbt", "test-browser", "formal", "backend:build", "frontend:build"]
+depends = ["tokens", "fmt", "lint", "fuzz:check", "test", "test-pbt", "test-browser", "formal", "backend:build", "frontend:build"]
 run = """
 set -e
 mise run test-integration
