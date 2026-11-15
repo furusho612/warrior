@@ -93,7 +93,8 @@
 `backend/warrior/src/sync/exercise.rs` は、完了済みセットを含む種目の削除を 409 で拒否する。
 `frontend/src/screens/record.rs` に推定 1RM の表示と自己ベストの更新の表示を置く。
 `frontend/src/screens/record/sets.rs` は、完了済みセットの入力、種別、削除、完了取消を無効にし、編集できない旨を表示する。
-`frontend/src/screens/record/set_save.rs` に、セットごとの保存のループと、完了との順序を守る印を置く。完了の書き込みは、そのセットの実行中の保存が終わってから行う。保存のループは、止めたセットと完了したセットへ値を書かない。
+`frontend/src/screens/record/set_save.rs` に、セットごとの保存のループと、完了との順序を守る印を置く。同じファイルのテストで、止めたセットの保存を始めないことと、実行中の保存の終わりを待つことを確かめる。
+`frontend/src/screens/record/exercise_view.rs` のセットの完了は、保存のループを止めて実行中の保存が終わってから書き、保存のループは止めたセットと完了したセットへ値を書かない。
 `frontend/src/storage/stopwatch.rs` に、ストップウォッチの開始時刻を読み書きする `Storage` のメソッドを置く。
 `frontend/src/screens/summary.rs` に更新した自己ベストの一覧を置く。
 `backend/warrior/tests/e2e_personal_best.rs` に E2E を追加する。
