@@ -121,6 +121,12 @@ async fn discard(request: DiscardRequest, mut signals: RecordSignals, state_sign
         Some(DiscardOutcome::MemoReverted(updated)) => {
             discard_memo_reverted(updated, &request.training_id, signals, state_signals).await;
         }
+        Some(DiscardOutcome::ExerciseMemoReverted(_)) => {
+            signals
+                .exercise_revision
+                .set((signals.exercise_revision)() + 1);
+            refresh_state(&request.training_id, state_signals).await;
+        }
         Some(DiscardOutcome::ExerciseDeleted) => {
             discard_exercise_deleted(&request.training_id, signals, state_signals).await;
         }

@@ -11,7 +11,7 @@ use dioxus_router::{navigator, Link};
 use warrior_core::datetime;
 use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
-    SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
+    SessionCreatePayload, SessionMemoPayload, SessionRecord, MEMO_MAX_CHARS,
 };
 use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{PersonalBestItem, SessionSource, TrainingSessionSummary};
@@ -28,6 +28,7 @@ mod errors;
 mod exercise_view;
 mod exercises;
 mod failed_operations;
+mod memo_save;
 mod one_rep_max;
 mod ownership;
 mod personal_bests;
@@ -41,6 +42,7 @@ mod superset_panel;
 
 use exercises::ExerciseSection;
 use failed_operations::FailedOperations;
+use memo_save::{run_save_loop, MemoSaveState};
 use ownership::RecordOwnership;
 use personal_bests::RecordPersonalBests;
 use set_events::{SetCompleted, SetCompletedEvents};
@@ -482,30 +484,16 @@ fn RecordLoadError(
     rsx! {}
 }
 
-#[derive(Clone)]
-struct SaveState {
-    /// 保存中の表示。
-    saving: Signal<bool>,
-    /// 保存タスクが走っているか。
-    in_flight: Rc<Cell<bool>>,
-    /// 保存中に新しい入力があったか。
-    dirty: Rc<Cell<bool>>,
-    /// 入力中のメモ。保存の開始時の値を読む。
-    draft: Rc<RefCell<String>>,
-}
-
 #[component]
 fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
     let saving = use_signal(|| false);
-    let in_flight = use_hook(|| Rc::new(Cell::new(false)));
-    let dirty = use_hook(|| Rc::new(Cell::new(false)));
-    let draft = use_hook(|| Rc::new(RefCell::new((signals.memo)())));
-    let state = SaveState {
+    let initial = (signals.memo)();
+    let state = use_hook(|| MemoSaveState {
         saving,
-        in_flight,
-        dirty,
-        draft,
-    };
+        in_flight: Rc::new(Cell::new(false)),
+        dirty: Rc::new(Cell::new(false)),
+        draft: Rc::new(RefCell::new(initial)),
+    });
     let input_state = state.clone();
     let retry_state = state.clone();
     let reset_state = state.clone();
@@ -536,8 +524,7 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
                 placeholder: "{text(Key::RecordMemoPlaceholder)}",
                 oninput: move |event| {
                     *input_state.draft.borrow_mut() = event.value();
-                    input_state.dirty.set(true);
-                    if input_state.in_flight.replace(true) {
+                    if !input_state.request() {
                         return;
                     }
                     spawn(save_loop(signals, input_state.clone()));
@@ -554,8 +541,8 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
                         if retry_state.in_flight.get() {
                             return;
                         }
-                        retry_state.in_flight.set(true);
                         retry_state.dirty.set(true);
+                        retry_state.in_flight.set(true);
                         spawn(save_loop(signals, retry_state.clone()));
                     },
                     "{text(Key::RecordRetry)}"
@@ -755,40 +742,37 @@ async fn read_record_state(training_id: &str) -> RecordState {
     }
 }
 
-async fn save_loop(mut signals: RecordSignals, mut state: SaveState) {
-    state.saving.set(true);
-    loop {
-        state.dirty.set(false);
-        let Some(record) = (signals.session)() else {
-            state.saving.set(false);
-            state.in_flight.set(false);
-            return;
-        };
-        let draft_text = state.draft.borrow().clone();
-        match save_draft(record, &draft_text).await {
-            Ok(updated) => {
-                if *state.draft.borrow() == draft_text {
-                    signals.persisted_memo.set(draft_text.clone());
+async fn save_loop(signals: RecordSignals, state: MemoSaveState) {
+    let save_state = state.clone();
+    run_save_loop(state, move |draft_text| {
+        let mut signals = signals;
+        let save_state = save_state.clone();
+        async move {
+            let Some(record) = (signals.session)() else {
+                return false;
+            };
+            match save_draft(record, &draft_text).await {
+                Ok(updated) => {
+                    if *save_state.draft.borrow() == draft_text {
+                        signals.persisted_memo.set(draft_text.clone());
+                    }
+                    signals.memo.set(draft_text);
+                    signals.session.set(Some(updated));
+                    signals.save_error.set(None);
+                    // 送信の往復を待たずに次の入力を保存する。画面の状態は 200ms の読み直しが更新する。
+                    sync::flush_in_background();
+                    true
                 }
-                signals.memo.set(draft_text);
-                signals.session.set(Some(updated));
-                signals.save_error.set(None);
-                // 送信の往復を待たずに次の入力を保存する。画面の状態は 200ms の読み直しが更新する。
-                sync::flush_in_background();
-            }
-            Err(_) => {
-                signals
-                    .save_error
-                    .set(Some(text(Key::RecordSaveFailed).to_owned()));
-                break;
+                Err(_) => {
+                    signals
+                        .save_error
+                        .set(Some(text(Key::RecordSaveFailed).to_owned()));
+                    false
+                }
             }
         }
-        if !state.dirty.get() {
-            break;
-        }
-    }
-    state.saving.set(false);
-    state.in_flight.set(false);
+    })
+    .await;
 }
 
 /// 終了を止める送信待ちの種別。
@@ -873,27 +857,25 @@ async fn create_session() -> Result<SessionRecord, StorageError> {
 }
 
 async fn save_draft(mut record: SessionRecord, memo: &str) -> Result<SessionRecord, StorageError> {
+    warrior_core::memo::validate(memo)
+        .map_err(|_| StorageError::InvalidOperation("memo_too_long".to_owned()))?;
     record.memo = memo.to_owned();
     record.updated_at = now_iso();
-    let started_at = record.started_at.clone().ok_or_else(|| {
-        StorageError::InvalidOperation("the session has no start time".to_owned())
-    })?;
-    let payload = SessionUpdatePayload {
-        date: record.date.clone(),
-        started_at,
+    let payload = SessionMemoPayload {
+        training_id: record.id.clone(),
         memo: record.memo.clone(),
     };
     let operation = Operation {
         operation_id: new_uuid()?,
         training_id: record.id.clone(),
         sequence: 0,
-        kind: OperationKind::TrainingSessionUpdate,
+        kind: OperationKind::TrainingSessionMemo,
         parent_operation_id: None,
         payload: serde_json::to_value(payload)
             .map_err(|error| StorageError::Serialize(error.to_string()))?,
     };
     let storage = storage::current().await?;
-    storage.save_session_update(&record, &operation).await?;
+    storage.save_session_memo(&record, &operation).await?;
     Ok(record)
 }
 
@@ -928,11 +910,13 @@ fn operation_label(kind: OperationKind) -> &'static str {
     match kind {
         OperationKind::TrainingSessionCreate => text(Key::RecordOperationCreate),
         OperationKind::TrainingSessionUpdate => text(Key::RecordOperationUpdate),
+        OperationKind::TrainingSessionMemo => text(Key::RecordOperationSessionMemo),
         OperationKind::TrainingSessionBackfill => text(Key::RecordOperationBackfill),
         OperationKind::TrainingSessionDelete => text(Key::RecordOperationDelete),
         OperationKind::TrainingExerciseCreate => text(Key::RecordOperationExerciseCreate),
         OperationKind::TrainingExerciseDelete => text(Key::RecordOperationExerciseDelete),
         OperationKind::TrainingExerciseReorder => text(Key::RecordOperationExerciseReorder),
+        OperationKind::TrainingExerciseMemo => text(Key::RecordOperationExerciseMemo),
         OperationKind::SetCreate => text(Key::RecordOperationSetCreate),
         OperationKind::SetUpdate => text(Key::RecordOperationSetUpdate),
         OperationKind::SetDelete => text(Key::RecordOperationSetDelete),

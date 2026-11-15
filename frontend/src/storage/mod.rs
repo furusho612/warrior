@@ -14,12 +14,12 @@ use web_sys::{IdbDatabase, IdbObjectStore, IdbTransactionMode};
 use warrior_core::sync::{
     discard as discard_transition, mark_permanent_failure as permanent_failure_transition,
     mark_sending as sending_transition, mark_success as success_transition,
-    mark_transient_failure as transient_failure_transition, pending_update,
+    mark_transient_failure as transient_failure_transition, pending_session_memo, pending_update,
     recover_interrupted as recover_transition, retry as retry_transition, unresolved_create,
-    Operation, OperationKind, OutboxEntry, OutboxState, SessionCreatePayload, SessionRecord,
-    SessionUpdatePayload,
+    Operation, OperationKind, OutboxEntry, OutboxState, SessionCreatePayload, SessionMemoPayload,
+    SessionRecord, SessionUpdatePayload, TrainingExerciseMemoPayload,
 };
-use warrior_core::training_record::TrainingRecord;
+use warrior_core::training_record::{TrainingExerciseRecord, TrainingRecord};
 
 pub mod indexeddb;
 pub mod outbox;
@@ -92,6 +92,8 @@ pub enum DiscardOutcome {
     SessionDeleted,
     /// 更新の破棄で、メモをサーバーが受理した値に戻した。
     MemoReverted(Box<SessionRecord>),
+    /// 種目のメモの破棄で、メモをサーバーが受理した値に戻した。
+    ExerciseMemoReverted(Box<TrainingExerciseRecord>),
     /// 種目の作成の破棄で、端末の種目と配下の行を削除した。
     ExerciseDeleted,
     /// セットの作成の破棄で、端末のセットと段を削除した。
@@ -175,6 +177,15 @@ impl Drop for Inner {
             database.close();
         }
     }
+}
+
+/// トレーニングのメモの保存の種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionChange {
+    /// 日付、開始時刻、メモを更新する。
+    Update,
+    /// メモだけを更新する。
+    Memo,
 }
 
 /// 端末内の保存の入口。
@@ -440,12 +451,43 @@ impl Storage {
         session: &SessionRecord,
         operation: &Operation,
     ) -> Result<(), StorageError> {
-        if operation.kind != OperationKind::TrainingSessionUpdate
-            || operation.training_id != session.id
-        {
+        self.save_session_change(session, operation, SessionChange::Update)
+            .await
+    }
+
+    /// トレーニング全体のメモとその操作を 1 つのトランザクションで保存する。
+    pub async fn save_session_memo(
+        &self,
+        session: &SessionRecord,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        self.save_session_change(session, operation, SessionChange::Memo)
+            .await
+    }
+
+    async fn save_session_change(
+        &self,
+        session: &SessionRecord,
+        operation: &Operation,
+        change: SessionChange,
+    ) -> Result<(), StorageError> {
+        let expected = match change {
+            SessionChange::Update => OperationKind::TrainingSessionUpdate,
+            SessionChange::Memo => OperationKind::TrainingSessionMemo,
+        };
+        if operation.kind != expected || operation.training_id != session.id {
             return Err(StorageError::InvalidOperation(
-                "the operation is not a session update".to_owned(),
+                "the operation is not a session change".to_owned(),
             ));
+        }
+        if change == SessionChange::Memo {
+            let payload: SessionMemoPayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|error| StorageError::Serialize(error.to_string()))?;
+            if payload.training_id != session.id || payload.memo != session.memo {
+                return Err(StorageError::InvalidOperation(
+                    "the operation does not match the memo".to_owned(),
+                ));
+            }
         }
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
@@ -473,7 +515,10 @@ impl Storage {
         session_to_store.confirmed_sequence = existing_session.confirmed_sequence;
 
         let entries = outbox::read(&outbox_store).await?;
-        let merge_target = pending_update(&entries, &operation.training_id);
+        let merge_target = match change {
+            SessionChange::Update => pending_update(&entries, &operation.training_id),
+            SessionChange::Memo => pending_session_memo(&entries, &operation.training_id),
+        };
         let (operation_id, sequence, attempts, parent, state, reuse) = match merge_target {
             Some(entry) => (
                 entry.operation.operation_id.clone(),
@@ -636,7 +681,11 @@ impl Storage {
         let database = self.database().await?;
         let transaction = indexeddb::Transaction::new(
             &database,
-            &[Store::Outbox.name(), Store::TrainingSessions.name()],
+            &[
+                Store::Outbox.name(),
+                Store::TrainingSessions.name(),
+                Store::TrainingExercises.name(),
+            ],
             IdbTransactionMode::Readwrite,
         )?;
         match mark_success_steps(&transaction, operation_id).await {
@@ -890,7 +939,16 @@ async fn replace_session_tree_steps(
     session.confirmed_sequence = 0;
     indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
 
-    put_rows(transaction, Store::TrainingExercises, &record.exercises).await?;
+    let exercises = record
+        .exercises
+        .iter()
+        .map(|exercise| {
+            let mut stored = exercise.clone();
+            stored.confirmed_memo = stored.memo.clone();
+            stored
+        })
+        .collect::<Vec<_>>();
+    put_rows(transaction, Store::TrainingExercises, &exercises).await?;
     put_rows(transaction, Store::Sets, &record.sets).await?;
     put_rows(transaction, Store::SetSegments, &record.segments).await?;
     let supersets = record
@@ -940,7 +998,7 @@ fn ensure_record_store(store: Store) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
+fn session_payload_memo(operation: &Operation) -> Result<String, StorageError> {
     match operation.kind {
         OperationKind::TrainingSessionCreate => {
             serde_json::from_value::<SessionCreatePayload>(operation.payload.clone())
@@ -952,9 +1010,15 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
                 .map(|payload| payload.memo)
                 .map_err(|error| StorageError::Serialize(error.to_string()))
         }
+        OperationKind::TrainingSessionMemo => {
+            serde_json::from_value::<SessionMemoPayload>(operation.payload.clone())
+                .map(|payload| payload.memo)
+                .map_err(|error| StorageError::Serialize(error.to_string()))
+        }
         OperationKind::TrainingExerciseCreate
         | OperationKind::TrainingExerciseDelete
         | OperationKind::TrainingExerciseReorder
+        | OperationKind::TrainingExerciseMemo
         | OperationKind::SetCreate
         | OperationKind::SetUpdate
         | OperationKind::SetDelete
@@ -965,9 +1029,20 @@ fn payload_memo(operation: &Operation) -> Result<String, StorageError> {
         | OperationKind::SupersetReorder
         | OperationKind::TrainingSessionBackfill
         | OperationKind::TrainingSessionDelete => Err(StorageError::InvalidOperation(
-            "the operation has no memo".to_owned(),
+            "the operation has no session memo".to_owned(),
         )),
     }
+}
+
+fn exercise_payload_memo(operation: &Operation) -> Result<(String, String), StorageError> {
+    if operation.kind != OperationKind::TrainingExerciseMemo {
+        return Err(StorageError::InvalidOperation(
+            "the operation has no exercise memo".to_owned(),
+        ));
+    }
+    serde_json::from_value::<TrainingExerciseMemoPayload>(operation.payload.clone())
+        .map(|payload| (payload.training_exercise_id, payload.memo))
+        .map_err(|error| StorageError::Serialize(error.to_string()))
 }
 
 async fn retry_steps(
@@ -984,9 +1059,12 @@ async fn retry_steps(
     else {
         return Ok(());
     };
-    let target_is_update = target.operation.kind == OperationKind::TrainingSessionUpdate;
+    let target_is_session_memo = matches!(
+        target.operation.kind,
+        OperationKind::TrainingSessionUpdate | OperationKind::TrainingSessionMemo
+    );
     let key = JsValue::from_str(&target.operation.training_id);
-    if target_is_update {
+    if target_is_session_memo {
         if let Some(value) = indexeddb::get(&sessions, &key).await? {
             let session: SessionRecord = indexeddb::from_js(&value)?;
             if target.operation.sequence <= session.confirmed_sequence {
@@ -1008,6 +1086,7 @@ async fn mark_success_steps(
 ) -> Result<(), StorageError> {
     let outbox_store = transaction.store(Store::Outbox.name())?;
     let sessions = transaction.store(Store::TrainingSessions.name())?;
+    let exercises = transaction.store(Store::TrainingExercises.name())?;
     let entries = outbox::read(&outbox_store).await?;
     let Some(target) = entries
         .iter()
@@ -1019,33 +1098,29 @@ async fn mark_success_steps(
 
     let mut updated = entries.clone();
     success_transition(&mut updated, operation_id);
-    if target.operation.kind == OperationKind::TrainingSessionUpdate {
-        let obsolete = entries
-            .iter()
-            .filter(|entry| {
-                entry.operation.training_id == target.operation.training_id
-                    && entry.operation.kind == OperationKind::TrainingSessionUpdate
-                    && entry.operation.sequence < target.operation.sequence
-                    && matches!(
-                        entry.state,
-                        OutboxState::Pending | OutboxState::Blocked | OutboxState::Failed
-                    )
-            })
-            .map(|entry| entry.operation.operation_id.clone())
-            .collect::<Vec<_>>();
-        for obsolete_id in obsolete {
-            discard_transition(&mut updated, &obsolete_id);
-        }
-    }
+    discard_superseded_memos(&mut updated, &entries, &target.operation);
     write_outbox_differences(&outbox_store, &entries, &updated).await?;
+
+    if matches!(target.operation.kind, OperationKind::TrainingExerciseMemo) {
+        let (training_exercise_id, memo) = exercise_payload_memo(&target.operation)?;
+        let key = JsValue::from_str(&training_exercise_id);
+        if let Some(value) = indexeddb::get(&exercises, &key).await? {
+            let mut exercise: TrainingExerciseRecord = indexeddb::from_js(&value)?;
+            exercise.confirmed_memo = memo;
+            indexeddb::put(&exercises, &indexeddb::to_js(&exercise)?).await?;
+        }
+        return Ok(());
+    }
 
     if !matches!(
         target.operation.kind,
-        OperationKind::TrainingSessionCreate | OperationKind::TrainingSessionUpdate
+        OperationKind::TrainingSessionCreate
+            | OperationKind::TrainingSessionUpdate
+            | OperationKind::TrainingSessionMemo
     ) {
         return Ok(());
     }
-    let memo = payload_memo(&target.operation)?;
+    let memo = session_payload_memo(&target.operation)?;
     let key = JsValue::from_str(&target.operation.training_id);
     if let Some(value) = indexeddb::get(&sessions, &key).await? {
         let mut session: SessionRecord = indexeddb::from_js(&value)?;
@@ -1054,6 +1129,46 @@ async fn mark_success_steps(
         indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
     }
     Ok(())
+}
+
+/// 成功したメモの保存より古い、同じ対象のメモの操作を列から外す。
+///
+/// 古い操作を残すと、再試行で新しいメモを古い値へ戻してしまう。
+fn discard_superseded_memos(
+    updated: &mut Vec<OutboxEntry>,
+    entries: &[OutboxEntry],
+    operation: &Operation,
+) {
+    let obsolete = entries
+        .iter()
+        .filter(|entry| {
+            entry.operation.training_id == operation.training_id
+                && entry.operation.sequence < operation.sequence
+                && matches!(
+                    entry.state,
+                    OutboxState::Pending | OutboxState::Blocked | OutboxState::Failed
+                )
+                && match operation.kind {
+                    OperationKind::TrainingSessionUpdate | OperationKind::TrainingSessionMemo => {
+                        matches!(
+                            entry.operation.kind,
+                            OperationKind::TrainingSessionUpdate
+                                | OperationKind::TrainingSessionMemo
+                        )
+                    }
+                    OperationKind::TrainingExerciseMemo => {
+                        entry.operation.kind == OperationKind::TrainingExerciseMemo
+                            && entry.operation.payload.get("training_exercise_id")
+                                == operation.payload.get("training_exercise_id")
+                    }
+                    _ => false,
+                }
+        })
+        .map(|entry| entry.operation.operation_id.clone())
+        .collect::<Vec<_>>();
+    for obsolete_id in obsolete {
+        discard_transition(updated, &obsolete_id);
+    }
 }
 
 async fn write_outbox_differences(

@@ -6,6 +6,7 @@
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
+use warrior_core::memo::display_text;
 use warrior_core::sync::{
     validate_operation, Operation, OperationKind, SessionDeletePayload, SessionRecord,
 };
@@ -132,7 +133,7 @@ fn HistoryRow(
                 }
             }
             if !memo.is_empty() {
-                p { class: "truncate text-[11px] text-text-sub", "{memo}" }
+                p { class: "truncate text-[11px] text-text-sub", "{display_text(&memo)}" }
             }
             if confirming {
                 div {

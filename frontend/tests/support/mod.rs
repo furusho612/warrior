@@ -200,6 +200,8 @@ pub fn exercise_row(id: &str, exercise_id: &str, position: i64) -> TrainingExerc
         training_id: TRAINING_ID.to_owned(),
         exercise_id: exercise_id.to_owned(),
         snapshot: "{}".to_owned(),
+        memo: String::new(),
+        confirmed_memo: String::new(),
         position,
         created_at: "2026-11-12T03:00:00Z".to_owned(),
         updated_at: "2026-11-12T03:00:00Z".to_owned(),

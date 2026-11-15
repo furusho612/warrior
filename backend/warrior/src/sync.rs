@@ -10,7 +10,7 @@ use warrior_core::ownership::{decide_write, WriteDecision};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
     validate_operation, Operation, OperationKind, OperationResponse, SessionBackfillPayload,
-    SessionCreatePayload, SessionUpdatePayload, ValidatedPayload,
+    SessionCreatePayload, SessionMemoPayload, SessionUpdatePayload, ValidatedPayload,
 };
 use warrior_core::training_session::{PersonalBestItem, SessionSource};
 use worker::d1::D1Result;
@@ -144,10 +144,30 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
             )
             .await?
         }
+        OperationKind::TrainingSessionMemo => {
+            session_memo_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
         OperationKind::TrainingExerciseCreate
         | OperationKind::TrainingExerciseDelete
         | OperationKind::TrainingExerciseReorder => {
             exercise::exercise_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
+        OperationKind::TrainingExerciseMemo => {
+            exercise::exercise_memo_batch(
                 &db,
                 &authenticated.id,
                 terminal.as_deref(),
@@ -279,7 +299,9 @@ fn zero_change_outcome(
             CreateRejection::NotFound => ZeroChangeOutcome::NotFound,
         },
         OperationKind::TrainingSessionDelete => ZeroChangeOutcome::NotFound,
-        OperationKind::TrainingSessionUpdate => match session {
+        OperationKind::TrainingSessionUpdate
+        | OperationKind::TrainingSessionMemo
+        | OperationKind::TrainingExerciseMemo => match session {
             Some(session) if session.user_id == user_id && session.finished_at.is_some() => {
                 ZeroChangeOutcome::ReapplyFinished
             }
@@ -317,12 +339,18 @@ async fn reject_or_reapply(
 ) -> Result<Response> {
     let session = session_row(db, &operation.training_id).await?;
     match zero_change_outcome(operation.kind, session.as_ref(), user_id) {
-        ZeroChangeOutcome::ReapplyFinished => {
-            let ValidatedPayload::Update(payload) = &validated.payload else {
-                return Ok(response(ErrorCode::BadRequest, "operation is invalid"));
-            };
-            reapply_finished_update(db, user_id, operation, payload, now).await
-        }
+        ZeroChangeOutcome::ReapplyFinished => match &validated.payload {
+            ValidatedPayload::Update(payload) => {
+                reapply_finished_update(db, user_id, operation, payload, now).await
+            }
+            ValidatedPayload::SessionMemo(payload) => {
+                reapply_finished_session_memo(db, user_id, operation, payload, now).await
+            }
+            ValidatedPayload::ExerciseMemo(payload) => {
+                exercise::reapply_finished_exercise_memo(db, user_id, operation, payload, now).await
+            }
+            _ => Ok(response(ErrorCode::BadRequest, "operation is invalid")),
+        },
         ZeroChangeOutcome::Forbidden => Ok(response(
             ErrorCode::Forbidden,
             "the training is being edited on another terminal",
@@ -615,6 +643,84 @@ fn delete_statements(
     ]
 }
 
+/// トレーニング全体のメモの batch。
+///
+/// 記録中は編集権を持つ端末だけが書き込み、終了済みはどの端末でも書き込める。
+/// 更新が 0 行だったときは、再取得した行から終了後の書き込みとして再適用する。
+async fn session_memo_batch(
+    db: &Db,
+    user_id: &str,
+    terminal_id: Option<&str>,
+    validated: &warrior_core::sync::ValidatedOperation,
+    now: &str,
+) -> Result<BatchOutcome> {
+    let Some(session) = session_row(db, &validated.operation.training_id).await? else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    };
+    if session.user_id != user_id {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    }
+    let finished = session.finished_at.is_some();
+    let decision = write_decision(finished, session.owner_terminal_id.as_deref(), terminal_id);
+    let Some(owner) = owner_condition(decision, terminal_id) else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        )));
+    };
+    let ValidatedPayload::SessionMemo(payload) = &validated.payload else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::BadRequest,
+            "operation is invalid",
+        )));
+    };
+    Ok(BatchOutcome::Apply(vec![
+        session_memo_statement(user_id, owner, &validated.operation, payload, now),
+        applied_statement(user_id, &validated.operation, now),
+    ]))
+}
+
+/// 終了済みのトレーニングに、トレーニング全体のメモを終了後の書き込みとして適用する。
+async fn reapply_finished_session_memo(
+    db: &Db,
+    user_id: &str,
+    operation: &Operation,
+    payload: &SessionMemoPayload,
+    now: &str,
+) -> Result<Response> {
+    let statements = vec![
+        session_memo_statement(user_id, OwnerCondition::Finished, operation, payload, now),
+        applied_statement(user_id, operation, now),
+    ];
+    let results = match db.batch(&statements).await {
+        Ok(results) => results,
+        Err(error) => {
+            console_error!("failed to reapply the session memo: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    let changed = match batch_changes(&results) {
+        Ok(changed) => changed,
+        Err(error) => {
+            console_error!("failed to read the changed rows of the reapplied memo: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    if changed == 0 {
+        return Ok(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        ));
+    }
+    status_response("applied")
+}
+
 async fn update_batch(
     db: &Db,
     user_id: &str,
@@ -769,6 +875,45 @@ fn optional_text(value: &Option<String>) -> SqlValue {
     value.clone().map_or(SqlValue::Null, SqlValue::Text)
 }
 
+fn session_memo_statement(
+    user_id: &str,
+    owner: OwnerCondition<'_>,
+    operation: &Operation,
+    payload: &SessionMemoPayload,
+    now: &str,
+) -> SqlStatement {
+    let training_id = SqlValue::Text(operation.training_id.clone());
+    let user = SqlValue::Text(user_id.to_owned());
+    let mut bindings = vec![
+        SqlValue::Text(payload.memo.clone()),
+        SqlValue::Text(now.to_owned()),
+    ];
+    let sql = match owner {
+        OwnerCondition::Claim(terminal_id) => {
+            bindings.push(SqlValue::Text(terminal_id.to_owned()));
+            bindings.push(training_id);
+            bindings.push(user);
+            "UPDATE training_sessions SET memo = ?, updated_at = ?, owner_terminal_id = ? \
+             WHERE id = ? AND user_id = ? AND finished_at IS NULL AND owner_terminal_id IS NULL"
+        }
+        OwnerCondition::Owned(terminal_id) => {
+            bindings.push(training_id);
+            bindings.push(user);
+            bindings.push(SqlValue::Text(terminal_id.to_owned()));
+            "UPDATE training_sessions SET memo = ?, updated_at = ? \
+             WHERE id = ? AND user_id = ? \
+             AND (finished_at IS NOT NULL OR owner_terminal_id = ?)"
+        }
+        OwnerCondition::Finished => {
+            bindings.push(training_id);
+            bindings.push(user);
+            "UPDATE training_sessions SET memo = ?, updated_at = ? \
+             WHERE id = ? AND user_id = ? AND finished_at IS NOT NULL"
+        }
+    };
+    SqlStatement::new(sql, bindings)
+}
+
 fn update_statements(
     user_id: &str,
     owner: OwnerCondition<'_>,
@@ -824,7 +969,7 @@ fn update_statement(
     SqlStatement::new(sql, bindings)
 }
 
-fn status_response(status: &str) -> Result<Response> {
+pub(crate) fn status_response(status: &str) -> Result<Response> {
     Response::from_json(&serde_json::json!({ "status": status }))
 }
 
@@ -847,8 +992,8 @@ mod tests {
 
     use super::{
         backfill_statements, create_statements, delete_statements, owner_condition,
-        update_statements, write_decision, zero_change_outcome, OwnerCondition, SessionOwnerRow,
-        ZeroChangeOutcome,
+        session_memo_statement, update_statements, write_decision, zero_change_outcome,
+        OwnerCondition, SessionOwnerRow, ZeroChangeOutcome,
     };
 
     const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -897,6 +1042,38 @@ mod tests {
             started_at: "2026-11-12T03:00:00Z".to_owned(),
             memo: "メモ".to_owned(),
         }
+    }
+
+    #[test]
+    fn the_session_memo_statement_only_writes_the_memo_and_the_timestamp() {
+        let statement = session_memo_statement(
+            USER_ID,
+            OwnerCondition::Owned(TERMINAL_ID),
+            &update_operation(),
+            &warrior_core::sync::SessionMemoPayload {
+                training_id: TRAINING_ID.to_owned(),
+                memo: "腰に痛みがある".to_owned(),
+            },
+            "2026-11-12T00:00:00Z",
+        );
+        assert!(statement
+            .sql()
+            .contains("UPDATE training_sessions SET memo = ?, updated_at = ?"));
+        assert!(!statement.sql().contains("date = ?"));
+        assert!(!statement.sql().contains("started_at = ?"));
+        assert!(statement.sql().contains("owner_terminal_id = ?"));
+        assert_eq!(
+            statement.bindings()[0],
+            SqlValue::Text("腰に痛みがある".to_owned())
+        );
+        assert_eq!(
+            statement.bindings()[2],
+            SqlValue::Text(TRAINING_ID.to_owned())
+        );
+        assert_eq!(
+            statement.bindings()[4],
+            SqlValue::Text(TERMINAL_ID.to_owned())
+        );
     }
 
     #[test]

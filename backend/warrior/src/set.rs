@@ -229,11 +229,13 @@ fn set_statements(
         }),
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::SessionMemo(_)
         | ValidatedPayload::Backfill(_)
         | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SupersetCreate(_)
         | ValidatedPayload::SupersetDelete(_)
         | ValidatedPayload::SupersetReorder(_) => None,
@@ -435,11 +437,13 @@ async fn payload_rules(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::SessionMemo(_)
         | ValidatedPayload::Backfill(_)
         | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SetDelete(_)
         | ValidatedPayload::SetReorder(_)
         | ValidatedPayload::SupersetCreate(_)

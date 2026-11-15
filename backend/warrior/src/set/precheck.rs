@@ -101,11 +101,13 @@ pub(super) async fn precheck(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::SessionMemo(_)
         | ValidatedPayload::Backfill(_)
         | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SupersetCreate(_)
         | ValidatedPayload::SupersetDelete(_)
         | ValidatedPayload::SupersetReorder(_) => Ok(None),

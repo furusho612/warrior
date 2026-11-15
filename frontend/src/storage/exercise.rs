@@ -3,7 +3,10 @@
 use js_sys::Array;
 use serde::Deserialize;
 use warrior_core::superset::SupersetMembers;
-use warrior_core::sync::{unresolved_create, Operation, OperationKind, OutboxEntry, OutboxState};
+use warrior_core::sync::{
+    pending_exercise_memo, unresolved_create, Operation, OperationKind, OutboxEntry, OutboxState,
+    TrainingExerciseMemoPayload,
+};
 use warrior_core::training_record::{SupersetMemberRecord, TrainingExerciseRecord, TrainingRecord};
 use wasm_bindgen::JsValue;
 use web_sys::{IdbObjectStore, IdbTransactionMode};
@@ -69,6 +72,86 @@ impl Storage {
             return abort(transaction, error).await;
         }
         if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+            return abort(transaction, error).await;
+        }
+        transaction.finish().await
+    }
+
+    /// 種目のメモとその操作を 1 つのトランザクションで保存する。
+    ///
+    /// 送信待ちの同じ種目のメモがまだ送られていないときは、その操作の本文を新しいメモへ
+    /// 置き換える。入力のたびに操作を増やさないためである。
+    pub async fn save_training_exercise_memo(
+        &self,
+        training_id: &str,
+        training_exercise_id: &str,
+        memo: &str,
+        operation: &Operation,
+    ) -> Result<(), StorageError> {
+        if operation.kind != OperationKind::TrainingExerciseMemo
+            || operation.training_id != training_id
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation is not an exercise memo".to_owned(),
+            ));
+        }
+        let payload: TrainingExerciseMemoPayload =
+            serde_json::from_value(operation.payload.clone())
+                .map_err(|error| StorageError::Serialize(error.to_string()))?;
+        if payload.training_id != training_id
+            || payload.training_exercise_id != training_exercise_id
+            || payload.memo != memo
+        {
+            return Err(StorageError::InvalidOperation(
+                "the operation does not match the memo".to_owned(),
+            ));
+        }
+        let database = self.database().await?;
+        let transaction = indexeddb::Transaction::new(
+            &database,
+            &[
+                Store::TrainingExercises.name(),
+                Store::Outbox.name(),
+                Store::Meta.name(),
+            ],
+            IdbTransactionMode::Readwrite,
+        )?;
+        let exercises = transaction.store(Store::TrainingExercises.name())?;
+        let outbox_store = transaction.store(Store::Outbox.name())?;
+        let meta = transaction.store(Store::Meta.name())?;
+        let Some(mut stored) = read_exercise(&exercises, training_exercise_id).await? else {
+            return Err(StorageError::InvalidOperation(
+                "the exercise does not exist".to_owned(),
+            ));
+        };
+        if stored.training_id != training_id {
+            return Err(StorageError::InvalidOperation(
+                "the exercise does not exist in the training".to_owned(),
+            ));
+        }
+        stored.memo = memo.to_owned();
+        stored.updated_at = crate::ids::now_iso();
+        if let Err(error) = indexeddb::put(&exercises, &indexeddb::to_js(&stored)?).await {
+            return abort(transaction, error).await;
+        }
+        let entries = outbox::read(&outbox_store).await?;
+        let Some(target) =
+            pending_exercise_memo(&entries, training_id, training_exercise_id).cloned()
+        else {
+            if let Err(error) = enqueue_operation(&outbox_store, &meta, &entries, operation).await {
+                return abort(transaction, error).await;
+            }
+            return transaction.finish().await;
+        };
+        let mut stored_operation = target.operation;
+        stored_operation.payload = operation.payload.clone();
+        let entry = OutboxEntry {
+            operation: stored_operation,
+            state: target.state,
+            attempts: target.attempts,
+            attempted: false,
+        };
+        if let Err(error) = indexeddb::put(&outbox_store, &indexeddb::to_js(&entry)?).await {
             return abort(transaction, error).await;
         }
         transaction.finish().await
@@ -356,6 +439,7 @@ fn has_newer_exercise_change(
             OperationKind::SetCreate
                 | OperationKind::SetReorder
                 | OperationKind::TrainingExerciseDelete
+                | OperationKind::TrainingExerciseMemo
         ) && same_exercise)
             || (matches!(
                 operation.kind,
@@ -390,10 +474,12 @@ async fn restore_training_exercise_steps(
     let Some(server_exercise) = server_exercise else {
         return Ok(());
     };
+    let mut server_exercise = server_exercise.clone();
+    server_exercise.confirmed_memo = server_exercise.memo.clone();
     put_rows(
         transaction,
         Store::TrainingExercises,
-        std::slice::from_ref(server_exercise),
+        std::slice::from_ref(&server_exercise),
     )
     .await?;
 

@@ -26,6 +26,7 @@ pub(crate) struct SetSegmentRow {
     training_date: Option<String>,
     training_exercise_id: String,
     pub(crate) snapshot: String,
+    training_exercise_memo: String,
     set_id: String,
     pub(crate) kind: String,
     pub(crate) set_rpe: Option<f64>,
@@ -52,6 +53,8 @@ pub struct StoredExercise {
     pub training_id: String,
     /// 記録した時点の種目の内容。
     pub snapshot: ExerciseSnapshot,
+    /// 種目ごとのメモ。
+    pub memo: String,
     /// 完了したセットの記録。
     pub sets: Vec<SetRecord>,
     /// セットごとのグリップの選択の JSON。`sets` と同じ並びである。
@@ -61,7 +64,7 @@ pub struct StoredExercise {
 }
 
 pub(crate) const SET_SEGMENT_COLUMNS: &str = "te.training_id AS training_id, \
-     te.id AS training_exercise_id, te.snapshot, \
+     te.id AS training_exercise_id, te.snapshot, te.memo AS training_exercise_memo, \
      s.id AS set_id, s.kind AS kind, s.rpe AS set_rpe, s.grip AS grip, \
      s.body_weight_kg AS body_weight_kg, \
      sg.id AS segment_id, \
@@ -234,6 +237,7 @@ enum BuildSetsError {
 struct ExerciseGroup {
     training_exercise_id: String,
     snapshot: ExerciseSnapshot,
+    memo: String,
     sets: Vec<StoredSet>,
 }
 
@@ -287,6 +291,7 @@ fn build_training(
                 groups.push(ExerciseGroup {
                     training_exercise_id: row.training_exercise_id.clone(),
                     snapshot,
+                    memo: row.training_exercise_memo.clone(),
                     sets: Vec::new(),
                 });
                 groups.len() - 1
@@ -353,6 +358,7 @@ fn build_training(
         exercises.push(StoredExercise {
             training_id: training_id.to_owned(),
             snapshot: group.snapshot,
+            memo: group.memo,
             sets,
             set_grips,
             set_body_weights,
@@ -467,7 +473,7 @@ mod tests {
 
     #[test]
     fn the_stored_rows_become_the_weight_and_time_sets() {
-        let rows = vec![
+        let mut rows = vec![
             segment_row(
                 "training-a",
                 "exercise-weight",
@@ -514,9 +520,11 @@ mod tests {
                 Some(90),
             ),
         ];
+        rows[0].training_exercise_memo = "種目のメモ".to_owned();
         let exercises = build_exercises(rows).expect("the stored sets are valid");
         assert_eq!(exercises.len(), 2);
         assert_eq!(exercises[0].training_id, "training-a");
+        assert_eq!(exercises[0].memo, "種目のメモ");
         assert_eq!(exercises[0].snapshot.body_part, BodyPart::Chest);
         let sets = session_sets(&exercises);
         assert_eq!(sets.len(), 4);
@@ -736,6 +744,7 @@ mod tests {
             training_date: None,
             training_exercise_id: exercise_id.to_owned(),
             snapshot: snapshot_json(exercise_id, record_mode, "bilateral"),
+            training_exercise_memo: String::new(),
             set_id: set_id.to_owned(),
             kind: kind.to_owned(),
             set_rpe: None,
@@ -768,6 +777,7 @@ mod tests {
             training_date: None,
             training_exercise_id: exercise_id.to_owned(),
             snapshot: snapshot_json(exercise_id, "weight_and_reps", "unilateral"),
+            training_exercise_memo: String::new(),
             set_id: set_id.to_owned(),
             kind: "normal".to_owned(),
             set_rpe: None,
@@ -798,6 +808,7 @@ mod tests {
             training_date: None,
             training_exercise_id: "exercise-bodyweight".to_owned(),
             snapshot: snapshot_json("exercise-bodyweight", "bodyweight_and_reps", "bilateral"),
+            training_exercise_memo: String::new(),
             set_id: "set-bodyweight".to_owned(),
             kind: "normal".to_owned(),
             set_rpe: None,

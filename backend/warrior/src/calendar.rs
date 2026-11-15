@@ -374,6 +374,7 @@ mod tests {
             StoredExercise {
                 training_id: "training-b".to_owned(),
                 snapshot: snapshot_of("plank", "プランク", BodyPart::Abs, RecordMode::Time),
+                memo: String::new(),
                 sets: vec![time_record("plank", 60)],
                 set_grips: vec![None],
                 set_body_weights: vec![None],
@@ -386,6 +387,7 @@ mod tests {
                     BodyPart::Chest,
                     RecordMode::WeightAndReps,
                 ),
+                memo: String::new(),
                 sets: vec![
                     weight_record("bench", SetKind::Warmup, 60.0, 10),
                     weight_record("bench", SetKind::Normal, 100.0, 5),

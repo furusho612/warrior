@@ -6,7 +6,7 @@
 use warrior_core::exercise::{Exercise, ExerciseSnapshot};
 use warrior_core::sync::{
     Operation, OperationKind, TrainingExerciseCreatePayload, TrainingExerciseDeletePayload,
-    TrainingExerciseReorderPayload,
+    TrainingExerciseMemoPayload, TrainingExerciseReorderPayload,
 };
 use warrior_core::training_record::TrainingExerciseRecord;
 
@@ -28,6 +28,8 @@ pub fn create(
         exercise_id: exercise.id.clone(),
         snapshot: serde_json::to_string(&snapshot)
             .map_err(|error| StorageError::Serialize(error.to_string()))?,
+        memo: String::new(),
+        confirmed_memo: String::new(),
         position,
         created_at: now.clone(),
         updated_at: now,
@@ -74,6 +76,27 @@ pub fn reorder(training_id: &str, ordered_ids: &[String]) -> Result<Operation, S
     operation(
         training_id,
         OperationKind::TrainingExerciseReorder,
+        serde_json::to_value(payload)
+            .map_err(|error| StorageError::Serialize(error.to_string()))?,
+    )
+}
+
+/// 種目のメモの保存の操作を作る。
+pub fn memo(
+    training_id: &str,
+    training_exercise_id: &str,
+    memo: &str,
+) -> Result<Operation, StorageError> {
+    warrior_core::memo::validate(memo)
+        .map_err(|_| StorageError::InvalidOperation("memo_too_long".to_owned()))?;
+    let payload = TrainingExerciseMemoPayload {
+        training_id: training_id.to_owned(),
+        training_exercise_id: training_exercise_id.to_owned(),
+        memo: memo.to_owned(),
+    };
+    operation(
+        training_id,
+        OperationKind::TrainingExerciseMemo,
         serde_json::to_value(payload)
             .map_err(|error| StorageError::Serialize(error.to_string()))?,
     )
