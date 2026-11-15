@@ -23,6 +23,7 @@ pub mod ownership;
 pub mod personal_best;
 pub mod previous;
 pub mod profile;
+pub mod push;
 pub mod pwa;
 pub mod rate_limit;
 pub mod rest_timer;

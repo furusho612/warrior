@@ -17,6 +17,7 @@ use wasm_bindgen::JsCast;
 use super::set_events::SetCompletedEvents;
 use super::sleep_ms;
 use crate::notification;
+use crate::push::PushSubscriptionSetting;
 use crate::rest_timer::{now_ms, ActiveRestTimer, RestTimerState};
 use crate::storage;
 use crate::text::{text, Key};
@@ -365,6 +366,7 @@ pub(crate) fn RestSettingsPanel() -> Element {
                 p { class: "text-[11px] text-primary", "{message}" }
             }
             RestNotificationSetting {}
+            PushSubscriptionSetting {}
         }
     }
 }

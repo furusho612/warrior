@@ -23,7 +23,7 @@ pub enum HttpError {
 
 /// 同じオリジンへ要求を送り、応答の JSON を復元する。
 pub async fn request_json<T: DeserializeOwned>(method: &str, url: &str) -> Result<T, HttpError> {
-    send_json(method, url, None).await
+    read_json(send(method, url, None).await?).await
 }
 
 /// 同じオリジンへ JSON の本文を送り、応答の JSON を復元する。
@@ -33,14 +33,20 @@ pub async fn request_json_with_body<T: DeserializeOwned, B: Serialize>(
     body: &B,
 ) -> Result<T, HttpError> {
     let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
-    send_json(method, url, Some(body)).await
+    read_json(send(method, url, Some(body)).await?).await
 }
 
-async fn send_json<T: DeserializeOwned>(
+/// 同じオリジンへ JSON の本文を送り、応答の本文を読まない。
+pub async fn send_json_without_response<B: Serialize>(
     method: &str,
     url: &str,
-    body: Option<String>,
-) -> Result<T, HttpError> {
+    body: &B,
+) -> Result<(), HttpError> {
+    let body = serde_json::to_string(body).map_err(|_| HttpError::InvalidRequest)?;
+    send(method, url, Some(body)).await.map(|_| ())
+}
+
+async fn send(method: &str, url: &str, body: Option<String>) -> Result<Response, HttpError> {
     let window = web_sys::window().ok_or(HttpError::Unavailable)?;
     let headers = Headers::new().map_err(|_| HttpError::Unavailable)?;
     headers
@@ -60,6 +66,10 @@ async fn send_json<T: DeserializeOwned>(
     if !response.ok() {
         return Err(HttpError::Rejected);
     }
+    Ok(response)
+}
+
+async fn read_json<T: DeserializeOwned>(response: Response) -> Result<T, HttpError> {
     let body = JsFuture::from(response.text().map_err(|_| HttpError::Unavailable)?)
         .await
         .map_err(|_| HttpError::Unavailable)?;
