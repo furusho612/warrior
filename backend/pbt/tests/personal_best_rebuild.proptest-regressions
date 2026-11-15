@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3a174839c39e3cad2ee2b2d5acf49713404da997dce7a6cf9322e0cbe160fc7c # shrinks to trainings = [[], [SessionSet { record: SetRecord { key: BestKey { exercise_id: "exercise-0", grip: None, attachment: None }, kind: Normal, segments: [SetSegment { weight_kg: 0.5, reps: 1, momentum_reps: 0, assisted_reps: 0, left: None, right: None, duration_seconds: None }], rpe: None, duration_seconds: None, mode: WeightAndReps }, exercise_name: "種目", laterality: Bilateral }]], cut = 0

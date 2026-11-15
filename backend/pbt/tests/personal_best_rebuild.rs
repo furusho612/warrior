@@ -69,14 +69,33 @@ fn training_id(index: usize) -> String {
     format!("training-{index}")
 }
 
-fn snapshots<'a>(trainings: &'a [Vec<SessionSet>], ids: &'a [String]) -> Vec<TrainingSets<'a>> {
+/// トレーニングの ID と日付。削除の後も元のトレーニングの日付を保つために使う。
+#[derive(Clone)]
+struct TrainingLabel {
+    id: String,
+    achieved_on: JstDate,
+}
+
+fn training_labels(count: usize) -> Vec<TrainingLabel> {
+    (0..count)
+        .map(|index| TrainingLabel {
+            id: training_id(index),
+            achieved_on: date(index),
+        })
+        .collect()
+}
+
+fn snapshots<'a>(
+    trainings: &'a [Vec<SessionSet>],
+    labels: &'a [TrainingLabel],
+) -> Vec<TrainingSets<'a>> {
     trainings
         .iter()
         .enumerate()
         .filter(|(_, sets)| !sets.is_empty())
         .map(|(index, sets)| TrainingSets {
-            training_id: ids[index].as_str(),
-            achieved_on: date(index),
+            training_id: labels[index].id.as_str(),
+            achieved_on: labels[index].achieved_on,
             sets,
         })
         .collect()
@@ -154,13 +173,12 @@ proptest! {
         let mut remaining = trainings.clone();
         let deleted = remaining.remove(cut);
         let groups = affected_groups(&deleted);
-        let ids = (0..trainings.len()).map(training_id).collect::<Vec<_>>();
-        let remaining_ids = (0..remaining.len())
-            .map(|index| ids[if index < cut { index } else { index + 1 }].clone())
-            .collect::<Vec<_>>();
-        let existing = recompute(&snapshots(&trainings, &ids));
-        let expected = recompute(&snapshots(&remaining, &remaining_ids));
-        let recomputed = recompute_groups(&snapshots(&remaining, &remaining_ids), &groups);
+        let labels = training_labels(trainings.len());
+        let mut remaining_labels = labels.clone();
+        remaining_labels.remove(cut);
+        let existing = recompute(&snapshots(&trainings, &labels));
+        let expected = recompute(&snapshots(&remaining, &remaining_labels));
+        let recomputed = recompute_groups(&snapshots(&remaining, &remaining_labels), &groups);
         let rebuilt = reconcile(&existing, &recomputed, &groups);
         let actual = rebuilt.applied(&existing);
 
@@ -183,10 +201,10 @@ proptest! {
         let mut after = trainings.clone();
         after[edit] = replacement;
         let groups = union(&affected_groups(&before), &affected_groups(&after[edit]));
-        let ids = (0..trainings.len()).map(training_id).collect::<Vec<_>>();
-        let existing = recompute(&snapshots(&trainings, &ids));
-        let expected = recompute(&snapshots(&after, &ids));
-        let recomputed = recompute_groups(&snapshots(&after, &ids), &groups);
+        let labels = training_labels(trainings.len());
+        let existing = recompute(&snapshots(&trainings, &labels));
+        let expected = recompute(&snapshots(&after, &labels));
+        let recomputed = recompute_groups(&snapshots(&after, &labels), &groups);
         let rebuilt = reconcile(&existing, &recomputed, &groups);
         let actual = rebuilt.applied(&existing);
 
@@ -201,17 +219,14 @@ proptest! {
     ) {
         let cut = cut % trainings.len();
         let mut remaining = trainings.clone();
-        let deleted = remaining.remove(cut);
+        remaining.remove(cut);
+        let deleted = trainings[cut].clone();
         let groups = affected_groups(&deleted);
-        let ids = (0..trainings.len()).map(training_id).collect::<Vec<_>>();
-        let remaining_ids = ids
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != cut)
-            .map(|(_, id)| id.clone())
-            .collect::<Vec<_>>();
-        let existing = recompute(&snapshots(&trainings, &ids));
-        let recomputed = recompute_groups(&snapshots(&remaining, &remaining_ids), &groups);
+        let labels = training_labels(trainings.len());
+        let mut remaining_labels = labels.clone();
+        remaining_labels.remove(cut);
+        let existing = recompute(&snapshots(&trainings, &labels));
+        let recomputed = recompute_groups(&snapshots(&remaining, &remaining_labels), &groups);
         let rebuilt = reconcile(&existing, &recomputed, &groups);
         let actual = rebuilt.applied(&existing);
 
