@@ -3,6 +3,7 @@
 - Requirements: REQ-SET-008, REQ-SET-009, REQ-SET-011
 - Priority: High
 - Created: 2026-11-12
+- Completed: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-one-rm-personal-best
 
@@ -111,3 +112,4 @@
 セットの完了の再送は、新しく更新した項目ではなく、そのトレーニングが保持する自己ベストを返す。
 ウォームアップのセットには推定 1RM を表示しない。自己ベストの一覧にはグリップとアタッチメントを表示する。
 推定 1RM の表示は `frontend/src/screens/record/one_rep_max.rs`、更新した自己ベストの表示は `frontend/src/screens/record/personal_bests.rs` に分けた。`record.rs` と `sets.rs` の行数を 1000 行未満に保ち、表示の変更をセットの集計から切り離すためである。
+時間で記録するセットの完了は、完了の書き込みの前に全 side の開始時刻を消し、完了後に計測中の表示を止める。完了済みセットに開始時刻が残らないようにするためである。E2E で再読み込み後も計測中の表示が戻らないことを固定した。
