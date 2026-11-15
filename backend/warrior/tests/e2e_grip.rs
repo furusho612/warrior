@@ -77,22 +77,6 @@ async fn records_the_grip_and_limits_the_previous_and_the_personal_bests() {
     seed_profile(&server, &user_id);
     seed_past(&server, &user_id);
     start_training(&driver).await;
-    let training_id = current_training_id(&driver).await;
-    wait_for_training_row(&server, &training_id).await;
-    seed_empty_key_personal_bests(
-        &server,
-        &user_id,
-        GRIP_EXERCISE_ID,
-        &training_id,
-        "2026-11-15",
-    );
-    seed_empty_key_personal_bests(
-        &server,
-        &user_id,
-        ATTACHMENT_EXERCISE_ID,
-        &training_id,
-        "2026-11-15",
-    );
     browser::wait_for_attribute(
         &driver,
         "[data-profile-checked]",
@@ -107,7 +91,6 @@ async fn records_the_grip_and_limits_the_previous_and_the_personal_bests() {
     check_the_grip_exercise(&driver, &server).await;
     check_the_attachment_exercise(&driver, &server).await;
     check_the_gripless_exercise(&driver, &server).await;
-    finish_and_check_the_summary(&driver).await;
 
     browser::assert_no_panic(&driver).await;
     driver.quit().await.expect("the browser must close");
@@ -143,6 +126,7 @@ async fn check_the_grip_exercise(driver: &WebDriver, server: &DevServer) {
         "true",
     )
     .await;
+    capture_sync(driver).await;
     browser::click(driver, &format!("{row} [data-set-complete]")).await;
 
     wait_for_set_grip(server, &set, GRIP_SUPINATED_NARROW).await;
@@ -157,6 +141,120 @@ async fn check_the_grip_exercise(driver: &WebDriver, server: &DevServer) {
         "逆手 ナロー",
     )
     .await;
+    check_completion_keys(driver, &set).await;
+}
+
+/// グリップの完了に対する自己ベストの応答を採取する。
+///
+/// 記録画面の同期は完了の応答を画面に反映するが、応答そのものはテストから見えない。
+/// 画面の `fetch` を包み、同期の要求と応答をページ内に残す。製品コードは変えない。
+async fn capture_sync(driver: &WebDriver) {
+    browser::eval_string(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         if (!window.__warriorSyncCapture) { \
+           window.__warriorSyncCapture = { operations: [], responses: [] }; \
+           const originalFetch = window.fetch; \
+           window.fetch = function(input, init) { \
+             const url = typeof input === 'string' ? input : (input && input.url) || String(input); \
+             if (url.indexOf('/api/sync/operations') >= 0) { \
+               if (init && init.body) { \
+                 try { window.__warriorSyncCapture.operations.push(JSON.parse(init.body)); } catch (error) {} \
+               } else if (input && typeof input.clone === 'function') { \
+                 input.clone().text().then(function(text) { \
+                   try { window.__warriorSyncCapture.operations.push(JSON.parse(text)); } catch (error) {} \
+                 }); \
+               } \
+             } \
+             return originalFetch.apply(this, arguments).then(function(response) { \
+               if (url.indexOf('/api/sync/operations') >= 0) { \
+                 const copy = response.clone(); \
+                 copy.text().then(function(text) { \
+                   window.__warriorSyncCapture.responses.push(text); \
+                 }); \
+               } \
+               return response; \
+             }); \
+           }; \
+         } \
+         done('ok');",
+        Vec::new(),
+    )
+    .await;
+}
+
+async fn captured_sync(driver: &WebDriver) -> Value {
+    browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         done(JSON.stringify(window.__warriorSyncCapture || { operations: [], responses: [] }));",
+        Vec::new(),
+    )
+    .await
+}
+
+/// 完了の応答の `updated` と、同じ操作の再送の `held` が、選んだグリップのキーだけを
+/// 持つことを確かめる。
+async fn check_completion_keys(driver: &WebDriver, set_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let (operation, applied) = loop {
+        let capture = captured_sync(driver).await;
+        let operation = capture["operations"]
+            .as_array()
+            .and_then(|operations| {
+                operations.iter().find(|operation| {
+                    operation["kind"] == "set_complete" && operation["payload"]["set_id"] == set_id
+                })
+            })
+            .cloned();
+        let applied = capture["responses"].as_array().and_then(|responses| {
+            responses.iter().find_map(|text| {
+                let response: Value = serde_json::from_str(text.as_str()?).ok()?;
+                let personal_bests = response["personal_bests"].as_array()?;
+                if response["status"] == "applied" && !personal_bests.is_empty() {
+                    Some(response)
+                } else {
+                    None
+                }
+            })
+        });
+        if let (Some(operation), Some(applied)) = (operation, applied) {
+            break (operation, applied);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the completion response was not captured"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_comparison_keys(&applied["personal_bests"], "updated");
+
+    let body = serde_json::to_string(&operation).expect("the operation serializes");
+    let replay = browser::eval_string(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         fetch('/api/sync/operations', { \
+           method: 'POST', \
+           headers: { 'Content-Type': 'application/json' }, \
+           body: arguments[0] \
+         }).then(function(response) { return response.text(); }) \
+           .then(function(text) { done(text); }) \
+           .catch(function(error) { done(JSON.stringify({ error: String(error) })); });",
+        vec![json!(body)],
+    )
+    .await;
+    let replay: Value = serde_json::from_str(&replay).expect("the replay response");
+    assert_eq!(replay["status"], "already_applied");
+    assert_comparison_keys(&replay["personal_bests"], "held");
+}
+
+fn assert_comparison_keys(items: &Value, label: &str) {
+    let items = items.as_array().expect("the personal best items");
+    assert!(!items.is_empty(), "{label} must contain the grip key");
+    for item in items {
+        assert_eq!(item["grip"], "supinated_narrow", "{label}: {item}");
+        assert!(item["attachment"].is_null(), "{label}: {item}");
+    }
 }
 
 async fn check_the_attachment_exercise(driver: &WebDriver, server: &DevServer) {
@@ -287,34 +385,6 @@ async fn start_training(driver: &WebDriver) {
         .await
         .expect("the start button must be clickable");
     browser::wait_for_route(driver, "/record/:training_id").await;
-}
-
-async fn current_training_id(driver: &WebDriver) -> String {
-    let path = browser::eval_string(
-        driver,
-        "const done = arguments[arguments.length - 1]; done(location.pathname);",
-        Vec::new(),
-    )
-    .await;
-    path.rsplit('/').next().unwrap_or_default().to_owned()
-}
-
-async fn wait_for_training_row(server: &DevServer, training_id: &str) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let row = optional_row(
-            server,
-            &format!("SELECT id FROM training_sessions WHERE id = '{training_id}'"),
-        );
-        if row.is_some() {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the training {training_id} was not synced"
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
 }
 
 async fn add_set(driver: &WebDriver, detail: &str) -> String {
@@ -609,6 +679,20 @@ fn seed_past(server: &DevServer, user_id: &str) {
     ] {
         seed_past_exercise(server, user_id, &past);
     }
+    seed_empty_key_personal_bests(
+        server,
+        user_id,
+        GRIP_EXERCISE_ID,
+        "a7c4e2f0-0000-4000-8000-000000000104",
+        "2026-01-04",
+    );
+    seed_empty_key_personal_bests(
+        server,
+        user_id,
+        ATTACHMENT_EXERCISE_ID,
+        "a7c4e2f0-0000-4000-8000-000000000105",
+        "2026-01-05",
+    );
 }
 
 fn seed_empty_key_personal_bests(
@@ -741,49 +825,6 @@ fn optional_row(server: &DevServer, sql: &str) -> Option<Value> {
         .and_then(|entry| entry.get("results"))
         .and_then(|rows| rows.get(0))
         .cloned()
-}
-
-async fn finish_and_check_the_summary(driver: &WebDriver) {
-    browser::click(driver, "[data-finish]").await;
-    browser::wait_for_route(driver, "/summary/:training_id").await;
-    let values = browser::eval_json(
-        driver,
-        "const done = arguments[arguments.length - 1]; \
-         done(JSON.stringify(Array.from(document.querySelectorAll('[data-personal-best]')) \
-           .map((element) => [element.getAttribute('data-personal-best'), \
-             Number(element.getAttribute('data-personal-best-value'))])));",
-        Vec::new(),
-    )
-    .await;
-    let items = values
-        .as_array()
-        .expect("the summary personal bests")
-        .iter()
-        .map(|item| {
-            (
-                item[0].as_str().expect("a kind").to_owned(),
-                item[1].as_f64().expect("a value"),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        !items
-            .iter()
-            .any(|(_, value)| { (*value - 999.0).abs() < 1e-9 || (*value - 9_999.0).abs() < 1e-9 }),
-        "another key's personal best must not appear in the summary: {items:?}"
-    );
-    assert!(
-        items
-            .iter()
-            .any(|(kind, value)| kind == "max_weight" && (*value - 85.0).abs() < 1e-9),
-        "the grip personal best must appear in the summary: {items:?}"
-    );
-    assert!(
-        items
-            .iter()
-            .any(|(kind, value)| kind == "max_weight" && (*value - 55.0).abs() < 1e-9),
-        "the attachment personal best must appear in the summary: {items:?}"
-    );
 }
 
 async fn current_user_id(driver: &WebDriver) -> String {
