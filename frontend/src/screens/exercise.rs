@@ -3,9 +3,10 @@
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use warrior_core::exercise::{MuscleAssignment, MuscleRole, OtherScope};
+use warrior_core::exercise::{MuscleUnit, OtherScope};
 use warrior_core::library::LibraryExercise;
 
+use crate::body_figure::{figure_muscles, figure_svg, FigureMuscles, FigureSide};
 use crate::calendar_view::part_label;
 use crate::library::{self as library_api, equipment_label};
 use crate::routes::Route;
@@ -100,8 +101,9 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
 #[component]
 fn ExerciseDetailBody(item: LibraryExercise) -> Element {
     let exercise = item.exercise;
-    let primary = muscle_names(&exercise.muscles, MuscleRole::Primary);
-    let secondary = muscle_names(&exercise.muscles, MuscleRole::Secondary);
+    let muscles = figure_muscles(&exercise, None);
+    let primary = muscle_names(&muscles.primary);
+    let secondary = muscle_names(&muscles.secondary);
     let secondary = if secondary.is_empty() {
         text(Key::ExerciseNoMuscles).to_owned()
     } else {
@@ -113,6 +115,9 @@ fn ExerciseDetailBody(item: LibraryExercise) -> Element {
 
     rsx! {
         h1 { class: "text-lg font-bold", "data-exercise-name": "true", "{exercise.name}" }
+        if !exercise.body_part.is_other() {
+            BodyFigure { muscles }
+        }
         dl { class: "flex flex-col gap-2",
             DetailField {
                 label: text(Key::ExerciseBodyPart).to_owned(),
@@ -167,6 +172,33 @@ fn ExerciseDetailBody(item: LibraryExercise) -> Element {
     }
 }
 
+/// 前面と背面の人体図と、その面の名前。
+#[component]
+fn BodyFigure(muscles: FigureMuscles) -> Element {
+    rsx! {
+        div {
+            class: "flex w-full max-w-[240px] gap-2 self-center",
+            "data-body-figure": "true",
+            for side in [FigureSide::Front, FigureSide::Back] {
+                div { class: "flex min-w-0 flex-1 flex-col items-center gap-1",
+                    div {
+                        class: "w-full",
+                        dangerous_inner_html: figure_svg(side, &muscles),
+                    }
+                    span { class: "text-[11px] text-text-sub", "{side_label(side)}" }
+                }
+            }
+        }
+    }
+}
+
+fn side_label(side: FigureSide) -> &'static str {
+    match side {
+        FigureSide::Front => text(Key::ExerciseFigureFront),
+        FigureSide::Back => text(Key::ExerciseFigureBack),
+    }
+}
+
 /// 詳細の 1 項目。
 #[component]
 fn DetailField(label: String, value: String, field: &'static str) -> Element {
@@ -180,11 +212,10 @@ fn DetailField(label: String, value: String, field: &'static str) -> Element {
     }
 }
 
-fn muscle_names(muscles: &[MuscleAssignment], role: MuscleRole) -> String {
+fn muscle_names(muscles: &[MuscleUnit]) -> String {
     muscles
         .iter()
-        .filter(|assignment| assignment.role == role)
-        .map(|assignment| assignment.muscle.name_ja())
+        .map(|muscle| muscle.name_ja())
         .collect::<Vec<_>>()
         .join("、")
 }

@@ -16,6 +16,7 @@ warrior_core = { path = "../backend/warrior_core" }
 # dioxus-web は host のビルドでも履歴の API を使うため、Location を明示する。
 web-sys = { version = "0.3", features = [
   "Crypto",
+  "CssStyleDeclaration",
   "Document",
   "DomException",
   "DomStringList",
@@ -23,6 +24,7 @@ web-sys = { version = "0.3", features = [
   "Event",
   "EventTarget",
   "Headers",
+  "HtmlElement",
   "IdbCursor",
   "IdbCursorWithValue",
   "IdbDatabase",
@@ -37,6 +39,8 @@ web-sys = { version = "0.3", features = [
   "Location",
   "MediaQueryList",
   "Navigator",
+  "Node",
+  "NodeList",
   "console",
   "Request",
   "RequestInit",
