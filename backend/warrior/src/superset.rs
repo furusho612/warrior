@@ -106,6 +106,8 @@ async fn precheck(
         ValidatedPayload::SupersetDelete(_)
         | ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)
@@ -272,6 +274,8 @@ fn superset_statements(
         )),
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)

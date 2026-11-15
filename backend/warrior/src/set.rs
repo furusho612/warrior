@@ -30,7 +30,7 @@ mod precheck;
 mod validation;
 
 use bindings::{applied_exists, grip_json, optional_real};
-pub(crate) use completion::personal_bests_after_completion;
+pub(crate) use completion::{personal_bests_after_completion, personal_bests_after_operation};
 use precheck::precheck;
 use validation::grip_rejection;
 
@@ -113,7 +113,7 @@ pub(crate) async fn set_batch(
         )));
     }
 
-    if let Some(rejection) = precheck(db, user_id, validated, rules.as_ref()).await? {
+    if let Some(rejection) = precheck(db, user_id, validated, rules.as_ref(), finished).await? {
         return Ok(BatchOutcome::Reject(rejection));
     }
     if let Some(rules) = rules.as_ref() {
@@ -229,6 +229,8 @@ fn set_statements(
         }),
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)
@@ -433,6 +435,8 @@ async fn payload_rules(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)

@@ -205,6 +205,8 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
             .position(|view| view.record.id == selected.record.id)
     });
     let view_only = (signals.view_only)();
+    let editable_completed =
+        (signals.session)().is_some_and(|session| session.finished_at.is_some());
     let training_diff = training_difference(&current_views, (previous_training)().as_ref());
     let errors = (error)();
     let load_error = errors.load;
@@ -290,6 +292,7 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                             state: ExerciseDetailState {
                                 view,
                                 disabled: view_only || is_loading || superset_busy(),
+                                editable_completed,
                                 first,
                                 last,
                                 superset_members,
@@ -478,6 +481,8 @@ struct ExerciseDetailState {
     view: ExerciseView,
     /// 編集できないか。
     disabled: bool,
+    /// 終了したトレーニングで、完了済みのセットを編集できるか。
+    editable_completed: bool,
     /// 先頭の種目か。
     first: bool,
     /// 末尾の種目か。
@@ -510,6 +515,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
     let ExerciseDetailState {
         view,
         disabled,
+        editable_completed,
         first,
         last,
         superset_members,
@@ -560,7 +566,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                     button {
                         class: "min-h-11 border border-line px-2 text-[11px] text-primary",
                         "data-delete-exercise": "true",
-                        disabled: disabled || has_completed,
+                        disabled: disabled || (has_completed && !editable_completed),
                         onclick: move |_| on_delete.call(()),
                         "{text(Key::RecordExerciseDelete)}"
                     }
@@ -599,6 +605,7 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                     mode,
                     laterality,
                     disabled,
+                    editable_completed,
                 },
                 on_action,
             }

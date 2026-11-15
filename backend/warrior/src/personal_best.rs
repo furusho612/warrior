@@ -9,12 +9,14 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use warrior_core::datetime;
-use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
+use warrior_core::exercise::{ExerciseSnapshot, GripSelection, Laterality, RecordMode};
 use warrior_core::jst::JstDate;
 use warrior_core::personal_best::{
-    candidates, updated, PersonalBestCandidate, PersonalBestEntry, PersonalBestKey,
+    candidates, recompute_groups, reconcile, updated, BestGroup, PersonalBestCandidate,
+    PersonalBestEntry, PersonalBestKey, TrainingSets,
 };
 use warrior_core::sql::{SqlStatement, SqlValue};
+use warrior_core::sync::{ValidatedOperation, ValidatedPayload};
 use warrior_core::training_session::{BestKind, PersonalBestItem};
 use worker::{console_error, Result};
 
@@ -50,6 +52,223 @@ struct PersonalBestRow {
 struct ExerciseSnapshotRow {
     exercise_id: String,
     snapshot: String,
+}
+
+/// セットが使う自己ベストの比較の組。
+#[derive(Debug, Deserialize)]
+struct SetGroupRow {
+    exercise_id: String,
+    grip: Option<String>,
+}
+
+/// 自己ベストの計算し直しの対象にする組を、変更の前の状態から返す。
+///
+/// セットの編集は、変更の前のグリップの組と、変更の後のグリップの組の両方を対象にする。
+pub async fn groups_before_operation(
+    db: &Db,
+    user_id: &str,
+    validated: &ValidatedOperation,
+) -> Result<Vec<BestGroup>> {
+    let mut groups = match &validated.payload {
+        ValidatedPayload::SetUpdate(payload) => {
+            let mut groups = set_groups(db, user_id, &payload.set_id, SetScope::Set).await?;
+            if let Some(grip) = payload.grip {
+                if let Some(exercise_id) = groups.first().map(|group| group.exercise_id.clone()) {
+                    let (grip, attachment) = grip.comparison_key();
+                    groups.push(BestGroup {
+                        exercise_id,
+                        grip,
+                        attachment,
+                    });
+                }
+            }
+            groups
+        }
+        ValidatedPayload::SetDelete(payload) => {
+            set_groups(db, user_id, &payload.set_id, SetScope::Set).await?
+        }
+        ValidatedPayload::SetComplete(payload) => {
+            set_groups(db, user_id, &payload.set_id, SetScope::Set).await?
+        }
+        ValidatedPayload::ExerciseDelete(payload) => {
+            set_groups(
+                db,
+                user_id,
+                &payload.training_exercise_id,
+                SetScope::Exercise,
+            )
+            .await?
+        }
+        ValidatedPayload::Delete(payload) => {
+            set_groups(db, user_id, &payload.training_id, SetScope::Training).await?
+        }
+        ValidatedPayload::Create(_)
+        | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::ExerciseCreate(_)
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SetCreate(_)
+        | ValidatedPayload::SetReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => Vec::new(),
+    };
+    groups.dedup();
+    Ok(groups)
+}
+
+/// 影響する組の自己ベストを、残っている全ての記録から計算し直す。
+///
+/// 値がなくなった組の行は削除する。組の外の行は変えない。
+pub async fn rebuild(
+    db: &Db,
+    user_id: &str,
+    groups: &[BestGroup],
+) -> Result<Vec<PersonalBestEntry>> {
+    if groups.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut exercise_ids = Vec::<String>::new();
+    for group in groups {
+        if !exercise_ids.contains(&group.exercise_id) {
+            exercise_ids.push(group.exercise_id.clone());
+        }
+    }
+    let trainings = stored_sets::load_finished_for_exercises(db, user_id, &exercise_ids).await?;
+    let mut prepared = Vec::new();
+    for training in &trainings {
+        let achieved_on = JstDate::parse(&training.date).ok_or_else(|| {
+            console_error!("the stored training date is invalid");
+            worker::Error::RustError("the stored training date is invalid".to_owned())
+        })?;
+        let sets = stored_sets::session_sets(&training.exercises);
+        prepared.push((training.training_id.as_str(), achieved_on, sets));
+    }
+    let training_sets = prepared
+        .iter()
+        .map(|(training_id, achieved_on, sets)| TrainingSets {
+            training_id,
+            achieved_on: *achieved_on,
+            sets,
+        })
+        .collect::<Vec<_>>();
+    let recomputed = recompute_groups(&training_sets, groups);
+    let existing = load_entries(db, user_id).await?;
+    let rebuilt = reconcile(&existing, &recomputed, groups);
+    let now = datetime::format_utc(crate::auth::now_seconds());
+    let mut statements = Vec::new();
+    for entry in &rebuilt.upserts {
+        statements.push(replace_statement(user_id, &now, entry));
+    }
+    for key in &rebuilt.deletes {
+        statements.push(delete_statement(user_id, key));
+    }
+    if !statements.is_empty() {
+        if let Err(error) = db.batch(&statements).await {
+            console_error!("failed to rebuild the personal bests: {error}");
+            return Err(worker::Error::RustError(
+                "failed to rebuild the personal bests".to_owned(),
+            ));
+        }
+    }
+    Ok(rebuilt.applied(&existing))
+}
+
+/// 組を読むセットの範囲。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SetScope {
+    /// 1 つのセット。
+    Set,
+    /// 1 つの種目の完了したセット。
+    Exercise,
+    /// 1 つのトレーニングの完了したセット。
+    Training,
+}
+
+async fn set_groups(db: &Db, user_id: &str, id: &str, scope: SetScope) -> Result<Vec<BestGroup>> {
+    let (condition, completed) = match scope {
+        SetScope::Set => ("s.id = ?", ""),
+        SetScope::Exercise => ("te.id = ?", "AND s.completed = 1"),
+        SetScope::Training => ("te.training_id = ?", "AND s.completed = 1"),
+    };
+    let statement = format!(
+        "SELECT te.exercise_id AS exercise_id, s.grip AS grip FROM sets s \
+         JOIN training_exercises te ON te.id = s.training_exercise_id \
+         WHERE s.user_id = ? AND te.user_id = ? AND {condition} {completed}"
+    );
+    let rows = db
+        .all(&SqlStatement::new(
+            statement,
+            vec![
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(id.to_owned()),
+            ],
+        ))
+        .await?
+        .results::<SetGroupRow>()?;
+    let mut groups = Vec::<BestGroup>::new();
+    for row in rows {
+        let group = group_from_row(&row)?;
+        if !groups.contains(&group) {
+            groups.push(group);
+        }
+    }
+    Ok(groups)
+}
+
+fn group_from_row(row: &SetGroupRow) -> Result<BestGroup> {
+    let grip = match row.grip.as_deref() {
+        None => GripSelection::None,
+        Some(text) => serde_json::from_str::<GripSelection>(text).map_err(|_| {
+            console_error!("the stored grip is invalid");
+            worker::Error::RustError("the stored grip is invalid".to_owned())
+        })?,
+    };
+    let (grip, attachment) = grip.comparison_key();
+    Ok(BestGroup {
+        exercise_id: row.exercise_id.clone(),
+        grip,
+        attachment,
+    })
+}
+
+fn replace_statement(user_id: &str, now: &str, entry: &PersonalBestEntry) -> SqlStatement {
+    SqlStatement::new(
+        "INSERT INTO personal_bests \
+         (user_id, exercise_id, grip, attachment, kind, value, achieved_on, training_id, \
+          created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(user_id, exercise_id, grip, attachment, kind) DO UPDATE SET \
+         value = excluded.value, achieved_on = excluded.achieved_on, \
+         training_id = excluded.training_id, updated_at = excluded.updated_at",
+        vec![
+            SqlValue::Text(user_id.to_owned()),
+            SqlValue::Text(entry.key.exercise_id.clone()),
+            SqlValue::Text(grip_key(entry.key.grip.as_deref())),
+            SqlValue::Text(grip_key(entry.key.attachment.as_deref())),
+            SqlValue::Text(entry.key.kind.as_str().to_owned()),
+            SqlValue::Real(entry.value),
+            SqlValue::Text(entry.achieved_on.to_string()),
+            SqlValue::Text(entry.training_id.clone()),
+            SqlValue::Text(now.to_owned()),
+            SqlValue::Text(now.to_owned()),
+        ],
+    )
+}
+
+fn delete_statement(user_id: &str, key: &PersonalBestKey) -> SqlStatement {
+    SqlStatement::new(
+        "DELETE FROM personal_bests WHERE user_id = ? AND exercise_id = ? AND grip = ? \
+         AND attachment = ? AND kind = ?",
+        vec![
+            SqlValue::Text(user_id.to_owned()),
+            SqlValue::Text(key.exercise_id.clone()),
+            SqlValue::Text(grip_key(key.grip.as_deref())),
+            SqlValue::Text(grip_key(key.attachment.as_deref())),
+            SqlValue::Text(key.kind.as_str().to_owned()),
+        ],
+    )
 }
 
 struct ExerciseMetadata {

@@ -64,11 +64,14 @@ pub(super) struct CountRow {
 }
 
 /// 適用の前に、セットと種目の行の存在、完了の値、並べ替えの ID を確かめる。
+///
+/// 終了したトレーニングでは、完了したセットの編集、削除、完了の取消を許可する。
 pub(super) async fn precheck(
     db: &Db,
     user_id: &str,
     validated: &ValidatedOperation,
     rules: Option<&ExerciseRules>,
+    finished: bool,
 ) -> Result<Option<Response>> {
     let training_id = &validated.operation.training_id;
     match &validated.payload {
@@ -82,10 +85,10 @@ pub(super) async fn precheck(
             let Some(rules) = rules else {
                 return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
             };
-            precheck_update(db, user_id, training_id, payload, rules).await
+            precheck_update(db, user_id, training_id, payload, rules, finished).await
         }
         ValidatedPayload::SetDelete(payload) => {
-            precheck_delete(db, user_id, training_id, payload).await
+            precheck_delete(db, user_id, training_id, payload, finished).await
         }
         ValidatedPayload::SetReorder(payload) => {
             precheck_reorder(db, user_id, training_id, payload).await
@@ -94,10 +97,12 @@ pub(super) async fn precheck(
             let Some(rules) = rules else {
                 return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
             };
-            precheck_complete(db, user_id, training_id, payload, rules).await
+            precheck_complete(db, user_id, training_id, payload, rules, finished).await
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::Backfill(_)
+        | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseDelete(_)
         | ValidatedPayload::ExerciseReorder(_)
@@ -156,11 +161,12 @@ async fn precheck_update(
     training_id: &str,
     payload: &SetUpdatePayload,
     rules: &ExerciseRules,
+    finished: bool,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    if row.completed != 0 {
+    if row.completed != 0 && !finished {
         return Ok(Some(completed_set_rejection()));
     }
     if let Some(rejection) = segments_shape_rejection(&payload.segments, rules) {
@@ -204,11 +210,12 @@ async fn precheck_delete(
     user_id: &str,
     training_id: &str,
     payload: &SetDeletePayload,
+    finished: bool,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    if row.completed != 0 {
+    if row.completed != 0 && !finished {
         return Ok(Some(completed_set_rejection()));
     }
     if !delete_positions_allowed(db, user_id, &row.training_exercise_id, &payload.set_id).await? {
@@ -246,11 +253,12 @@ async fn precheck_complete(
     training_id: &str,
     payload: &SetCompletePayload,
     _rules: &ExerciseRules,
+    finished: bool,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    if !payload.completed && row.completed != 0 {
+    if !payload.completed && row.completed != 0 && !finished {
         return Ok(Some(completed_set_rejection()));
     }
     if payload.completed && row.completed == 0 {

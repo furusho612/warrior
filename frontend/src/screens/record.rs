@@ -295,21 +295,40 @@ fn ProfilePrompt() -> Element {
 fn RecordFinish(signals: RecordSignals) -> Element {
     let finishing = use_signal(|| false);
     let error = use_signal(|| Option::<String>::None);
-    let enabled = (signals.session)().is_some() && !(signals.view_only)();
+    let session = (signals.session)();
+    let finished = session
+        .as_ref()
+        .is_some_and(|session| session.finished_at.is_some());
+    let enabled = session.is_some() && !(signals.view_only)() && !finished;
     let busy = finishing();
+    let summary_id = session.map(|session| session.id).unwrap_or_default();
 
     rsx! {
-        button {
-            class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
-            "data-finish": "true",
-            disabled: busy || !enabled,
-            onclick: move |_| {
-                spawn(finish_training(signals, finishing, error));
-            },
-            if busy {
-                "{text(Key::RecordFinishing)}"
-            } else {
-                "{text(Key::RecordFinish)}"
+        if finished {
+            p {
+                class: "text-[13px] text-text-sub",
+                "data-record-finished": "true",
+                "{text(Key::RecordEditingFinished)}"
+            }
+            Link {
+                to: Route::Summary { training_id: summary_id },
+                class: "flex min-h-11 items-center border border-line px-3 text-[13px] text-primary",
+                "data-record-summary": "true",
+                "{text(Key::RecordSummary)}"
+            }
+        } else {
+            button {
+                class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+                "data-finish": "true",
+                disabled: busy || !enabled,
+                onclick: move |_| {
+                    spawn(finish_training(signals, finishing, error));
+                },
+                if busy {
+                    "{text(Key::RecordFinishing)}"
+                } else {
+                    "{text(Key::RecordFinish)}"
+                }
             }
         }
         if let Some(message) = error() {
@@ -909,6 +928,8 @@ fn operation_label(kind: OperationKind) -> &'static str {
     match kind {
         OperationKind::TrainingSessionCreate => text(Key::RecordOperationCreate),
         OperationKind::TrainingSessionUpdate => text(Key::RecordOperationUpdate),
+        OperationKind::TrainingSessionBackfill => text(Key::RecordOperationBackfill),
+        OperationKind::TrainingSessionDelete => text(Key::RecordOperationDelete),
         OperationKind::TrainingExerciseCreate => text(Key::RecordOperationExerciseCreate),
         OperationKind::TrainingExerciseDelete => text(Key::RecordOperationExerciseDelete),
         OperationKind::TrainingExerciseReorder => text(Key::RecordOperationExerciseReorder),

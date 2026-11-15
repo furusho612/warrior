@@ -15,6 +15,9 @@ use crate::training_session::{PersonalBestItem, SessionSource};
 /// メモの最大の文字数 (PRD の REQ-NFR-019)。
 pub const MEMO_MAX_CHARS: usize = 2000;
 
+/// 所要時間の上限の秒数。1 日とする。
+const SECONDS_PER_DAY: i64 = 86_400;
+
 /// 同期の操作の種別。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +26,10 @@ pub enum OperationKind {
     TrainingSessionCreate,
     /// トレーニングの更新。
     TrainingSessionUpdate,
+    /// 日付を指定したトレーニングの追加。
+    TrainingSessionBackfill,
+    /// トレーニングの削除。
+    TrainingSessionDelete,
     /// トレーニングへの種目の追加。
     TrainingExerciseCreate,
     /// トレーニングからの種目の削除。
@@ -53,6 +60,8 @@ impl OperationKind {
         match self {
             Self::TrainingSessionCreate => "training_session_create",
             Self::TrainingSessionUpdate => "training_session_update",
+            Self::TrainingSessionBackfill => "training_session_backfill",
+            Self::TrainingSessionDelete => "training_session_delete",
             Self::TrainingExerciseCreate => "training_exercise_create",
             Self::TrainingExerciseDelete => "training_exercise_delete",
             Self::TrainingExerciseReorder => "training_exercise_reorder",
@@ -72,6 +81,8 @@ impl OperationKind {
         match text {
             "training_session_create" => Some(Self::TrainingSessionCreate),
             "training_session_update" => Some(Self::TrainingSessionUpdate),
+            "training_session_backfill" => Some(Self::TrainingSessionBackfill),
+            "training_session_delete" => Some(Self::TrainingSessionDelete),
             "training_exercise_create" => Some(Self::TrainingExerciseCreate),
             "training_exercise_delete" => Some(Self::TrainingExerciseDelete),
             "training_exercise_reorder" => Some(Self::TrainingExerciseReorder),
@@ -151,6 +162,30 @@ pub struct SessionUpdatePayload {
     pub started_at: String,
     /// トレーニング全体のメモ。
     pub memo: String,
+}
+
+/// 日付を指定したトレーニングの追加の本文。
+///
+/// 過去の記録は開始時刻を持たず、日付と所要時間だけを持つ。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionBackfillPayload {
+    /// トレーニングの UUID v4。
+    pub id: String,
+    /// 日本時間の `YYYY-MM-DD`。
+    pub date: String,
+    /// 所要時間の秒数。1 秒以上 86400 秒以下である。
+    pub duration_seconds: i64,
+    /// トレーニング全体のメモ。
+    pub memo: String,
+}
+
+/// トレーニングの削除の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionDeletePayload {
+    /// 削除するトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
 }
 
 /// トレーニングへの種目の追加の本文。
@@ -403,6 +438,10 @@ pub enum ValidatedPayload {
     Create(SessionCreatePayload),
     /// 更新の本文。
     Update(SessionUpdatePayload),
+    /// 日付を指定した追加の本文。
+    Backfill(SessionBackfillPayload),
+    /// 削除の本文。
+    Delete(SessionDeletePayload),
     /// 種目の追加の本文。
     ExerciseCreate(TrainingExerciseCreatePayload),
     /// 種目の削除の本文。
@@ -564,6 +603,23 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
             validate_session_fields(&payload.date, &payload.started_at, &payload.memo)?;
             ValidatedPayload::Update(payload)
         }
+        OperationKind::TrainingSessionBackfill => {
+            let payload: SessionBackfillPayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            if payload.id != operation.training_id {
+                return Err(SyncError::PayloadIdMismatch);
+            }
+            validate_backfill_fields(&payload)?;
+            ValidatedPayload::Backfill(payload)
+        }
+        OperationKind::TrainingSessionDelete => {
+            let payload: SessionDeletePayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            if payload.training_id != operation.training_id {
+                return Err(SyncError::PayloadIdMismatch);
+            }
+            ValidatedPayload::Delete(payload)
+        }
         OperationKind::TrainingExerciseCreate => {
             let payload: TrainingExerciseCreatePayload =
                 serde_json::from_value(operation.payload.clone())
@@ -637,6 +693,20 @@ fn validate_source_ids(payload: &SessionCreatePayload) -> Result<(), SyncError> 
             || payload.custom_program_day_id.is_some())
     {
         return Err(SyncError::SourceIdUnexpected);
+    }
+    Ok(())
+}
+
+/// 日付を指定した追加の日付、所要時間、メモを検証する。
+fn validate_backfill_fields(payload: &SessionBackfillPayload) -> Result<(), SyncError> {
+    if JstDate::parse(&payload.date).is_none() {
+        return Err(SyncError::InvalidDate);
+    }
+    if !(1..=SECONDS_PER_DAY).contains(&payload.duration_seconds) {
+        return Err(SyncError::InvalidDuration);
+    }
+    if payload.memo.chars().count() > MEMO_MAX_CHARS {
+        return Err(SyncError::MemoTooLong);
     }
     Ok(())
 }

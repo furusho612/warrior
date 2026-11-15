@@ -9,10 +9,10 @@ use warrior_core::datetime;
 use warrior_core::ownership::{decide_write, WriteDecision};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
-    validate_operation, Operation, OperationKind, OperationResponse, SessionCreatePayload,
-    SessionUpdatePayload, ValidatedPayload,
+    validate_operation, Operation, OperationKind, OperationResponse, SessionBackfillPayload,
+    SessionCreatePayload, SessionUpdatePayload, ValidatedPayload,
 };
-use warrior_core::training_session::PersonalBestItem;
+use warrior_core::training_session::{PersonalBestItem, SessionSource};
 use worker::d1::D1Result;
 use worker::{console_error, Request, Response, Result, RouteContext};
 
@@ -76,6 +76,10 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
     let terminal = ownership::ensure(&db, &request, &authenticated.id).await?;
     let now = datetime::format_utc(crate::auth::now_seconds());
 
+    // 影響する自己ベストの組は、変更を当てる前の行から決める。
+    // 記録中のトレーニングは自己ベストを表に入れる途中なので、終了したトレーニングと、
+    // トレーニングの削除だけを計算し直す。
+
     if let Some(existing) = applied(&db, &operation.operation_id).await? {
         if existing.user_id == authenticated.id && existing.training_id == operation.training_id {
             let bests =
@@ -86,9 +90,42 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     }
 
+    let finished = session_row(&db, &operation.training_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|session| session.finished_at.is_some());
+    let rebuild_groups =
+        match crate::personal_best::groups_before_operation(&db, &authenticated.id, &validated)
+            .await
+        {
+            Ok(groups) => groups,
+            Err(error) => {
+                console_error!("failed to read the affected personal best groups: {error}");
+                Vec::new()
+            }
+        };
+    let rebuild_groups = if finished || operation.kind == OperationKind::TrainingSessionDelete {
+        rebuild_groups
+    } else {
+        Vec::new()
+    };
     let statements = match operation.kind {
         OperationKind::TrainingSessionCreate => {
             create_batch(
+                &db,
+                &authenticated.id,
+                terminal.as_deref(),
+                &validated,
+                &now,
+            )
+            .await?
+        }
+        OperationKind::TrainingSessionBackfill => {
+            backfill_batch(&db, &authenticated.id, &validated, &now).await?
+        }
+        OperationKind::TrainingSessionDelete => {
+            delete_batch(
                 &db,
                 &authenticated.id,
                 terminal.as_deref(),
@@ -189,8 +226,13 @@ pub async fn apply_operation(mut request: Request, context: RouteContext<()>) ->
         return reject_or_reapply(&db, &authenticated.id, &operation, &validated, &now).await;
     }
 
-    let bests =
-        crate::set::personal_bests_after_completion(&db, &authenticated.id, &validated).await;
+    let bests = crate::set::personal_bests_after_operation(
+        &db,
+        &authenticated.id,
+        &validated,
+        &rebuild_groups,
+    )
+    .await;
     applied_response("applied", bests.updated)
 }
 
@@ -232,6 +274,11 @@ fn zero_change_outcome(
             CreateRejection::Forbidden => ZeroChangeOutcome::Forbidden,
             CreateRejection::NotFound => ZeroChangeOutcome::NotFound,
         },
+        OperationKind::TrainingSessionBackfill => match create_rejection(session, user_id) {
+            CreateRejection::Forbidden => ZeroChangeOutcome::Forbidden,
+            CreateRejection::NotFound => ZeroChangeOutcome::NotFound,
+        },
+        OperationKind::TrainingSessionDelete => ZeroChangeOutcome::NotFound,
         OperationKind::TrainingSessionUpdate => match session {
             Some(session) if session.user_id == user_id && session.finished_at.is_some() => {
                 ZeroChangeOutcome::ReapplyFinished
@@ -379,6 +426,193 @@ async fn create_batch(
         payload,
         now,
     )))
+}
+
+/// 日付を指定したトレーニングの追加の batch。
+///
+/// 過去の記録は終了済みとして作るため、作成の後はどの端末からでも編集できる。
+/// 開始時刻は保存せず、指定した日付と所要時間を持つ。
+async fn backfill_batch(
+    db: &Db,
+    user_id: &str,
+    validated: &warrior_core::sync::ValidatedOperation,
+    now: &str,
+) -> Result<BatchOutcome> {
+    let ValidatedPayload::Backfill(payload) = &validated.payload else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::BadRequest,
+            "operation is invalid",
+        )));
+    };
+    if let Some(session) = session_row(db, &validated.operation.training_id).await? {
+        if session.user_id != user_id {
+            return Ok(BatchOutcome::Reject(response(
+                ErrorCode::NotFound,
+                "resource not found",
+            )));
+        }
+    }
+    Ok(BatchOutcome::Apply(backfill_statements(
+        user_id,
+        &validated.operation,
+        payload,
+        now,
+    )))
+}
+
+fn backfill_statements(
+    user_id: &str,
+    operation: &Operation,
+    payload: &SessionBackfillPayload,
+    now: &str,
+) -> Vec<SqlStatement> {
+    vec![
+        SqlStatement::new(
+            "INSERT INTO training_sessions \
+             (id, user_id, date, started_at, finished_at, duration_seconds, total_weight_kg, \
+              exercise_count, set_count, memo, source_kind, routine_id, program_day_id, \
+              custom_program_day_id, owner_terminal_id, created_at, updated_at) \
+             VALUES (?, ?, ?, NULL, ?, ?, 0, 0, 0, ?, ?, NULL, NULL, NULL, NULL, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+             date = excluded.date, finished_at = excluded.finished_at, \
+             duration_seconds = excluded.duration_seconds, memo = excluded.memo, \
+             updated_at = excluded.updated_at \
+             WHERE training_sessions.user_id = excluded.user_id",
+            vec![
+                SqlValue::Text(payload.id.clone()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(payload.date.clone()),
+                SqlValue::Text(now.to_owned()),
+                SqlValue::Integer(payload.duration_seconds),
+                SqlValue::Text(payload.memo.clone()),
+                SqlValue::Text(SessionSource::Empty.as_str().to_owned()),
+                SqlValue::Text(now.to_owned()),
+                SqlValue::Text(now.to_owned()),
+            ],
+        ),
+        applied_statement(user_id, operation, now),
+    ]
+}
+
+/// トレーニングの削除の batch。
+///
+/// 先頭の文で編集権を確認しながらトレーニングを削除し、その変更の後に操作 ID を保存する。
+/// 記録中のトレーニングは編集権を持つ端末だけが削除できる。
+async fn delete_batch(
+    db: &Db,
+    user_id: &str,
+    terminal_id: Option<&str>,
+    validated: &warrior_core::sync::ValidatedOperation,
+    now: &str,
+) -> Result<BatchOutcome> {
+    let ValidatedPayload::Delete(_) = &validated.payload else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::BadRequest,
+            "operation is invalid",
+        )));
+    };
+    let Some(session) = session_row(db, &validated.operation.training_id).await? else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    };
+    if session.user_id != user_id {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    }
+    let finished = session.finished_at.is_some();
+    let decision = write_decision(finished, session.owner_terminal_id.as_deref(), terminal_id);
+    let Some(owner) = owner_condition(decision, terminal_id) else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        )));
+    };
+    Ok(BatchOutcome::Apply(delete_statements(
+        user_id,
+        owner,
+        &validated.operation,
+        now,
+    )))
+}
+
+fn delete_statements(
+    user_id: &str,
+    owner: OwnerCondition<'_>,
+    operation: &Operation,
+    now: &str,
+) -> Vec<SqlStatement> {
+    let training_id = SqlValue::Text(operation.training_id.clone());
+    let user = SqlValue::Text(user_id.to_owned());
+    let mut session_bindings = vec![training_id.clone(), user.clone()];
+    let mut session_condition =
+        String::from("training_sessions.id = ? AND training_sessions.user_id = ?");
+    match owner {
+        OwnerCondition::Claim(_) => {
+            session_condition.push_str(
+                " AND training_sessions.finished_at IS NULL \
+                 AND training_sessions.owner_terminal_id IS NULL",
+            );
+        }
+        OwnerCondition::Owned(terminal_id) => {
+            session_condition.push_str(
+                " AND (training_sessions.finished_at IS NOT NULL \
+                 OR training_sessions.owner_terminal_id = ?)",
+            );
+            session_bindings.push(SqlValue::Text(terminal_id.to_owned()));
+        }
+        OwnerCondition::Finished => {
+            session_condition.push_str(" AND training_sessions.finished_at IS NOT NULL");
+        }
+    }
+    let guard = |sql: &str, mut bindings: Vec<SqlValue>| {
+        bindings.push(SqlValue::Text(operation.operation_id.clone()));
+        bindings.push(user.clone());
+        SqlStatement::new(
+            format!(
+                "{sql} AND EXISTS (SELECT 1 FROM applied_operations ao \
+                 WHERE ao.operation_id = ? AND ao.user_id = ?)"
+            ),
+            bindings,
+        )
+    };
+    let with_training = || vec![user.clone(), training_id.clone(), user.clone()];
+    vec![
+        SqlStatement::new(
+            format!("DELETE FROM training_sessions WHERE {session_condition}"),
+            session_bindings,
+        ),
+        applied_statement(user_id, operation, now),
+        guard(
+            "DELETE FROM set_segments WHERE user_id = ? AND set_id IN \
+             (SELECT s.id FROM sets s JOIN training_exercises te \
+              ON te.id = s.training_exercise_id \
+              WHERE te.training_id = ? AND te.user_id = ?)",
+            with_training(),
+        ),
+        guard(
+            "DELETE FROM sets WHERE user_id = ? AND training_exercise_id IN \
+             (SELECT id FROM training_exercises WHERE training_id = ? AND user_id = ?)",
+            with_training(),
+        ),
+        guard(
+            "DELETE FROM superset_members WHERE user_id = ? \
+             AND training_exercise_id IN \
+             (SELECT id FROM training_exercises WHERE training_id = ? AND user_id = ?)",
+            with_training(),
+        ),
+        guard(
+            "DELETE FROM supersets WHERE user_id = ? AND training_id = ?",
+            vec![user.clone(), training_id.clone()],
+        ),
+        guard(
+            "DELETE FROM training_exercises WHERE user_id = ? AND training_id = ?",
+            vec![user.clone(), training_id.clone()],
+        ),
+    ]
 }
 
 async fn update_batch(
@@ -612,8 +846,9 @@ mod tests {
     use super::exercise::ownership_guard_statement;
 
     use super::{
-        create_statements, owner_condition, update_statements, write_decision, zero_change_outcome,
-        OwnerCondition, SessionOwnerRow, ZeroChangeOutcome,
+        backfill_statements, create_statements, delete_statements, owner_condition,
+        update_statements, write_decision, zero_change_outcome, OwnerCondition, SessionOwnerRow,
+        ZeroChangeOutcome,
     };
 
     const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -824,6 +1059,109 @@ mod tests {
         );
         assert!(statements[0].sql().contains("finished_at IS NOT NULL"));
         assert_eq!(statements[0].bindings().len(), 6);
+    }
+
+    #[test]
+    fn the_backfill_batch_creates_a_finished_session_without_a_start_time() {
+        let operation = Operation {
+            operation_id: OPERATION_ID.to_owned(),
+            training_id: TRAINING_ID.to_owned(),
+            sequence: 1,
+            kind: OperationKind::TrainingSessionBackfill,
+            parent_operation_id: None,
+            payload: json!({
+                "id": TRAINING_ID,
+                "date": "2026-11-12",
+                "duration_seconds": 3600,
+                "memo": "過去の記録"
+            }),
+        };
+        let payload = warrior_core::sync::SessionBackfillPayload {
+            id: TRAINING_ID.to_owned(),
+            date: "2026-11-12".to_owned(),
+            duration_seconds: 3_600,
+            memo: "過去の記録".to_owned(),
+        };
+        let statements = backfill_statements(USER_ID, &operation, &payload, "2026-11-12T00:00:00Z");
+        assert_eq!(statements.len(), 2);
+        let sql = statements[0].sql();
+        assert!(sql.contains("VALUES (?, ?, ?, NULL, ?"));
+        assert!(sql.contains("duration_seconds"));
+        assert!(sql.contains("training_sessions.user_id = excluded.user_id"));
+        assert_eq!(
+            statements[0].bindings()[2],
+            SqlValue::Text("2026-11-12".to_owned())
+        );
+        assert_eq!(
+            statements[0].bindings()[4],
+            SqlValue::Integer(3_600),
+            "the duration follows the date and the finish time"
+        );
+        assert!(statements[1].sql().contains("changes() > 0"));
+    }
+
+    #[test]
+    fn the_delete_batch_records_the_operation_before_the_children() {
+        let operation = Operation {
+            operation_id: OPERATION_ID.to_owned(),
+            training_id: TRAINING_ID.to_owned(),
+            sequence: 6,
+            kind: OperationKind::TrainingSessionDelete,
+            parent_operation_id: None,
+            payload: json!({ "training_id": TRAINING_ID }),
+        };
+        let statements = delete_statements(
+            USER_ID,
+            OwnerCondition::Finished,
+            &operation,
+            "2026-11-12T00:00:00Z",
+        );
+        assert_eq!(statements.len(), 7);
+        assert!(statements[0]
+            .sql()
+            .contains("DELETE FROM training_sessions"));
+        assert!(statements[0].sql().contains("finished_at IS NOT NULL"));
+        assert!(statements[1].sql().contains("applied_operations"));
+        assert!(statements[1].sql().contains("changes() > 0"));
+        for statement in &statements[2..] {
+            assert!(
+                statement.sql().contains("applied_operations ao"),
+                "the child statements run only after the operation is recorded"
+            );
+            let bindings = statement.bindings();
+            assert_eq!(
+                bindings[bindings.len() - 2],
+                SqlValue::Text(OPERATION_ID.to_owned())
+            );
+            assert_eq!(
+                bindings[bindings.len() - 1],
+                SqlValue::Text(USER_ID.to_owned())
+            );
+        }
+        assert!(statements[2].sql().contains("DELETE FROM set_segments"));
+        assert!(statements[3].sql().contains("DELETE FROM sets"));
+        assert!(statements[4].sql().contains("DELETE FROM superset_members"));
+        assert!(statements[5].sql().contains("DELETE FROM supersets"));
+        assert!(statements[6]
+            .sql()
+            .contains("DELETE FROM training_exercises"));
+    }
+
+    #[test]
+    fn a_zero_change_delete_is_not_found() {
+        let finished = SessionOwnerRow {
+            user_id: USER_ID.to_owned(),
+            owner_terminal_id: None,
+            finished_at: Some("2026-11-12T04:00:00Z".to_owned()),
+        };
+        assert_eq!(
+            zero_change_outcome(
+                OperationKind::TrainingSessionDelete,
+                Some(&finished),
+                USER_ID
+            ),
+            ZeroChangeOutcome::NotFound
+        );
     }
 
     #[test]

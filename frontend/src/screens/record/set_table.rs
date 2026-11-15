@@ -30,6 +30,8 @@ pub(super) struct SetTableState {
     pub(super) laterality: Laterality,
     /// 編集できないか。
     pub(super) disabled: bool,
+    /// 終了したトレーニングで、完了済みのセットを編集できるか。
+    pub(super) editable_completed: bool,
 }
 
 /// セットの表。
@@ -46,6 +48,7 @@ pub(super) fn SetTable(state: SetTableState, on_action: EventHandler<SetAction>)
         .sum::<usize>();
     let lateral = is_lateral(state.laterality, state.mode);
     let has_completed = state.rows.iter().any(SetView::completed);
+    let editable_completed = state.editable_completed;
     let rows = state.rows;
     let disabled = state.disabled;
     rsx! {
@@ -90,6 +93,7 @@ pub(super) fn SetTable(state: SetTableState, on_action: EventHandler<SetAction>)
                             mode: state.mode,
                             lateral,
                             disabled,
+                            editable_completed,
                         },
                         on_action,
                     }
@@ -98,7 +102,7 @@ pub(super) fn SetTable(state: SetTableState, on_action: EventHandler<SetAction>)
             if disabled {
                 p { class: "text-[11px] text-text-sub", "{text(Key::RecordViewOnly)}" }
             }
-            if has_completed {
+            if has_completed && !editable_completed {
                 p {
                     class: "text-[11px] text-text-sub",
                     "data-set-completed-locked": "true",
@@ -134,6 +138,8 @@ struct SetRowState {
     lateral: bool,
     /// 編集できないか。
     disabled: bool,
+    /// 終了したトレーニングで、完了済みのセットを編集できるか。
+    editable_completed: bool,
 }
 
 /// セットの表の 1 行。
@@ -181,10 +187,10 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
         can_delete,
         can_delete_first_segment,
         ready,
-        completed,
+        completed: completed && !row.editable_completed,
     };
     let disabled = row.disabled;
-    let locked = disabled || completed;
+    let locked = disabled || (completed && !row.editable_completed);
     let confirm_set_id = set_id.clone();
     rsx! {
         div {
