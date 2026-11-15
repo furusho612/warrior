@@ -1,7 +1,9 @@
-//! 完了したセットの検証。
+//! セットの検証。
 //!
 //! 完了したセットは、すべての段に値を持ち、SetRecord の検証を通る必要がある。
 //! 空の段を含む完了済みのセットで、終了のサマリーが 500 になるのを防ぐ。
+//! セットのグリップが、種目スナップショットの `grip_mode` と `grip_options` に
+//! 合うかどうかも確かめる。
 
 use warrior_core::exercise::{ExerciseSnapshot, GripMode, GripSelection};
 use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord};

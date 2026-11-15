@@ -410,6 +410,9 @@ pub fn create_statements(
     ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Result<Vec<SqlStatement>> {
+    payload.snapshot.validate().map_err(|error| {
+        worker::Error::RustError(format!("the exercise snapshot is invalid: {error:?}"))
+    })?;
     let snapshot = serde_json::to_string(&payload.snapshot)
         .map_err(|error| worker::Error::RustError(format!("the snapshot is invalid: {error}")))?;
     let (condition, mut bindings) = ownership_condition(user_id, training_id, ownership);
@@ -598,7 +601,9 @@ mod tests {
         ExerciseOwnership, TrainingCandidateRow,
     };
     use crate::stored_sets::StoredExercise;
-    use warrior_core::exercise::{BodyPart, ExerciseSnapshot, Laterality};
+    use warrior_core::exercise::{
+        BodyPart, ExerciseSnapshot, Laterality, MuscleAssignment, MuscleRole, MuscleUnit,
+    };
     use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord, SetSegment};
 
     const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c4801";
@@ -617,7 +622,10 @@ mod tests {
                 exercise_id: EXERCISE_ID.to_owned(),
                 name: "ベンチプレス".to_owned(),
                 body_part: BodyPart::Chest,
-                muscles: Vec::new(),
+                muscles: vec![MuscleAssignment {
+                    muscle: MuscleUnit::PectoralisMajorMiddle,
+                    role: MuscleRole::Primary,
+                }],
                 record_mode: RecordMode::WeightAndReps,
                 laterality: Laterality::Bilateral,
                 grip_mode: warrior_core::exercise::GripMode::None,
@@ -668,6 +676,20 @@ mod tests {
             SqlValue::Text(text) => assert!(text.contains("ベンチプレス")),
             other => panic!("the snapshot must be text: {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_create_statement_rejects_an_invalid_snapshot() {
+        let mut payload = create_payload();
+        payload.snapshot.grip_mode = warrior_core::exercise::GripMode::Grip;
+        assert!(create_statements(
+            USER_ID,
+            TRAINING_ID,
+            &payload,
+            ExerciseOwnership::Terminal(TERMINAL_ID),
+            NOW,
+        )
+        .is_err());
     }
 
     #[test]
@@ -841,7 +863,10 @@ mod tests {
                 exercise_id: EXERCISE_ID.to_owned(),
                 name: "ベンチプレス".to_owned(),
                 body_part: BodyPart::Chest,
-                muscles: Vec::new(),
+                muscles: vec![MuscleAssignment {
+                    muscle: MuscleUnit::PectoralisMajorMiddle,
+                    role: MuscleRole::Primary,
+                }],
                 record_mode: RecordMode::WeightAndReps,
                 laterality: Laterality::Bilateral,
                 grip_mode: warrior_core::exercise::GripMode::None,

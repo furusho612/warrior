@@ -3,7 +3,7 @@
 //! 月のセルの並び、部位の色と名前、セットの文言を、画面に依存しない関数として持つ。
 
 use warrior_core::calendar::{day_body_parts, month_cells, CalendarMonth};
-use warrior_core::exercise::BodyPart;
+use warrior_core::exercise::{Attachment, BodyPart, GripStyle, GripWidth};
 use warrior_core::jst::{JstDate, JstMonth, Weekday};
 use warrior_core::rpe;
 use warrior_core::set_calc::{SetKind, SetSegment, SideValue};
@@ -279,39 +279,87 @@ fn set_kind_label(kind: SetKind) -> &'static str {
 
 pub(crate) fn grip_label(key: &str) -> String {
     let (style, width) = key.split_once('_').unwrap_or((key, ""));
-    let style = match style {
-        "pronated" => text(Key::CalendarGripPronated),
-        "supinated" => text(Key::CalendarGripSupinated),
-        "parallel" => text(Key::CalendarGripParallel),
-        other => other,
-    };
-    let width = match width {
-        "wide" => text(Key::CalendarGripWide),
-        "medium" => text(Key::CalendarGripMedium),
-        "narrow" => text(Key::CalendarGripNarrow),
-        other => other,
-    };
-    if width.is_empty() {
-        style.to_owned()
+    let style = grip_style_from_key(style).map_or_else(
+        || style.to_owned(),
+        |style| grip_style_text(style).to_owned(),
+    );
+    let width = if width.is_empty() {
+        None
     } else {
-        format!("{style} {width}")
+        Some(grip_width_from_key(width).map_or_else(
+            || width.to_owned(),
+            |width| grip_width_text(width).to_owned(),
+        ))
+    };
+    match width {
+        Some(width) => format!("{style} {width}"),
+        None => style,
     }
 }
 
 pub(crate) fn attachment_label(key: &str) -> String {
-    match key {
-        "wide_bar" => text(Key::CalendarAttachmentWideBar).to_owned(),
-        "straight_bar" => text(Key::CalendarAttachmentStraightBar).to_owned(),
-        "parallel_grip" => text(Key::CalendarAttachmentParallelGrip).to_owned(),
-        "mag_narrow_parallel" => text(Key::CalendarAttachmentMagNarrowParallel).to_owned(),
-        "mag_narrow_over" => text(Key::CalendarAttachmentMagNarrowOver).to_owned(),
-        "mag_narrow_under" => text(Key::CalendarAttachmentMagNarrowUnder).to_owned(),
-        "mag_medium_parallel" => text(Key::CalendarAttachmentMagMediumParallel).to_owned(),
-        "mag_medium_over" => text(Key::CalendarAttachmentMagMediumOver).to_owned(),
-        "mag_medium_under" => text(Key::CalendarAttachmentMagMediumUnder).to_owned(),
-        "mag_wide_over" => text(Key::CalendarAttachmentMagWideOver).to_owned(),
-        other => other.to_owned(),
+    attachment_from_key(key).map_or_else(
+        || key.to_owned(),
+        |attachment| attachment_text(attachment).to_owned(),
+    )
+}
+
+/// 握り方の表示文言。
+pub(crate) fn grip_style_text(style: GripStyle) -> &'static str {
+    match style {
+        GripStyle::Pronated => text(Key::CalendarGripPronated),
+        GripStyle::Supinated => text(Key::CalendarGripSupinated),
+        GripStyle::Parallel => text(Key::CalendarGripParallel),
     }
+}
+
+/// 手幅の表示文言。
+pub(crate) fn grip_width_text(width: GripWidth) -> &'static str {
+    match width {
+        GripWidth::Wide => text(Key::CalendarGripWide),
+        GripWidth::Medium => text(Key::CalendarGripMedium),
+        GripWidth::Narrow => text(Key::CalendarGripNarrow),
+    }
+}
+
+/// アタッチメントの表示文言。
+pub(crate) fn attachment_text(attachment: Attachment) -> &'static str {
+    match attachment {
+        Attachment::WideBar => text(Key::CalendarAttachmentWideBar),
+        Attachment::StraightBar => text(Key::CalendarAttachmentStraightBar),
+        Attachment::ParallelGrip => text(Key::CalendarAttachmentParallelGrip),
+        Attachment::MagNarrowParallel => text(Key::CalendarAttachmentMagNarrowParallel),
+        Attachment::MagNarrowOver => text(Key::CalendarAttachmentMagNarrowOver),
+        Attachment::MagNarrowUnder => text(Key::CalendarAttachmentMagNarrowUnder),
+        Attachment::MagMediumParallel => text(Key::CalendarAttachmentMagMediumParallel),
+        Attachment::MagMediumOver => text(Key::CalendarAttachmentMagMediumOver),
+        Attachment::MagMediumUnder => text(Key::CalendarAttachmentMagMediumUnder),
+        Attachment::MagWideOver => text(Key::CalendarAttachmentMagWideOver),
+    }
+}
+
+/// 保存されたキーから握り方を読む。
+pub(crate) fn grip_style_from_key(key: &str) -> Option<GripStyle> {
+    GripStyle::ALL
+        .iter()
+        .copied()
+        .find(|style| style.as_str() == key)
+}
+
+/// 保存されたキーから手幅を読む。
+pub(crate) fn grip_width_from_key(key: &str) -> Option<GripWidth> {
+    GripWidth::ALL
+        .iter()
+        .copied()
+        .find(|width| width.as_str() == key)
+}
+
+/// 保存されたキーからアタッチメントを読む。
+pub(crate) fn attachment_from_key(key: &str) -> Option<Attachment> {
+    Attachment::ALL
+        .iter()
+        .copied()
+        .find(|attachment| attachment.as_str() == key)
 }
 
 pub(crate) fn format_weight(value: f64) -> String {

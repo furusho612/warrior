@@ -2,6 +2,7 @@
 
 use serde_json::{json, Value};
 use warrior_core::auth::{hash_session_token, hash_terminal_token};
+use warrior_core::exercise::GripSelection;
 
 use super::{DevServer, HttpResponse};
 
@@ -158,6 +159,8 @@ pub(crate) struct ExerciseSeed<'a> {
     pub(crate) muscle: &'a str,
     pub(crate) record_mode: &'a str,
     pub(crate) position: i64,
+    pub(crate) grip_mode: &'a str,
+    pub(crate) grip_options: &'a [GripSelection],
 }
 
 /// 種目を作る。
@@ -181,6 +184,8 @@ pub(crate) fn seed_exercise_with_laterality(
         muscle,
         record_mode,
         position,
+        grip_mode,
+        grip_options,
     } = seed;
     let snapshot = json!({
         "exercise_id": exercise_id,
@@ -189,8 +194,8 @@ pub(crate) fn seed_exercise_with_laterality(
         "muscles": [{"muscle": muscle, "role": "primary"}],
         "record_mode": record_mode,
         "laterality": laterality,
-        "grip_mode": "none",
-        "grip_options": []
+        "grip_mode": grip_mode,
+        "grip_options": grip_options
     });
     server
         .execute_d1_json(&format!(

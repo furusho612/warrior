@@ -341,6 +341,8 @@ fn seed_unilateral_exercise(server: &DevServer) {
             muscle: "latissimus_dorsi",
             record_mode: "weight_and_reps",
             position: 4,
+            grip_mode: "none",
+            grip_options: &[],
         },
         "unilateral",
     );

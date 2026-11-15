@@ -18,6 +18,7 @@ use warrior_core::set_rules;
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 
 pub(super) use super::set_inputs::Field;
+use crate::calendar_view::{attachment_text, grip_style_text, grip_width_text};
 use crate::storage::StoredSet;
 use crate::text::{text, Key};
 use crate::training_set::grip_json;
@@ -735,6 +736,27 @@ pub(super) fn default_grip(
         .or_else(|| options.first().copied())
 }
 
+/// グリップが無いセットに、直近の選択または先頭の選択を入れる。
+pub(super) fn fill_missing_grips(sets: &mut [SetView], mode: GripMode, options: &[GripSelection]) {
+    let mut latest = None;
+    for set in sets {
+        if set.grip().is_none() {
+            if let Some(grip) = default_grip(mode, options, latest) {
+                set.set_grip(grip);
+            }
+        }
+        latest = set.grip().or(latest);
+    }
+}
+
+/// セットのグリップが期待値のままか。
+pub(super) fn set_grip_is(sets: &[SetView], set_id: &str, expected: GripSelection) -> bool {
+    sets.iter()
+        .find(|set| set.record.id == set_id)
+        .and_then(SetView::grip)
+        == Some(expected)
+}
+
 /// 選択肢の中の握り方を、選択肢の順に返す。
 pub(super) fn grip_styles(options: &[GripSelection]) -> Vec<GripStyle> {
     let mut styles = Vec::new();
@@ -936,50 +958,16 @@ pub(super) fn grip_selection_label(selection: GripSelection) -> String {
     match selection {
         GripSelection::None => text(Key::RecordSetGripNone).to_owned(),
         GripSelection::Grip { style, width } => {
-            format!("{} {}", grip_style_label(style), grip_width_label(width))
+            format!("{} {}", grip_style_text(style), grip_width_text(width))
         }
         GripSelection::Attachment { attachment, style } => match style {
             Some(style) => format!(
                 "{} / {}",
-                grip_style_label(style),
-                attachment_label(attachment)
+                grip_style_text(style),
+                attachment_text(attachment)
             ),
-            None => attachment_label(attachment).to_owned(),
+            None => attachment_text(attachment).to_owned(),
         },
-    }
-}
-
-/// 握り方の文言。
-pub(super) fn grip_style_label(style: GripStyle) -> &'static str {
-    match style {
-        GripStyle::Pronated => text(Key::RecordSetGripStylePronated),
-        GripStyle::Supinated => text(Key::RecordSetGripStyleSupinated),
-        GripStyle::Parallel => text(Key::RecordSetGripStyleParallel),
-    }
-}
-
-/// 手幅の文言。
-pub(super) fn grip_width_label(width: GripWidth) -> &'static str {
-    match width {
-        GripWidth::Wide => text(Key::RecordSetGripWidthWide),
-        GripWidth::Medium => text(Key::RecordSetGripWidthMedium),
-        GripWidth::Narrow => text(Key::RecordSetGripWidthNarrow),
-    }
-}
-
-/// アタッチメントの文言。
-pub(super) fn attachment_label(attachment: Attachment) -> &'static str {
-    match attachment {
-        Attachment::WideBar => text(Key::RecordSetAttachmentWideBar),
-        Attachment::StraightBar => text(Key::RecordSetAttachmentStraightBar),
-        Attachment::ParallelGrip => text(Key::RecordSetAttachmentParallelGrip),
-        Attachment::MagNarrowParallel => text(Key::RecordSetAttachmentMagNarrowParallel),
-        Attachment::MagNarrowOver => text(Key::RecordSetAttachmentMagNarrowOver),
-        Attachment::MagNarrowUnder => text(Key::RecordSetAttachmentMagNarrowUnder),
-        Attachment::MagMediumParallel => text(Key::RecordSetAttachmentMagMediumParallel),
-        Attachment::MagMediumOver => text(Key::RecordSetAttachmentMagMediumOver),
-        Attachment::MagMediumUnder => text(Key::RecordSetAttachmentMagMediumUnder),
-        Attachment::MagWideOver => text(Key::RecordSetAttachmentMagWideOver),
     }
 }
 

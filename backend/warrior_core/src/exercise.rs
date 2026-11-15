@@ -459,6 +459,7 @@ pub enum ExerciseError {
     GripSelectionMismatch,
     AttachmentStyleMissing,
     UnexpectedAttachmentStyle,
+    GripOptionsMissing,
     DuplicateMuscle,
 }
 
@@ -507,6 +508,9 @@ impl Exercise {
             && (self.grip_mode != GripMode::None || !self.grip_options.is_empty())
         {
             return Err(ExerciseError::TimeHasGrip);
+        }
+        if self.grip_mode != GripMode::None && self.grip_options.is_empty() {
+            return Err(ExerciseError::GripOptionsMissing);
         }
         for option in &self.grip_options {
             option.validate_for(self.grip_mode)?;
@@ -590,6 +594,9 @@ impl ExerciseSnapshot {
         {
             return Err(ExerciseError::TimeHasGrip);
         }
+        if self.grip_mode != GripMode::None && self.grip_options.is_empty() {
+            return Err(ExerciseError::GripOptionsMissing);
+        }
         for option in &self.grip_options {
             option.validate_for(self.grip_mode)?;
         }
@@ -599,6 +606,10 @@ impl ExerciseSnapshot {
 
 #[cfg(test)]
 mod tests {
+    //! 種目とスナップショットの検証。
+    //!
+    //! 対応する要求: `REQ-SET-011`、`REQ-LIB-011`。
+
     use super::{
         BodyPart, Equipment, Exercise, ExerciseError, ExerciseSnapshot, GripMode, GripSelection,
         GripStyle, GripWidth, Laterality, MuscleAssignment, MuscleRole, MuscleUnit, OtherScope,
@@ -734,6 +745,30 @@ mod tests {
             value.validate(),
             Err(ExerciseError::UnexpectedAttachmentStyle)
         );
+    }
+
+    #[test]
+    fn grip_exercises_need_at_least_one_option() {
+        let mut value = exercise();
+        value.grip_mode = GripMode::Grip;
+        assert_eq!(value.validate(), Err(ExerciseError::GripOptionsMissing));
+        value.grip_options = vec![GripSelection::Grip {
+            style: GripStyle::Pronated,
+            width: GripWidth::Medium,
+        }];
+        value.validate().unwrap();
+    }
+
+    #[test]
+    fn a_snapshot_rejects_a_grip_exercise_without_options() {
+        let mut snapshot = ExerciseSnapshot::from(&exercise());
+        snapshot.grip_mode = GripMode::Attachment;
+        assert_eq!(snapshot.validate(), Err(ExerciseError::GripOptionsMissing));
+        snapshot.grip_options = vec![GripSelection::Attachment {
+            attachment: super::Attachment::WideBar,
+            style: Some(GripStyle::Pronated),
+        }];
+        snapshot.validate().unwrap();
     }
 
     #[test]

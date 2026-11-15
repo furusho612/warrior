@@ -49,6 +49,7 @@ const SECOND_SET_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5622";
 const EMPTY_COMPLETED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5639";
 const TAKEOVER_PORT: u16 = 8824;
 const TIME_PORT: u16 = 8827;
+const GRIP_PORT: u16 = 8828;
 const TIME_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5650";
 const TIME_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5651";
 const TIME_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5652";
@@ -61,6 +62,16 @@ const TAKEOVER_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5640";
 const TAKEOVER_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5641";
 const TAKEOVER_OLD_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5642";
 const TAKEOVER_NEW_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5643";
+const GRIP_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5660";
+const GRIP_INVALID_CREATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5661";
+const GRIP_INVALID_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5662";
+const GRIP_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5663";
+const GRIP_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5664";
+const GRIP_INVALID_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5665";
+const GRIP_INVALID_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5666";
+const INVALID_SNAPSHOT_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5667";
+const INVALID_SNAPSHOT_ROW_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5668";
+const INVALID_SNAPSHOT_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5669";
 
 #[test]
 fn set_operations_are_idempotent_scoped_and_keep_the_segments() {
@@ -886,4 +897,118 @@ fn a_takeover_moves_the_set_operations_to_the_new_terminal() {
     assert_eq!(response.status, 200, "{}", response.body);
     assert_eq!(applied_count(&server, TAKEOVER_NEW_OPERATION_ID), 1);
     assert_eq!(count(&server, "sets", TAKEOVER_SET_ID), 1);
+}
+
+#[test]
+fn grip_rejections_keep_the_stored_grip_and_the_operation_absent() {
+    let server = DevServer::start(GRIP_PORT);
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let token = base64url::encode(&[61u8; 32]);
+    let terminal_token = base64url::encode(&[62u8; 32]);
+    let other_terminal_token = base64url::encode(&[63u8; 32]);
+    seed_base(&server, &token, &terminal_token, &other_terminal_token);
+    let cookie = cookie(&token, &terminal_token);
+
+    let mut valid = create_operation(
+        GRIP_CREATE_OPERATION_ID,
+        TRAINING_ID,
+        GRIP_ROW_ID,
+        GRIP_SET_ID,
+        SetSpec {
+            position: 1,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![segment(GRIP_SEGMENT_ID, 1, 100.0, 5)],
+    );
+    valid["payload"]["grip"] = json!({"grip": {"style": "pronated", "width": "medium"}});
+    let response = post(&server, &cookie, &valid);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(status(&response), "applied");
+    assert_eq!(
+        stored_grip(&server, GRIP_SET_ID),
+        Some(json!({"grip": {"style": "pronated", "width": "medium"}}))
+    );
+
+    let mut invalid_create = create_operation(
+        GRIP_INVALID_CREATE_OPERATION_ID,
+        TRAINING_ID,
+        GRIP_ROW_ID,
+        GRIP_INVALID_SET_ID,
+        SetSpec {
+            position: 2,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![segment(GRIP_INVALID_SEGMENT_ID, 1, 100.0, 5)],
+    );
+    invalid_create["payload"]["grip"] = json!({"grip": {"style": "supinated", "width": "medium"}});
+    let response = post(&server, &cookie, &invalid_create);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(&server, GRIP_INVALID_CREATE_OPERATION_ID), 0);
+    assert_eq!(count(&server, "sets", GRIP_INVALID_SET_ID), 0);
+
+    let mut invalid_update = update_operation(
+        GRIP_INVALID_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        GRIP_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: false,
+            body_weight_kg: None,
+        },
+        vec![segment(GRIP_SEGMENT_ID, 1, 100.0, 5)],
+    );
+    invalid_update["payload"]["grip"] = json!({"grip": {"style": "supinated", "width": "medium"}});
+    let response = post(&server, &cookie, &invalid_update);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(&server, GRIP_INVALID_UPDATE_OPERATION_ID), 0);
+    assert_eq!(
+        stored_grip(&server, GRIP_SET_ID),
+        Some(json!({"grip": {"style": "pronated", "width": "medium"}}))
+    );
+
+    let operation = json!({
+        "operation_id": INVALID_SNAPSHOT_OPERATION_ID,
+        "training_id": TRAINING_ID,
+        "sequence": 0,
+        "kind": "training_exercise_create",
+        "parent_operation_id": null,
+        "payload": {
+            "training_id": TRAINING_ID,
+            "training_exercise_id": INVALID_SNAPSHOT_ROW_ID,
+            "exercise_id": INVALID_SNAPSHOT_EXERCISE_ID,
+            "snapshot": {
+                "exercise_id": INVALID_SNAPSHOT_EXERCISE_ID,
+                "name": "不正な種目",
+                "body_part": "chest",
+                "muscles": [{"muscle": "pectoralis_major_middle", "role": "primary"}],
+                "record_mode": "weight_and_reps",
+                "laterality": "bilateral",
+                "grip_mode": "grip",
+                "grip_options": []
+            },
+            "position": 5
+        }
+    });
+    let response = post(&server, &cookie, &operation);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(&server, INVALID_SNAPSHOT_OPERATION_ID), 0);
+    assert_eq!(
+        count(&server, "training_exercises", INVALID_SNAPSHOT_ROW_ID),
+        0
+    );
+}
+
+fn stored_grip(server: &DevServer, set_id: &str) -> Option<Value> {
+    let row = first_row(
+        server,
+        &format!("SELECT grip FROM sets WHERE id = '{set_id}'"),
+    );
+    row["grip"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
 }

@@ -21,6 +21,7 @@ const GRIP_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000013";
 const GRIP_NAME: &str = "T バーロウ";
 const ATTACHMENT_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-00000000001a";
 const ATTACHMENT_NAME: &str = "ラットプルダウン";
+const GRIPLESS_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
 const SERVER_PORT: u16 = 8858;
 const PROVIDER_PORT: u16 = 8859;
 
@@ -85,9 +86,11 @@ async fn records_the_grip_and_limits_the_previous_and_the_personal_bests() {
     .await;
     browser::add_exercise(&driver, GRIP_EXERCISE_ID).await;
     browser::add_exercise(&driver, ATTACHMENT_EXERCISE_ID).await;
+    browser::add_exercise(&driver, GRIPLESS_EXERCISE_ID).await;
 
     check_the_grip_exercise(&driver, &server).await;
     check_the_attachment_exercise(&driver, &server).await;
+    check_the_gripless_exercise(&driver, &server).await;
 
     browser::assert_no_panic(&driver).await;
     driver.quit().await.expect("the browser must close");
@@ -137,7 +140,6 @@ async fn check_the_grip_exercise(driver: &WebDriver, server: &DevServer) {
         "逆手 ナロー",
     )
     .await;
-    assert_no_personal_best(driver, GRIP_NAME, "max_weight", 100.0).await;
 }
 
 async fn check_the_attachment_exercise(driver: &WebDriver, server: &DevServer) {
@@ -213,7 +215,34 @@ async fn check_the_attachment_exercise(driver: &WebDriver, server: &DevServer) {
         "順手 / ストレートバー",
     )
     .await;
-    assert_no_personal_best(driver, ATTACHMENT_NAME, "max_weight", 60.0).await;
+}
+
+async fn check_the_gripless_exercise(driver: &WebDriver, server: &DevServer) {
+    let detail = detail_selector(GRIPLESS_EXERCISE_ID);
+    browser::select_exercise(driver, GRIPLESS_EXERCISE_ID).await;
+    let set = add_set(driver, &detail).await;
+    let row = set_row(&detail, &set);
+    open_drawer(driver, &row).await;
+    assert!(
+        driver
+            .find(By::Css("[data-set-drawer] [data-set-grip-input]"))
+            .await
+            .is_err(),
+        "a grip-less exercise must not show the grip inputs"
+    );
+    close_drawer(driver).await;
+
+    browser::set_input(driver, &format!("{row} [data-set-weight]"), "60").await;
+    browser::set_input(driver, &format!("{row} [data-set-reps]"), "8").await;
+    browser::wait_for_attribute(
+        driver,
+        &format!("{row} [data-set-complete]"),
+        "data-set-complete-ready",
+        "true",
+    )
+    .await;
+    browser::click(driver, &format!("{row} [data-set-complete]")).await;
+    wait_for_set_grip_null(server, &set).await;
 }
 
 async fn login(driver: &WebDriver, server: &DevServer, provider: &TestOidc) {
@@ -319,21 +348,22 @@ async fn wait_for_previous_total(driver: &WebDriver, detail: &str, expected: &st
 }
 
 async fn wait_for_grip_label(driver: &WebDriver, row: &str, expected: &str) {
+    let selector = format!("{row} [data-set-grip-label]");
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let text = browser::eval_string(
             driver,
             "const done = arguments[arguments.length - 1]; \
              done(document.querySelector(arguments[0])?.textContent ?? '');",
-            vec![json!(row)],
+            vec![json!(selector)],
         )
         .await;
-        if text.contains(expected) {
+        if text == expected {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "the row {row} did not show {expected}: {text}"
+            "the grip label of {row} did not become {expected}: {text}"
         );
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -363,16 +393,6 @@ async fn wait_for_personal_best(
         );
         std::thread::sleep(Duration::from_millis(100));
     }
-}
-
-async fn assert_no_personal_best(driver: &WebDriver, name: &str, kind: &str, value: f64) {
-    let items = personal_bests(driver).await;
-    assert!(
-        !items.iter().any(|item| {
-            item.kind == kind && item.name == name && (item.value - value).abs() < 1e-9
-        }),
-        "the personal best {kind} of {name} must not use another grip: {items:?}"
-    );
 }
 
 #[derive(Debug)]
@@ -426,6 +446,24 @@ async fn wait_for_set_grip(server: &DevServer, set_id: &str, expected: &str) {
         assert!(
             Instant::now() < deadline,
             "the grip of {set_id} was not saved: {actual:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+async fn wait_for_set_grip_null(server: &DevServer, set_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let row = optional_row(
+            server,
+            &format!("SELECT grip FROM sets WHERE id = '{set_id}'"),
+        );
+        if row.as_ref().is_some_and(|row| row["grip"].is_null()) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the grip of {set_id} must stay null: {row:?}"
         );
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -526,12 +564,52 @@ fn seed_past(server: &DevServer, user_id: &str) {
     ] {
         seed_past_exercise(server, user_id, &past);
     }
+    seed_empty_key_personal_bests(
+        server,
+        user_id,
+        GRIP_EXERCISE_ID,
+        "a7c4e2f0-0000-4000-8000-000000000101",
+        "2026-01-01",
+    );
+    seed_empty_key_personal_bests(
+        server,
+        user_id,
+        ATTACHMENT_EXERCISE_ID,
+        "a7c4e2f0-0000-4000-8000-000000000105",
+        "2026-01-05",
+    );
+}
+
+fn seed_empty_key_personal_bests(
+    server: &DevServer,
+    user_id: &str,
+    exercise_id: &str,
+    training_id: &str,
+    date: &str,
+) {
+    for (kind, value) in [
+        ("max_weight", 999.0),
+        ("estimated_one_rep_max", 999.0),
+        ("total_weight", 9_999.0),
+    ] {
+        server
+            .execute_d1_json(&format!(
+                "INSERT INTO personal_bests \
+                 (user_id, exercise_id, grip, attachment, kind, value, achieved_on, training_id, \
+                  created_at, updated_at) \
+                 VALUES ('{user_id}', '{exercise_id}', '', '', '{kind}', {value}, '{date}', \
+                  '{training_id}', '{date}T03:00:00Z', '{date}T03:00:00Z')"
+            ))
+            .expect("the empty-key personal best must be seeded");
+    }
 }
 
 fn seed_past_exercise(server: &DevServer, user_id: &str, past: &PastExercise<'_>) {
     let row_id = format!("{}-exercise", past.training_id);
     let set_id = format!("{}-set", past.training_id);
     let segment_id = format!("{}-segment", past.training_id);
+    let selection =
+        serde_json::from_str::<GripSelection>(past.grip).expect("the past grip selection");
     let snapshot = json!({
         "exercise_id": past.exercise_id,
         "name": past.name,
@@ -540,10 +618,8 @@ fn seed_past_exercise(server: &DevServer, user_id: &str, past: &PastExercise<'_>
         "record_mode": "weight_and_reps",
         "laterality": "bilateral",
         "grip_mode": past.grip_mode,
-        "grip_options": []
+        "grip_options": [selection]
     });
-    let selection =
-        serde_json::from_str::<GripSelection>(past.grip).expect("the past grip selection");
     let (grip, attachment) = selection.comparison_key();
     let grip = grip.unwrap_or_default();
     let attachment = attachment.unwrap_or_default();

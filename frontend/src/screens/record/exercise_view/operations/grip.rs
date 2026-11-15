@@ -4,10 +4,11 @@ use dioxus::prelude::*;
 use warrior_core::exercise::GripSelection;
 
 use super::super::view::ExerciseView;
-use super::save_set_loop;
+use super::set_io::save_set_loop;
 use super::SetSaver;
 use crate::previous as previous_api;
 use crate::screens::record::errors::RecordErrors;
+use crate::screens::record::sets::set_grip_is;
 
 /// セットのグリップを画面へ反映し、その種目の前回を取り直して保存する。
 pub(super) async fn change_grip(
@@ -21,8 +22,10 @@ pub(super) async fn change_grip(
     let Some((view_id, exercise_id)) = update_set_grip(views, &set_id, grip) else {
         return;
     };
-    save_set_loop(training_id.clone(), set_id, views, error, saver).await;
-    refresh_previous(&training_id, &view_id, &exercise_id, grip, views).await;
+    if !save_set_loop(training_id.clone(), set_id.clone(), views, error, saver).await {
+        return;
+    }
+    refresh_previous(&training_id, &view_id, &set_id, &exercise_id, grip, views).await;
 }
 
 /// セットのグリップを画面へ反映する。
@@ -48,6 +51,7 @@ fn update_set_grip(
 pub(super) async fn refresh_after_add(
     training_id: &str,
     view_id: &str,
+    set_id: &str,
     view: &ExerciseView,
     grip: GripSelection,
     views: Signal<Vec<ExerciseView>>,
@@ -55,6 +59,7 @@ pub(super) async fn refresh_after_add(
     refresh_previous(
         training_id,
         view_id,
+        set_id,
         &view.snapshot.exercise_id,
         grip,
         views,
@@ -66,10 +71,12 @@ pub(super) async fn refresh_after_add(
 pub(super) async fn refresh_previous(
     training_id: &str,
     view_id: &str,
+    set_id: &str,
     exercise_id: &str,
     grip: GripSelection,
     mut views: Signal<Vec<ExerciseView>>,
 ) {
+    let expected = grip;
     let (grip, attachment) = previous_api::grip_query(Some(grip));
     let (previous, previous_error) = match previous_api::fetch(
         training_id,
@@ -83,9 +90,13 @@ pub(super) async fn refresh_previous(
         Err(_) => (None, true),
     };
     let mut list = (views)();
-    if let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) {
-        view.previous = previous;
-        view.previous_error = previous_error;
+    let Some(view) = list.iter_mut().find(|view| view.record.id == view_id) else {
+        return;
+    };
+    if !set_grip_is(&view.sets, set_id, expected) {
+        return;
     }
+    view.previous = previous;
+    view.previous_error = previous_error;
     views.set(list);
 }

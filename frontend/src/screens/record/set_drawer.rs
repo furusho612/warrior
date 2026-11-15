@@ -7,15 +7,17 @@
 
 use dioxus::prelude::*;
 use warrior_core::duration;
-use warrior_core::exercise::{
-    Attachment, GripMode, GripSelection, GripStyle, GripWidth, RecordMode,
-};
+use warrior_core::exercise::{GripMode, GripSelection, RecordMode};
 
 use super::set_inputs::Field;
 use super::sets::{
-    attachment_label, attachment_styles, attachment_with, attachment_with_style, default_grip,
-    grip_attachments, grip_style_label, grip_styles, grip_width_label, grip_widths,
-    grip_with_style, grip_with_width, set_kind_text, SelectedSet, SetAction, SetView,
+    attachment_styles, attachment_with, attachment_with_style, default_grip, grip_attachments,
+    grip_styles, grip_widths, grip_with_style, grip_with_width, set_kind_text, SelectedSet,
+    SetAction, SetView,
+};
+use crate::calendar_view::{
+    attachment_from_key, attachment_text, grip_style_from_key, grip_style_text,
+    grip_width_from_key, grip_width_text,
 };
 use crate::text::{text, Key};
 
@@ -171,7 +173,6 @@ fn BreakdownRow(
         }
     }
 }
-
 /// セットのグリップの選択。
 #[component]
 fn GripInput(
@@ -188,142 +189,226 @@ fn GripInput(
     match grip_mode {
         GripMode::None => rsx! {},
         GripMode::Grip => {
-            let GripSelection::Grip { style, width } = selection else {
+            let GripSelection::Grip { .. } = selection else {
                 return rsx! {};
             };
-            let styles = grip_styles(&grip_options);
-            let widths = grip_widths(&grip_options, style);
-            let style_set_id = set_id.clone();
-            let width_set_id = set_id;
-            let style_options = grip_options.clone();
-            let width_options = grip_options;
             rsx! {
                 div {
                     class: "flex flex-wrap items-center gap-2",
                     "data-set-grip-input": "true",
-                    label {
-                        class: "flex items-center gap-1 text-[11px] font-bold",
-                        "{text(Key::RecordSetGripStyle)}"
-                        select {
-                            class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
-                            "data-set-grip-style": "true",
-                            "aria-label": "{text(Key::RecordSetGripStyle)}",
-                            disabled,
-                            value: "{style.as_str()}",
-                            onchange: move |event| {
-                                if let Some(style) = grip_style_from_value(&event.value()) {
-                                    on_action.call(SetAction::Grip {
-                                        set_id: style_set_id.clone(),
-                                        grip: grip_with_style(selection, style, &style_options),
-                                    });
-                                }
-                            },
-                            for option in styles {
-                                option {
-                                    value: "{option.as_str()}",
-                                    selected: option == style,
-                                    "{grip_style_label(option)}"
-                                }
-                            }
-                        }
+                    GripStyleField {
+                        set_id: set_id.clone(),
+                        selection,
+                        options: grip_options.clone(),
+                        disabled,
+                        on_action,
                     }
-                    label {
-                        class: "flex items-center gap-1 text-[11px] font-bold",
-                        "{text(Key::RecordSetGripWidth)}"
-                        select {
-                            class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
-                            "data-set-grip-width": "true",
-                            "aria-label": "{text(Key::RecordSetGripWidth)}",
-                            disabled,
-                            value: "{width.as_str()}",
-                            onchange: move |event| {
-                                if let Some(width) = grip_width_from_value(&event.value()) {
-                                    on_action.call(SetAction::Grip {
-                                        set_id: width_set_id.clone(),
-                                        grip: grip_with_width(selection, width, &width_options),
-                                    });
-                                }
-                            },
-                            for option in widths {
-                                option {
-                                    value: "{option.as_str()}",
-                                    selected: option == width,
-                                    "{grip_width_label(option)}"
-                                }
-                            }
-                        }
+                    GripWidthField {
+                        set_id,
+                        selection,
+                        options: grip_options,
+                        disabled,
+                        on_action,
                     }
                 }
             }
         }
         GripMode::Attachment => {
-            let GripSelection::Attachment { attachment, style } = selection else {
+            let GripSelection::Attachment { .. } = selection else {
                 return rsx! {};
             };
-            let attachments = grip_attachments(&grip_options);
-            let styles = attachment_styles(&grip_options, attachment);
-            let current_style = style.or_else(|| styles.first().copied());
-            let attachment_set_id = set_id.clone();
-            let style_set_id = set_id;
-            let attachment_options = grip_options.clone();
-            let style_options = grip_options;
             rsx! {
                 div {
                     class: "flex flex-wrap items-center gap-2",
                     "data-set-grip-input": "true",
-                    label {
-                        class: "flex items-center gap-1 text-[11px] font-bold",
-                        "{text(Key::RecordSetGripAttachment)}"
-                        select {
-                            class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
-                            "data-set-grip-attachment": "true",
-                            "aria-label": "{text(Key::RecordSetGripAttachment)}",
-                            disabled,
-                            value: "{attachment.as_str()}",
-                            onchange: move |event| {
-                                if let Some(attachment) = attachment_from_value(&event.value()) {
-                                    on_action.call(SetAction::Grip {
-                                        set_id: attachment_set_id.clone(),
-                                        grip: attachment_with(selection, attachment, &attachment_options),
-                                    });
-                                }
-                            },
-                            for option in attachments {
-                                option {
-                                    value: "{option.as_str()}",
-                                    selected: option == attachment,
-                                    "{attachment_label(option)}"
-                                }
-                            }
-                        }
+                    AttachmentField {
+                        set_id: set_id.clone(),
+                        selection,
+                        options: grip_options.clone(),
+                        disabled,
+                        on_action,
                     }
-                    if let Some(current_style) = current_style {
-                        label {
-                            class: "flex items-center gap-1 text-[11px] font-bold",
-                            "{text(Key::RecordSetGripStyle)}"
-                            select {
-                                class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
-                                "data-set-grip-style": "true",
-                                "aria-label": "{text(Key::RecordSetGripStyle)}",
-                                disabled,
-                                value: "{current_style.as_str()}",
-                                onchange: move |event| {
-                                    if let Some(style) = grip_style_from_value(&event.value()) {
-                                        on_action.call(SetAction::Grip {
-                                            set_id: style_set_id.clone(),
-                                            grip: attachment_with_style(selection, style, &style_options),
-                                        });
-                                    }
-                                },
-                                for option in styles {
-                                    option {
-                                        value: "{option.as_str()}",
-                                        selected: option == current_style,
-                                        "{grip_style_label(option)}"
-                                    }
-                                }
-                            }
-                        }
+                    AttachmentStyleField {
+                        set_id,
+                        selection,
+                        options: grip_options,
+                        disabled,
+                        on_action,
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// グリップの握り方の選択。
+#[component]
+fn GripStyleField(
+    set_id: String,
+    selection: GripSelection,
+    options: Vec<GripSelection>,
+    disabled: bool,
+    on_action: EventHandler<SetAction>,
+) -> Element {
+    let GripSelection::Grip { style, .. } = selection else {
+        return rsx! {};
+    };
+    let styles = grip_styles(&options);
+    rsx! {
+        label {
+            class: "flex items-center gap-1 text-[11px] font-bold",
+            "{text(Key::RecordSetGripStyle)}"
+            select {
+                class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
+                "data-set-grip-style": "true",
+                "aria-label": "{text(Key::RecordSetGripStyle)}",
+                disabled,
+                value: "{style.as_str()}",
+                onchange: move |event| {
+                    if let Some(style) = grip_style_from_key(&event.value()) {
+                        on_action.call(SetAction::Grip {
+                            set_id: set_id.clone(),
+                            grip: grip_with_style(selection, style, &options),
+                        });
+                    }
+                },
+                for option in styles {
+                    option {
+                        value: "{option.as_str()}",
+                        selected: option == style,
+                        "{grip_style_text(option)}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// グリップの手幅の選択。
+#[component]
+fn GripWidthField(
+    set_id: String,
+    selection: GripSelection,
+    options: Vec<GripSelection>,
+    disabled: bool,
+    on_action: EventHandler<SetAction>,
+) -> Element {
+    let GripSelection::Grip { style, width } = selection else {
+        return rsx! {};
+    };
+    let widths = grip_widths(&options, style);
+    rsx! {
+        label {
+            class: "flex items-center gap-1 text-[11px] font-bold",
+            "{text(Key::RecordSetGripWidth)}"
+            select {
+                class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
+                "data-set-grip-width": "true",
+                "aria-label": "{text(Key::RecordSetGripWidth)}",
+                disabled,
+                value: "{width.as_str()}",
+                onchange: move |event| {
+                    if let Some(width) = grip_width_from_key(&event.value()) {
+                        on_action.call(SetAction::Grip {
+                            set_id: set_id.clone(),
+                            grip: grip_with_width(selection, width, &options),
+                        });
+                    }
+                },
+                for option in widths {
+                    option {
+                        value: "{option.as_str()}",
+                        selected: option == width,
+                        "{grip_width_text(option)}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// アタッチメントの選択。
+#[component]
+fn AttachmentField(
+    set_id: String,
+    selection: GripSelection,
+    options: Vec<GripSelection>,
+    disabled: bool,
+    on_action: EventHandler<SetAction>,
+) -> Element {
+    let GripSelection::Attachment { attachment, .. } = selection else {
+        return rsx! {};
+    };
+    let attachments = grip_attachments(&options);
+    rsx! {
+        label {
+            class: "flex items-center gap-1 text-[11px] font-bold",
+            "{text(Key::RecordSetGripAttachment)}"
+            select {
+                class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
+                "data-set-grip-attachment": "true",
+                "aria-label": "{text(Key::RecordSetGripAttachment)}",
+                disabled,
+                value: "{attachment.as_str()}",
+                onchange: move |event| {
+                    if let Some(attachment) = attachment_from_key(&event.value()) {
+                        on_action.call(SetAction::Grip {
+                            set_id: set_id.clone(),
+                            grip: attachment_with(selection, attachment, &options),
+                        });
+                    }
+                },
+                for option in attachments {
+                    option {
+                        value: "{option.as_str()}",
+                        selected: option == attachment,
+                        "{attachment_text(option)}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// アタッチメントの順手か逆手かの選択。
+#[component]
+fn AttachmentStyleField(
+    set_id: String,
+    selection: GripSelection,
+    options: Vec<GripSelection>,
+    disabled: bool,
+    on_action: EventHandler<SetAction>,
+) -> Element {
+    let GripSelection::Attachment { attachment, style } = selection else {
+        return rsx! {};
+    };
+    let styles = attachment_styles(&options, attachment);
+    let Some(current_style) = style.or_else(|| styles.first().copied()) else {
+        return rsx! {};
+    };
+    rsx! {
+        label {
+            class: "flex items-center gap-1 text-[11px] font-bold",
+            "{text(Key::RecordSetGripStyle)}"
+            select {
+                class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
+                "data-set-grip-style": "true",
+                "aria-label": "{text(Key::RecordSetGripStyle)}",
+                disabled,
+                value: "{current_style.as_str()}",
+                onchange: move |event| {
+                    if let Some(style) = grip_style_from_key(&event.value()) {
+                        on_action.call(SetAction::Grip {
+                            set_id: set_id.clone(),
+                            grip: attachment_with_style(selection, style, &options),
+                        });
+                    }
+                },
+                for option in styles {
+                    option {
+                        value: "{option.as_str()}",
+                        selected: option == current_style,
+                        "{grip_style_text(option)}"
                     }
                 }
             }
@@ -413,25 +498,4 @@ fn text_or_zero(value: &str) -> String {
 
 fn duration_or_zero(value: &str) -> String {
     duration::parse(value).map_or_else(|| "00:00".to_owned(), duration::format)
-}
-
-fn grip_style_from_value(value: &str) -> Option<GripStyle> {
-    GripStyle::ALL
-        .iter()
-        .copied()
-        .find(|style| style.as_str() == value)
-}
-
-fn grip_width_from_value(value: &str) -> Option<GripWidth> {
-    GripWidth::ALL
-        .iter()
-        .copied()
-        .find(|width| width.as_str() == value)
-}
-
-fn attachment_from_value(value: &str) -> Option<Attachment> {
-    Attachment::ALL
-        .iter()
-        .copied()
-        .find(|attachment| attachment.as_str() == value)
 }

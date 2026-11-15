@@ -24,7 +24,9 @@ use super::exercise_view::{
 use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
 use super::set_table::{SetTable, SetTableState};
-use super::sets::{default_grip, format_number, set_kind_text, SelectedSet, SetAction, SetView};
+use super::sets::{
+    default_grip, fill_missing_grips, format_number, set_kind_text, SelectedSet, SetAction, SetView,
+};
 use super::superset_panel::{SupersetCandidate, SupersetPanel};
 use super::RecordSignals;
 use crate::previous as previous_api;
@@ -385,13 +387,14 @@ async fn load(
             .into_iter()
             .filter_map(SetView::from_stored)
             .collect::<Vec<_>>();
-        let sets = if preserve_inputs {
+        let mut sets = if preserve_inputs {
             old.iter()
                 .find(|view| view.record.id == record.id)
                 .map_or(loaded_sets, |view| view.sets.clone())
         } else {
             loaded_sets
         };
+        fill_missing_grips(&mut sets, snapshot.grip_mode, &snapshot.grip_options);
         let latest_grip = sets.last().and_then(SetView::grip);
         let selection = default_grip(snapshot.grip_mode, &snapshot.grip_options, latest_grip);
         let (grip, attachment) = previous_api::grip_query(selection);

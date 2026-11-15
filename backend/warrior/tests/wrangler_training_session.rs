@@ -426,7 +426,7 @@ fn seed_sets(server: &DevServer, training_id: &str) {
         "record_mode": "weight_and_reps",
         "laterality": "bilateral",
         "grip_mode": "grip",
-        "grip_options": []
+        "grip_options": [{"grip": {"style": "pronated", "width": "medium"}}]
     });
     let plank_snapshot = json!({
         "exercise_id": PLANK_EXERCISE_ID,

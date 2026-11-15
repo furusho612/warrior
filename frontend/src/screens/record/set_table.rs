@@ -215,6 +215,7 @@ fn SetRow(row: SetRowState, on_action: EventHandler<SetAction>) -> Element {
                 if let Some(label) = grip_label {
                     span {
                         class: "shrink-0 text-[10px] text-text-sub",
+                        "data-set-grip-label": "true",
                         "{label}"
                     }
                 }
