@@ -7,7 +7,7 @@
 //! 段の重量は、自重種目ではセットごとの加重を表す。記録した時点の体重は `sets` が持つ。
 
 use serde::Deserialize;
-use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
+use warrior_core::exercise::{is_lateral, ExerciseSnapshot, Laterality, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::sql::{SqlStatement, SqlValue};
@@ -41,9 +41,9 @@ struct ExerciseRules {
 }
 
 impl ExerciseRules {
-    /// 左右の列を使う種目か。時間で記録する種目も左右別の入力を持つ。
+    /// 左右の列を使う種目か。
     fn lateral(self) -> bool {
-        self.laterality == Laterality::Unilateral
+        is_lateral(self.laterality, self.record_mode)
     }
 }
 
@@ -295,13 +295,10 @@ async fn precheck_update(
         if payload
             .to_record(&snapshot.exercise_id, snapshot.record_mode)
             .is_err()
-            || !payload.segments.iter().all(|segment| {
-                if rules.record_mode == RecordMode::Time {
-                    validation::time_segment_has_values(segment)
-                } else {
-                    segment.has_completion_values(rules.record_mode, rules.lateral())
-                }
-            })
+            || !payload
+                .segments
+                .iter()
+                .all(|segment| segment.has_completion_values(rules.record_mode, rules.lateral()))
         {
             return Ok(Some(invalid_completion()));
         }

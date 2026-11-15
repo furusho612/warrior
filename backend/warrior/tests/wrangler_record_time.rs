@@ -56,6 +56,10 @@ const SEEDED_REPS_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82
 const PLANK_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b0";
 const PLANK_UPDATE_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b1";
 const PLANK_UPDATE_AGAIN_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b2";
+const SIDE_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565e";
+const SIDE_ONLY_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5660";
+const SIDE_ONLY_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5661";
+const SIDE_ONLY_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5662";
 
 #[test]
 fn saves_time_sets_and_checks_the_duration_bests() {
@@ -73,6 +77,8 @@ fn saves_time_sets_and_checks_the_duration_bests() {
     create_the_plank_set(&server, &cookie);
     create_the_maximum_plank_set(&server, &cookie);
     create_the_side_plank_set(&server, &cookie);
+    reject_a_duration_only_update_for_a_unilateral_time_set(&server, &cookie);
+    reject_a_top_level_duration_for_a_unilateral_time_set(&server, &cookie);
     create_the_empty_plank_set(&server, &cookie);
     seed_a_reps_only_time_set(&server, &cookie);
     reject_invalid_durations(&server, &cookie);
@@ -215,6 +221,61 @@ fn create_the_side_plank_set(server: &DevServer, cookie: &str) {
             "assisted_reps": 0
         })
     );
+}
+
+fn reject_a_duration_only_update_for_a_unilateral_time_set(server: &DevServer, cookie: &str) {
+    let update = update_operation(
+        SIDE_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        SIDE_SET_ID,
+        UpdateSpec {
+            position: 1,
+            kind: "normal",
+            completed: true,
+            body_weight_kg: None,
+        },
+        vec![duration_segment(SIDE_SEGMENT_ID, 1, 30)],
+    );
+    let response = post(server, cookie, &update);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(server, SIDE_UPDATE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{SIDE_SET_ID}'")
+        )["completed"],
+        0
+    );
+    assert_eq!(
+        first_row(
+            server,
+            &format!(
+                "SELECT left_duration_seconds, right_duration_seconds \
+                 FROM set_segments WHERE id = '{SIDE_SEGMENT_ID}'"
+            )
+        ),
+        json!({"left_duration_seconds": 30, "right_duration_seconds": 40})
+    );
+}
+
+fn reject_a_top_level_duration_for_a_unilateral_time_set(server: &DevServer, cookie: &str) {
+    let operation = create_operation(
+        SIDE_ONLY_OPERATION_ID,
+        TRAINING_ID,
+        SIDE_PLANK_ROW_ID,
+        SIDE_ONLY_SET_ID,
+        SetSpec {
+            position: 2,
+            kind: "normal",
+            body_weight_kg: None,
+        },
+        vec![duration_segment(SIDE_ONLY_SEGMENT_ID, 1, 60)],
+    );
+    let response = post(server, cookie, &operation);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(server, SIDE_ONLY_OPERATION_ID), 0);
+    assert_eq!(count(server, "sets", SIDE_ONLY_SET_ID), 0);
+    assert_eq!(count(server, "set_segments", SIDE_ONLY_SEGMENT_ID), 0);
 }
 
 fn create_the_empty_plank_set(server: &DevServer, cookie: &str) {

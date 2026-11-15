@@ -92,9 +92,9 @@ pub enum Laterality {
 
 /// 左右を別々に記録する種目か。
 ///
-/// 時間で記録する種目の左右は、時間の入力とあわせて 0030 が担う。
-pub fn is_lateral(laterality: Laterality, record_mode: RecordMode) -> bool {
-    laterality == Laterality::Unilateral && record_mode != RecordMode::Time
+/// 時間で記録する種目も、左右別の種目は左右それぞれの時間を持つ。
+pub fn is_lateral(laterality: Laterality, _record_mode: RecordMode) -> bool {
+    laterality == Laterality::Unilateral
 }
 
 /// グリップの指定の種類。

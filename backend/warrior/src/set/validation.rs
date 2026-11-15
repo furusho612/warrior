@@ -36,19 +36,10 @@ pub(super) fn segments_shape_rejection(
     segments: &[SetSegmentPayload],
     rules: ExerciseRules,
 ) -> Option<Response> {
-    let valid = if rules.record_mode == RecordMode::Time {
-        segments.iter().all(|segment| {
-            matches!(
-                (segment.left.as_ref(), segment.right.as_ref()),
-                (None, None) | (Some(_), Some(_))
-            )
-        })
-    } else {
-        segments
-            .iter()
-            .all(|segment| segment.has_matching_sides(rules.lateral()))
-    };
-    if valid {
+    if segments
+        .iter()
+        .all(|segment| segment.has_matching_sides(rules.lateral()))
+    {
         return None;
     }
     Some(response(
@@ -57,28 +48,8 @@ pub(super) fn segments_shape_rejection(
     ))
 }
 
-/// 時間種目の段が、全体または左右の両方の時間を持つか。
-pub(super) fn time_segment_has_values(segment: &SetSegmentPayload) -> bool {
-    match (segment.left.as_ref(), segment.right.as_ref()) {
-        (Some(left), Some(right)) => {
-            left.duration_seconds.is_some_and(|duration| duration > 0)
-                && right.duration_seconds.is_some_and(|duration| duration > 0)
-        }
-        (None, None) => segment
-            .duration_seconds
-            .is_some_and(|duration| duration > 0),
-        (Some(_), None) | (None, Some(_)) => false,
-    }
-}
-
 /// 段が完了に必要な値を持つ条件。
 fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
-    if rules.record_mode == RecordMode::Time {
-        return "((duration_seconds > 0 AND left_duration_seconds IS NULL \
-                 AND right_duration_seconds IS NULL) \
-                 OR (left_duration_seconds > 0 AND right_duration_seconds > 0 \
-                 AND duration_seconds IS NULL))";
-    }
     if rules.lateral() {
         return match rules.record_mode {
             RecordMode::Time => "left_duration_seconds > 0 AND right_duration_seconds > 0",
@@ -90,7 +61,10 @@ fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
         };
     }
     match rules.record_mode {
-        RecordMode::Time => "duration_seconds > 0",
+        RecordMode::Time => {
+            "duration_seconds > 0 AND left_duration_seconds IS NULL \
+             AND right_duration_seconds IS NULL"
+        }
         RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
             "left_weight_kg IS NULL AND left_reps IS NULL \
              AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
