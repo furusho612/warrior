@@ -658,11 +658,13 @@ fn ExerciseMemoEditor(
     let retry_state = state.clone();
     let reset_state = state.clone();
     let reset_memo = record.memo.clone();
+    let mut reset_error = error;
 
     use_effect(move || {
         let _ = (revision)();
         let _ = (tree_revision)();
         *reset_state.draft.borrow_mut() = reset_memo.clone();
+        reset_error.set(None);
     });
 
     let revision_key = format!("{}-{}", (revision)(), (tree_revision)());
