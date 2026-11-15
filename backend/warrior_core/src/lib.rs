@@ -16,6 +16,7 @@ pub mod history;
 pub mod ids;
 pub mod jst;
 pub mod library;
+pub mod memo;
 pub mod nutrition;
 pub mod ownership;
 pub mod personal_best;

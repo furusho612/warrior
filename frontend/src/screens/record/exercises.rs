@@ -1,8 +1,8 @@
-//! 記録の種目の一覧、追加、並べ替え、削除と、前回の記録の表示、コピー、差。
+//! 記録の種目の一覧、追加、並べ替え、削除と、前回の記録の表示、コピー、差、メモ。
 //! スーパーセットの組の作成と解除もここから始める。
 //!
-//! 対応する要求: `REQ-REC-002`、`REQ-REC-003`、`REQ-REC-004`、`REQ-SET-001`、`REQ-SET-002`、
-//! `REQ-SET-005`、`REQ-SET-010`。
+//! 対応する要求: `REQ-REC-002`、`REQ-REC-003`、`REQ-REC-004`、`REQ-REC-007`、`REQ-SET-001`、
+//! `REQ-SET-002`、`REQ-SET-005`、`REQ-SET-010`。
 //! 種目の行とセットの行は端末内の IndexedDB に保存し、送信待ちの列を通す (ADR-002)。
 //! セットの入力は画面へすぐ反映し、端末内の保存は入力の版が変わるたびに行う。
 //! セットの完了は `SetCompleted` を 1 回発行する。前回の選択と差の計算は
@@ -15,12 +15,15 @@ use warrior_core::previous::{
     DurationDifference, ExerciseDifference, PreviousExercise, PreviousTraining,
     TotalWeightDifference,
 };
+use warrior_core::sync::MEMO_MAX_CHARS;
+use warrior_core::training_record::TrainingExerciseRecord;
 
 use super::errors::{clear_load_error, retain_set_errors, set_load_error, RecordErrors};
 use super::exercise_view::{
     dispatch, dissolve_superset, exercise_diff, save_superset_group, training_difference,
     ExerciseView, SetSaver, SupersetGroupView,
 };
+use super::memo_save::{run_save_loop, MemoSaveState};
 use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
 use super::set_table::{SetTable, SetTableState};
@@ -287,9 +290,12 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                     let drawer_grip_mode = view.snapshot.grip_mode;
                     let drawer_grip_options = view.snapshot.grip_options.clone();
                     let drawer_rows = view.sets.clone();
+                    let detail_id = view.record.id.clone();
                     rsx! {
                         ExerciseDetail {
+                            key: "{detail_id}",
                             state: ExerciseDetailState {
+                                training_id: training_id.clone(),
                                 view,
                                 disabled: view_only || is_loading || superset_busy(),
                                 editable_completed,
@@ -297,6 +303,8 @@ pub(super) fn ExerciseSection(training_id: String, signals: RecordSignals) -> El
                                 last,
                                 superset_members,
                                 superset_candidates,
+                                memo_revision: signals.exercise_revision,
+                                tree_revision: signals.tree_revision,
                             },
                             actions: ExerciseDetailActions {
                                 on_action,
@@ -477,6 +485,8 @@ async fn load(
 /// 種目の詳細に渡す状態。
 #[derive(Clone, PartialEq)]
 struct ExerciseDetailState {
+    /// 対象のトレーニングの ID。
+    training_id: String,
     /// 種目の状態。
     view: ExerciseView,
     /// 編集できないか。
@@ -491,6 +501,10 @@ struct ExerciseDetailState {
     superset_members: Vec<(String, String)>,
     /// 組に加えられる種目。
     superset_candidates: Vec<SupersetCandidate>,
+    /// 種目のメモを外部から戻した版。
+    memo_revision: Signal<u64>,
+    /// 記録全体を読み直した版。
+    tree_revision: Signal<u64>,
 }
 
 /// 種目の詳細の操作。
@@ -513,6 +527,7 @@ struct ExerciseDetailActions {
 #[component]
 fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) -> Element {
     let ExerciseDetailState {
+        training_id,
         view,
         disabled,
         editable_completed,
@@ -520,6 +535,8 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
         last,
         superset_members,
         superset_candidates,
+        memo_revision,
+        tree_revision,
     } = state;
     let ExerciseDetailActions {
         on_action,
@@ -586,6 +603,13 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
             } else if previous_error {
                 p { class: "text-[11px] text-text-sub", "{text(Key::RecordExercisePreviousFailed)}" }
             }
+            ExerciseMemoEditor {
+                training_id: training_id.clone(),
+                record: view.record.clone(),
+                disabled,
+                revision: memo_revision,
+                tree_revision,
+            }
             SupersetPanel {
                 view_id: superset_view_id,
                 group: superset,
@@ -611,6 +635,147 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
             }
         }
     }
+}
+
+#[component]
+fn ExerciseMemoEditor(
+    training_id: String,
+    record: TrainingExerciseRecord,
+    disabled: bool,
+    revision: Signal<u64>,
+    tree_revision: Signal<u64>,
+) -> Element {
+    let saving = use_signal(|| false);
+    let initial = record.memo.clone();
+    let state = use_hook(|| MemoSaveState {
+        saving,
+        in_flight: std::rc::Rc::new(std::cell::Cell::new(false)),
+        dirty: std::rc::Rc::new(std::cell::Cell::new(false)),
+        draft: std::rc::Rc::new(std::cell::RefCell::new(initial)),
+    });
+    let error = use_signal(|| Option::<String>::None);
+    let input_state = state.clone();
+    let retry_state = state.clone();
+    let reset_state = state.clone();
+    let reset_memo = record.memo.clone();
+    let mut reset_error = error;
+
+    use_effect(move || {
+        let _ = (revision)();
+        let _ = (tree_revision)();
+        *reset_state.draft.borrow_mut() = reset_memo.clone();
+        reset_error.set(None);
+    });
+
+    let revision_key = format!("{}-{}", (revision)(), (tree_revision)());
+    let memo = record.memo.clone();
+    let input_training_id = training_id.clone();
+    let input_exercise_id = record.id.clone();
+    let retry_training_id = training_id.clone();
+    let retry_exercise_id = record.id.clone();
+    let saving_now = (state.saving)();
+    let error_message = (error)();
+    let field_id = format!("record-exercise-memo-{}", record.id);
+
+    rsx! {
+        div {
+            key: "{revision_key}",
+            class: "flex flex-col gap-2",
+            label { class: "text-[11px] font-bold", r#for: "{field_id}", "{text(Key::RecordExerciseMemoLabel)}" }
+            textarea {
+                id: "{field_id}",
+                class: "min-h-16 border border-line bg-bg p-2 text-[13px] leading-5",
+                "data-exercise-memo": "true",
+                "data-exercise-memo-id": "{record.id}",
+                initial_value: "{memo}",
+                disabled,
+                maxlength: "{MEMO_MAX_CHARS}",
+                placeholder: "{text(Key::RecordExerciseMemoPlaceholder)}",
+                oninput: move |event| {
+                    *input_state.draft.borrow_mut() = event.value();
+                    if !input_state.request() {
+                        return;
+                    }
+                    spawn(save_exercise_memo(
+                        input_training_id.clone(),
+                        input_exercise_id.clone(),
+                        input_state.clone(),
+                        error,
+                    ));
+                },
+            }
+            if saving_now {
+                p { class: "text-[11px] text-text-sub", "{text(Key::RecordSaving)}" }
+            }
+            if let Some(message) = error_message {
+                p { class: "text-[11px] text-primary", "{message}" }
+                button {
+                    class: "min-h-11 border border-line px-2 text-[11px]",
+                    onclick: move |_| {
+                        if retry_state.in_flight.get() {
+                            return;
+                        }
+                        retry_state.dirty.set(true);
+                        retry_state.in_flight.set(true);
+                        spawn(save_exercise_memo(
+                            retry_training_id.clone(),
+                            retry_exercise_id.clone(),
+                            retry_state.clone(),
+                            error,
+                        ));
+                    },
+                    "{text(Key::RecordRetry)}"
+                }
+            }
+        }
+    }
+}
+
+async fn save_exercise_memo(
+    training_id: String,
+    training_exercise_id: String,
+    state: MemoSaveState,
+    mut error: Signal<Option<String>>,
+) {
+    run_save_loop(state, move |memo| {
+        let training_id = training_id.clone();
+        let training_exercise_id = training_exercise_id.clone();
+        async move {
+            let operation =
+                match training_exercise::memo(&training_id, &training_exercise_id, &memo) {
+                    Ok(operation) => operation,
+                    Err(_) => {
+                        error.set(Some(text(Key::RecordExerciseSaveFailed).to_owned()));
+                        return false;
+                    }
+                };
+            let result = match storage::current().await {
+                Ok(storage) => {
+                    storage
+                        .save_training_exercise_memo(
+                            &training_id,
+                            &training_exercise_id,
+                            &memo,
+                            &operation,
+                        )
+                        .await
+                }
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(()) => {
+                    error.set(None);
+                    sync::flush_in_background();
+                    true
+                }
+                Err(_) => {
+                    error.set(Some(text(Key::RecordExerciseSaveFailed).to_owned()));
+                    false
+                }
+            }
+        }
+    })
+    .await;
 }
 
 #[component]

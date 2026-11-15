@@ -312,6 +312,7 @@ mod tests {
                 training_id: "training-a".to_owned(),
                 snapshot,
                 sets: vec![weight_record(SetKind::Normal, 100.0, 5)],
+                memo: String::new(),
                 set_grips: Vec::new(),
                 set_body_weights: Vec::new(),
             }],
@@ -388,6 +389,7 @@ mod tests {
                 training_id: training_id.clone(),
                 snapshot: exercise(body_part),
                 sets,
+                memo: String::new(),
                 set_grips: Vec::new(),
                 set_body_weights: Vec::new(),
             }],
@@ -435,6 +437,7 @@ mod tests {
                 snapshot: serde_json::to_string(&exercise(body_part))
                     .expect("a serializable snapshot"),
                 set_id: set_id.to_owned(),
+                training_exercise_memo: String::new(),
                 kind: kind.to_owned(),
                 set_rpe: None,
                 grip: None,

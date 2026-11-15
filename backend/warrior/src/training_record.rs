@@ -25,7 +25,7 @@ const SESSION_QUERY: &str = "SELECT id, date, started_at, memo, source_kind, rou
      exercise_count, set_count, created_at, updated_at \
      FROM training_sessions WHERE id = ? AND user_id = ?";
 
-const EXERCISES_QUERY: &str = "SELECT id, training_id, exercise_id, snapshot, position, \
+const EXERCISES_QUERY: &str = "SELECT id, training_id, exercise_id, snapshot, memo, position, \
      created_at, updated_at \
      FROM training_exercises WHERE user_id = ? AND training_id = ? ORDER BY position, id";
 

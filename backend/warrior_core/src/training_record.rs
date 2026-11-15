@@ -34,6 +34,12 @@ pub struct TrainingExerciseRecord {
     pub exercise_id: String,
     /// 記録した時点の種目のスナップショット。JSON の文字列である。
     pub snapshot: String,
+    /// 種目ごとのメモ。
+    #[serde(default)]
+    pub memo: String,
+    /// サーバーが受理したメモ。端末だけが持ち、サーバーの応答では空である。
+    #[serde(default)]
+    pub confirmed_memo: String,
     /// 並び順。
     pub position: i64,
     /// 作成した時刻。
@@ -158,6 +164,7 @@ mod tests {
                 "training_id": TRAINING_ID,
                 "exercise_id": "bench-press",
                 "snapshot": "{}",
+                "memo": "種目のメモ",
                 "position": 1,
                 "created_at": "2026-11-12T03:00:00Z",
                 "updated_at": "2026-11-12T03:00:00Z"
@@ -210,6 +217,8 @@ mod tests {
         assert_eq!(record.session.id, TRAINING_ID);
         assert_eq!(record.session.memo, "メモ");
         assert_eq!(record.exercises.len(), 1);
+        assert_eq!(record.exercises[0].memo, "種目のメモ");
+        assert_eq!(record.exercises[0].confirmed_memo, "");
         assert_eq!(record.exercises[0].position, 1);
         assert_eq!(record.sets[0].completed, 1);
         assert_eq!(record.segments[0].weight_kg, Some(100.0));

@@ -12,8 +12,7 @@ use crate::ids::is_valid_uuid_v4;
 use crate::jst::JstDate;
 use crate::training_session::{PersonalBestItem, SessionSource};
 
-/// メモの最大の文字数 (PRD の REQ-NFR-019)。
-pub const MEMO_MAX_CHARS: usize = 2000;
+pub use crate::memo::MEMO_MAX_CHARS;
 
 /// 所要時間の上限の秒数。1 日とする。
 const SECONDS_PER_DAY: i64 = 86_400;
@@ -26,6 +25,8 @@ pub enum OperationKind {
     TrainingSessionCreate,
     /// トレーニングの更新。
     TrainingSessionUpdate,
+    /// トレーニング全体のメモの保存。
+    TrainingSessionMemo,
     /// 日付を指定したトレーニングの追加。
     TrainingSessionBackfill,
     /// トレーニングの削除。
@@ -36,6 +37,8 @@ pub enum OperationKind {
     TrainingExerciseDelete,
     /// トレーニングの種目の並べ替え。
     TrainingExerciseReorder,
+    /// トレーニングの種目のメモの保存。
+    TrainingExerciseMemo,
     /// セットの追加。
     SetCreate,
     /// セットの更新。
@@ -60,11 +63,13 @@ impl OperationKind {
         match self {
             Self::TrainingSessionCreate => "training_session_create",
             Self::TrainingSessionUpdate => "training_session_update",
+            Self::TrainingSessionMemo => "training_session_memo",
             Self::TrainingSessionBackfill => "training_session_backfill",
             Self::TrainingSessionDelete => "training_session_delete",
             Self::TrainingExerciseCreate => "training_exercise_create",
             Self::TrainingExerciseDelete => "training_exercise_delete",
             Self::TrainingExerciseReorder => "training_exercise_reorder",
+            Self::TrainingExerciseMemo => "training_exercise_memo",
             Self::SetCreate => "set_create",
             Self::SetUpdate => "set_update",
             Self::SetDelete => "set_delete",
@@ -81,11 +86,13 @@ impl OperationKind {
         match text {
             "training_session_create" => Some(Self::TrainingSessionCreate),
             "training_session_update" => Some(Self::TrainingSessionUpdate),
+            "training_session_memo" => Some(Self::TrainingSessionMemo),
             "training_session_backfill" => Some(Self::TrainingSessionBackfill),
             "training_session_delete" => Some(Self::TrainingSessionDelete),
             "training_exercise_create" => Some(Self::TrainingExerciseCreate),
             "training_exercise_delete" => Some(Self::TrainingExerciseDelete),
             "training_exercise_reorder" => Some(Self::TrainingExerciseReorder),
+            "training_exercise_memo" => Some(Self::TrainingExerciseMemo),
             "set_create" => Some(Self::SetCreate),
             "set_update" => Some(Self::SetUpdate),
             "set_delete" => Some(Self::SetDelete),
@@ -164,6 +171,16 @@ pub struct SessionUpdatePayload {
     pub memo: String,
 }
 
+/// トレーニング全体のメモの保存の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionMemoPayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// トレーニング全体のメモ。
+    pub memo: String,
+}
+
 /// 日付を指定したトレーニングの追加の本文。
 ///
 /// 過去の記録は開始時刻を持たず、日付と所要時間だけを持つ。
@@ -222,6 +239,18 @@ pub struct TrainingExerciseReorderPayload {
     pub training_id: String,
     /// 新しい順序の種目の行の UUID v4。先頭から 1、2 の位置になる。
     pub ordered_ids: Vec<String>,
+}
+
+/// トレーニングの種目のメモの保存の本文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrainingExerciseMemoPayload {
+    /// 対象のトレーニングの UUID v4。操作の `training_id` と一致する。
+    pub training_id: String,
+    /// メモを保存する種目の行の UUID v4。
+    pub training_exercise_id: String,
+    /// 種目ごとのメモ。
+    pub memo: String,
 }
 
 /// 左右別の段の、片側の本文。
@@ -438,6 +467,8 @@ pub enum ValidatedPayload {
     Create(SessionCreatePayload),
     /// 更新の本文。
     Update(SessionUpdatePayload),
+    /// トレーニング全体のメモの保存の本文。
+    SessionMemo(SessionMemoPayload),
     /// 日付を指定した追加の本文。
     Backfill(SessionBackfillPayload),
     /// 削除の本文。
@@ -448,6 +479,8 @@ pub enum ValidatedPayload {
     ExerciseDelete(TrainingExerciseDeletePayload),
     /// 種目の並べ替えの本文。
     ExerciseReorder(TrainingExerciseReorderPayload),
+    /// 種目のメモの保存の本文。
+    ExerciseMemo(TrainingExerciseMemoPayload),
     /// セットの追加の本文。
     SetCreate(SetCreatePayload),
     /// セットの更新の本文。
@@ -603,6 +636,15 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
             validate_session_fields(&payload.date, &payload.started_at, &payload.memo)?;
             ValidatedPayload::Update(payload)
         }
+        OperationKind::TrainingSessionMemo => {
+            let payload: SessionMemoPayload = serde_json::from_value(operation.payload.clone())
+                .map_err(|_| SyncError::InvalidPayload)?;
+            if payload.training_id != operation.training_id {
+                return Err(SyncError::PayloadIdMismatch);
+            }
+            crate::memo::validate(&payload.memo).map_err(|_| SyncError::MemoTooLong)?;
+            ValidatedPayload::SessionMemo(payload)
+        }
         OperationKind::TrainingSessionBackfill => {
             let payload: SessionBackfillPayload = serde_json::from_value(operation.payload.clone())
                 .map_err(|_| SyncError::InvalidPayload)?;
@@ -637,6 +679,12 @@ pub fn validate_operation(operation: &Operation) -> Result<ValidatedOperation, S
                 serde_json::from_value(operation.payload.clone())
                     .map_err(|_| SyncError::InvalidPayload)?;
             crate::sync_exercise::validate_reorder(operation, payload)?
+        }
+        OperationKind::TrainingExerciseMemo => {
+            let payload: TrainingExerciseMemoPayload =
+                serde_json::from_value(operation.payload.clone())
+                    .map_err(|_| SyncError::InvalidPayload)?;
+            crate::sync_exercise::validate_memo(operation, payload)?
         }
         OperationKind::SetCreate => {
             let payload: SetCreatePayload = serde_json::from_value(operation.payload.clone())
@@ -705,9 +753,7 @@ fn validate_backfill_fields(payload: &SessionBackfillPayload) -> Result<(), Sync
     if !(1..=SECONDS_PER_DAY).contains(&payload.duration_seconds) {
         return Err(SyncError::InvalidDuration);
     }
-    if payload.memo.chars().count() > MEMO_MAX_CHARS {
-        return Err(SyncError::MemoTooLong);
-    }
+    crate::memo::validate(&payload.memo).map_err(|_| SyncError::MemoTooLong)?;
     Ok(())
 }
 
@@ -721,9 +767,7 @@ fn validate_session_fields(date: &str, started_at: &str, memo: &str) -> Result<(
     if date.to_string() != japan_date {
         return Err(SyncError::DateMismatch);
     }
-    if memo.chars().count() > MEMO_MAX_CHARS {
-        return Err(SyncError::MemoTooLong);
-    }
+    crate::memo::validate(memo).map_err(|_| SyncError::MemoTooLong)?;
     Ok(())
 }
 
@@ -848,6 +892,47 @@ pub fn pending_update<'a>(
         .filter(|entry| {
             entry.operation.training_id == training_id
                 && entry.operation.kind == OperationKind::TrainingSessionUpdate
+                && matches!(entry.state, OutboxState::Pending | OutboxState::Blocked)
+        })
+        .max_by_key(|entry| entry.operation.sequence)
+        .filter(|entry| !entry.attempted)
+}
+
+/// 同じトレーニングの最も新しい、Pending または Blocked のメモの保存を返す。
+/// その保存が送信を試みたものであれば、合流先にしない。
+pub fn pending_session_memo<'a>(
+    entries: &'a [OutboxEntry],
+    training_id: &str,
+) -> Option<&'a OutboxEntry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.operation.training_id == training_id
+                && entry.operation.kind == OperationKind::TrainingSessionMemo
+                && matches!(entry.state, OutboxState::Pending | OutboxState::Blocked)
+        })
+        .max_by_key(|entry| entry.operation.sequence)
+        .filter(|entry| !entry.attempted)
+}
+
+/// 同じ種目の最も新しい、Pending または Blocked のメモの保存を返す。
+/// その保存が送信を試みたものであれば、合流先にしない。
+pub fn pending_exercise_memo<'a>(
+    entries: &'a [OutboxEntry],
+    training_id: &str,
+    training_exercise_id: &str,
+) -> Option<&'a OutboxEntry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.operation.training_id == training_id
+                && entry.operation.kind == OperationKind::TrainingExerciseMemo
+                && entry
+                    .operation
+                    .payload
+                    .get("training_exercise_id")
+                    .and_then(|value| value.as_str())
+                    == Some(training_exercise_id)
                 && matches!(entry.state, OutboxState::Pending | OutboxState::Blocked)
         })
         .max_by_key(|entry| entry.operation.sequence)

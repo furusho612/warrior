@@ -217,6 +217,66 @@ fn rejects_an_unknown_source_kind() {
 }
 
 #[test]
+fn a_session_memo_operation_names_the_training_and_checks_the_limit() {
+    let mut operation = Operation {
+        operation_id: OPERATION_ID.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 2,
+        kind: OperationKind::TrainingSessionMemo,
+        parent_operation_id: None,
+        payload: json!({
+            "training_id": TRAINING_ID,
+            "memo": "腰に痛みがある"
+        }),
+    };
+    let validated = validate_operation(&operation).expect("a valid session memo");
+    let super::ValidatedPayload::SessionMemo(payload) = validated.payload else {
+        panic!("the payload must be a session memo");
+    };
+    assert_eq!(payload.memo, "腰に痛みがある");
+
+    operation.payload["training_id"] = json!(UPDATE_ID);
+    assert_eq!(
+        validate_operation(&operation),
+        Err(SyncError::PayloadIdMismatch)
+    );
+    operation.payload["training_id"] = json!(TRAINING_ID);
+    operation.payload["memo"] = json!("あ".repeat(MEMO_MAX_CHARS + 1));
+    assert_eq!(validate_operation(&operation), Err(SyncError::MemoTooLong));
+}
+
+#[test]
+fn an_exercise_memo_operation_names_the_exercise_and_checks_the_limit() {
+    let mut operation = Operation {
+        operation_id: OPERATION_ID.to_owned(),
+        training_id: TRAINING_ID.to_owned(),
+        sequence: 2,
+        kind: OperationKind::TrainingExerciseMemo,
+        parent_operation_id: None,
+        payload: json!({
+            "training_id": TRAINING_ID,
+            "training_exercise_id": PARENT_ID,
+            "memo": "次回は軽く"
+        }),
+    };
+    let validated = validate_operation(&operation).expect("a valid exercise memo");
+    let super::ValidatedPayload::ExerciseMemo(payload) = validated.payload else {
+        panic!("the payload must be an exercise memo");
+    };
+    assert_eq!(payload.training_exercise_id, PARENT_ID);
+    assert_eq!(payload.memo, "次回は軽く");
+
+    operation.payload["training_exercise_id"] = json!("bench-press");
+    assert_eq!(
+        validate_operation(&operation),
+        Err(SyncError::InvalidExerciseId)
+    );
+    operation.payload["training_exercise_id"] = json!(PARENT_ID);
+    operation.payload["memo"] = json!("あ".repeat(MEMO_MAX_CHARS + 1));
+    assert_eq!(validate_operation(&operation), Err(SyncError::MemoTooLong));
+}
+
+#[test]
 fn a_legacy_session_record_deserializes_with_the_new_fields_defaulted() {
     let record: SessionRecord = serde_json::from_value(json!({
         "id": TRAINING_ID,

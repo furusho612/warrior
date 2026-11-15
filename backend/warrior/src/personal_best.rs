@@ -104,9 +104,11 @@ pub async fn groups_before_operation(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::SessionMemo(_)
         | ValidatedPayload::Backfill(_)
         | ValidatedPayload::ExerciseCreate(_)
         | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SetCreate(_)
         | ValidatedPayload::SetReorder(_)
         | ValidatedPayload::SupersetCreate(_)

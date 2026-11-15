@@ -17,7 +17,8 @@ use warrior_core::previous::{
 };
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
-    TrainingExerciseCreatePayload, TrainingExerciseDeletePayload, TrainingExerciseReorderPayload,
+    TrainingExerciseCreatePayload, TrainingExerciseDeletePayload, TrainingExerciseMemoPayload,
+    TrainingExerciseReorderPayload,
 };
 use warrior_core::training_session::SessionSource;
 use worker::{console_error, Request, Response, Result, RouteContext};
@@ -402,6 +403,34 @@ fn training_candidates_statement(user_id: &str, training_id: &str) -> SqlStateme
     )
 }
 
+/// 種目のメモの保存の文。
+///
+/// 編集権の条件を付け、メモと更新時刻だけを書く。セットとスナップショットには触れない。
+pub fn memo_statement(
+    user_id: &str,
+    training_id: &str,
+    payload: &TrainingExerciseMemoPayload,
+    ownership: ExerciseOwnership<'_>,
+    now: &str,
+) -> SqlStatement {
+    let (condition, mut bindings) = ownership_condition(user_id, training_id, ownership);
+    let mut values = vec![
+        SqlValue::Text(payload.memo.clone()),
+        SqlValue::Text(now.to_owned()),
+        SqlValue::Text(payload.training_exercise_id.clone()),
+        SqlValue::Text(user_id.to_owned()),
+        SqlValue::Text(training_id.to_owned()),
+    ];
+    values.append(&mut bindings);
+    SqlStatement::new(
+        format!(
+            "UPDATE training_exercises SET memo = ?, updated_at = ? \
+             WHERE id = ? AND user_id = ? AND training_id = ? AND {condition}"
+        ),
+        values,
+    )
+}
+
 /// 種目の追加の文。呼び出し元が編集権の確認と操作 ID の保存の間に置く。
 pub fn create_statements(
     user_id: &str,
@@ -590,15 +619,15 @@ mod tests {
     use warrior_core::previous::PreviousExerciseKey;
     use warrior_core::sql::SqlValue;
     use warrior_core::sync::{
-        TrainingExerciseCreatePayload, TrainingExerciseDeletePayload,
+        TrainingExerciseCreatePayload, TrainingExerciseDeletePayload, TrainingExerciseMemoPayload,
         TrainingExerciseReorderPayload,
     };
     use warrior_core::training_session::SessionSource;
 
     use super::{
-        create_statements, delete_statements, exercise_candidates, previous_exercise_from,
-        previous_key, reorder_statements, training_candidates, ExerciseCandidateSetRow,
-        ExerciseOwnership, TrainingCandidateRow,
+        create_statements, delete_statements, exercise_candidates, memo_statement,
+        previous_exercise_from, previous_key, reorder_statements, training_candidates,
+        ExerciseCandidateSetRow, ExerciseOwnership, TrainingCandidateRow,
     };
     use crate::stored_sets::StoredExercise;
     use warrior_core::exercise::{
@@ -633,6 +662,39 @@ mod tests {
             },
             position: 1,
         }
+    }
+
+    #[test]
+    fn the_memo_statement_scopes_the_update_to_the_user_the_training_and_the_exercise() {
+        let statement = memo_statement(
+            USER_ID,
+            TRAINING_ID,
+            &TrainingExerciseMemoPayload {
+                training_id: TRAINING_ID.to_owned(),
+                training_exercise_id: ROW_ID.to_owned(),
+                memo: "次回は軽くする".to_owned(),
+            },
+            ExerciseOwnership::Finished,
+            NOW,
+        );
+        assert!(statement
+            .sql()
+            .contains("UPDATE training_exercises SET memo = ?, updated_at = ?"));
+        assert!(statement
+            .sql()
+            .contains("WHERE id = ? AND user_id = ? AND training_id = ?"));
+        assert!(statement
+            .sql()
+            .contains("EXISTS (SELECT 1 FROM training_sessions"));
+        assert_eq!(
+            statement.bindings()[0],
+            SqlValue::Text("次回は軽くする".to_owned())
+        );
+        assert_eq!(statement.bindings()[2], SqlValue::Text(ROW_ID.to_owned()));
+        assert_eq!(
+            statement.bindings()[4],
+            SqlValue::Text(TRAINING_ID.to_owned())
+        );
     }
 
     #[test]
@@ -872,6 +934,7 @@ mod tests {
                 grip_mode: warrior_core::exercise::GripMode::None,
                 grip_options: Vec::new(),
             },
+            memo: String::new(),
             sets: vec![
                 SetRecord::new(
                     BestKey {

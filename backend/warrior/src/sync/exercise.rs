@@ -83,9 +83,11 @@ pub(super) async fn exercise_batch(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::SessionMemo(_)
         | ValidatedPayload::Backfill(_)
         | ValidatedPayload::Delete(_)
         | ValidatedPayload::ExerciseCreate(_)
+        | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SetCreate(_)
         | ValidatedPayload::SetUpdate(_)
         | ValidatedPayload::SetDelete(_)
@@ -153,8 +155,10 @@ fn exercise_statements(
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
+        | ValidatedPayload::SessionMemo(_)
         | ValidatedPayload::Backfill(_)
         | ValidatedPayload::Delete(_)
+        | ValidatedPayload::ExerciseMemo(_)
         | ValidatedPayload::SetCreate(_)
         | ValidatedPayload::SetUpdate(_)
         | ValidatedPayload::SetDelete(_)
@@ -164,6 +168,113 @@ fn exercise_statements(
         | ValidatedPayload::SupersetDelete(_)
         | ValidatedPayload::SupersetReorder(_) => None,
     }
+}
+
+/// 種目のメモの保存の batch。
+///
+/// 先頭の文で編集権を確認してトレーニングの更新時刻を進め、メモの文の後に操作 ID を
+/// 保存する。種目がトレーニングに無いときは適用しない。
+pub(super) async fn exercise_memo_batch(
+    db: &Db,
+    user_id: &str,
+    terminal_id: Option<&str>,
+    validated: &warrior_core::sync::ValidatedOperation,
+    now: &str,
+) -> Result<BatchOutcome> {
+    let Some(session) = session_row(db, &validated.operation.training_id).await? else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    };
+    if session.user_id != user_id {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    }
+    let finished = session.finished_at.is_some();
+    let decision = write_decision(finished, session.owner_terminal_id.as_deref(), terminal_id);
+    let Some(owner) = owner_condition(decision, terminal_id) else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::Forbidden,
+            "the training is being edited on another terminal",
+        )));
+    };
+    let ValidatedPayload::ExerciseMemo(payload) = &validated.payload else {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::BadRequest,
+            "operation is invalid",
+        )));
+    };
+    if !exercise_in_training(
+        db,
+        user_id,
+        &validated.operation.training_id,
+        &payload.training_exercise_id,
+    )
+    .await?
+    {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    }
+    let ownership = match owner {
+        OwnerCondition::Claim(terminal_id) | OwnerCondition::Owned(terminal_id) => {
+            ExerciseOwnership::Terminal(terminal_id)
+        }
+        OwnerCondition::Finished => ExerciseOwnership::Finished,
+    };
+    Ok(BatchOutcome::Apply(vec![
+        ownership_guard_statement(user_id, owner, &validated.operation.training_id, now),
+        crate::training_session_exercise::memo_statement(
+            user_id,
+            &validated.operation.training_id,
+            payload,
+            ownership,
+            now,
+        ),
+        applied_statement(user_id, &validated.operation, now),
+    ]))
+}
+
+/// 終了済みのトレーニングに、種目のメモを終了後の書き込みとして適用する。
+pub(super) async fn reapply_finished_exercise_memo(
+    db: &Db,
+    user_id: &str,
+    operation: &Operation,
+    payload: &warrior_core::sync::TrainingExerciseMemoPayload,
+    now: &str,
+) -> Result<Response> {
+    let statements = vec![
+        crate::training_session_exercise::memo_statement(
+            user_id,
+            &operation.training_id,
+            payload,
+            ExerciseOwnership::Finished,
+            now,
+        ),
+        applied_statement(user_id, operation, now),
+    ];
+    let results = match db.batch(&statements).await {
+        Ok(results) => results,
+        Err(error) => {
+            console_error!("failed to reapply the exercise memo: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    let changed = match batch_changes(&results) {
+        Ok(changed) => changed,
+        Err(error) => {
+            console_error!("failed to read the changed rows of the reapplied memo: {error}");
+            return Ok(response(ErrorCode::Internal, "internal error"));
+        }
+    };
+    if changed == 0 {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    }
+    status_response("applied")
 }
 
 async fn exercise_in_training(

@@ -791,6 +791,7 @@ mod tests {
                 training_id: training_id.to_owned(),
                 snapshot: snapshot(&exercise(GripMode::None)),
                 sets,
+                memo: String::new(),
                 set_grips: Vec::new(),
                 set_body_weights: Vec::new(),
             }],
@@ -863,6 +864,7 @@ mod tests {
                 snapshot: serde_json::to_string(&snapshot(&exercise(GripMode::None)))
                     .expect("a serializable snapshot"),
                 set_id: set_id.to_owned(),
+                training_exercise_memo: String::new(),
                 kind: kind.to_owned(),
                 set_rpe: None,
                 grip: None,

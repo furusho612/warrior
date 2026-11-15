@@ -7,7 +7,7 @@
 use crate::ids::is_valid_uuid_v4;
 use crate::sync::{
     Operation, SyncError, TrainingExerciseCreatePayload, TrainingExerciseDeletePayload,
-    TrainingExerciseReorderPayload, ValidatedPayload,
+    TrainingExerciseMemoPayload, TrainingExerciseReorderPayload, ValidatedPayload,
 };
 
 /// 種目の追加の本文を検証する。
@@ -63,6 +63,21 @@ pub(crate) fn validate_reorder(
         seen.push(id.clone());
     }
     Ok(ValidatedPayload::ExerciseReorder(payload))
+}
+
+/// 種目のメモの保存の本文を検証する。
+pub(crate) fn validate_memo(
+    operation: &Operation,
+    payload: TrainingExerciseMemoPayload,
+) -> Result<ValidatedPayload, SyncError> {
+    if payload.training_id != operation.training_id {
+        return Err(SyncError::PayloadIdMismatch);
+    }
+    if !is_valid_uuid_v4(&payload.training_exercise_id) {
+        return Err(SyncError::InvalidExerciseId);
+    }
+    crate::memo::validate(&payload.memo).map_err(|_| SyncError::MemoTooLong)?;
+    Ok(ValidatedPayload::ExerciseMemo(payload))
 }
 
 #[cfg(test)]

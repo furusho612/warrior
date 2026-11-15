@@ -157,6 +157,8 @@ pub fn training_exercise_record(id: &str, position: i64) -> TrainingExerciseReco
         training_id: TRAINING_ID.to_owned(),
         exercise_id: EXERCISE_ID.to_owned(),
         snapshot: exercise_snapshot().to_string(),
+        memo: String::new(),
+        confirmed_memo: String::new(),
         position,
         created_at: "2026-11-12T03:00:00Z".to_owned(),
         updated_at: "2026-11-12T03:00:00Z".to_owned(),

@@ -3,6 +3,7 @@
 use wasm_bindgen::JsValue;
 
 use warrior_core::sync::{discard as discard_transition, Operation, OperationKind, OutboxEntry};
+use warrior_core::training_record::TrainingExerciseRecord;
 
 use super::exercise;
 use super::set;
@@ -62,13 +63,37 @@ pub(super) async fn steps(
         set::delete_set_rows(transaction, &set_id).await?;
         return Ok(DiscardOutcome::SetDeleted);
     }
-    if target.operation.kind != OperationKind::TrainingSessionUpdate {
+    if target.operation.kind == OperationKind::TrainingExerciseMemo {
+        let Some(training_exercise_id) = payload_text(&target.operation, "training_exercise_id")
+        else {
+            return Err(StorageError::InvalidOperation(
+                "the operation has no training exercise id".to_owned(),
+            ));
+        };
+        let has_newer_memo = updated.iter().any(|entry| {
+            entry.operation.kind == OperationKind::TrainingExerciseMemo
+                && entry.operation.sequence > target.operation.sequence
+                && payload_text(&entry.operation, "training_exercise_id")
+                    == Some(training_exercise_id)
+        });
+        if has_newer_memo {
+            return Ok(DiscardOutcome::OperationsRemoved);
+        }
+        return revert_exercise_memo(transaction, training_exercise_id).await;
+    }
+    if !matches!(
+        target.operation.kind,
+        OperationKind::TrainingSessionUpdate | OperationKind::TrainingSessionMemo
+    ) {
         return Ok(DiscardOutcome::OperationsRemoved);
     }
 
     let has_newer_update = updated.iter().any(|entry| {
         entry.operation.training_id == target.operation.training_id
-            && entry.operation.kind == OperationKind::TrainingSessionUpdate
+            && matches!(
+                entry.operation.kind,
+                OperationKind::TrainingSessionUpdate | OperationKind::TrainingSessionMemo
+            )
             && entry.operation.sequence > target.operation.sequence
     });
     if has_newer_update {
@@ -139,6 +164,7 @@ fn discard_exercise_following(
             OperationKind::SetCreate
                 | OperationKind::SetReorder
                 | OperationKind::TrainingExerciseDelete
+                | OperationKind::TrainingExerciseMemo
         ) && same_exercise)
             || operation.kind == OperationKind::TrainingExerciseReorder
                 && operation.training_id == target.training_id
@@ -166,4 +192,20 @@ async fn revert_session_memo(
     session.memo = session.confirmed_memo.clone();
     indexeddb::put(&sessions, &indexeddb::to_js(&session)?).await?;
     Ok(DiscardOutcome::MemoReverted(Box::new(session)))
+}
+
+/// 種目のメモを、サーバーが受理した値へ戻す。
+async fn revert_exercise_memo(
+    transaction: &indexeddb::Transaction,
+    training_exercise_id: &str,
+) -> Result<DiscardOutcome, StorageError> {
+    let exercises = transaction.store(Store::TrainingExercises.name())?;
+    let Some(value) = indexeddb::get(&exercises, &JsValue::from_str(training_exercise_id)).await?
+    else {
+        return Ok(DiscardOutcome::OperationsRemoved);
+    };
+    let mut exercise: TrainingExerciseRecord = indexeddb::from_js(&value)?;
+    exercise.memo = exercise.confirmed_memo.clone();
+    indexeddb::put(&exercises, &indexeddb::to_js(&exercise)?).await?;
+    Ok(DiscardOutcome::ExerciseMemoReverted(Box::new(exercise)))
 }

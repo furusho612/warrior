@@ -315,7 +315,7 @@ async fn wait_for_blocked_update(driver: &WebDriver, create_state: &str) {
             .find(|entry| entry["kind"] == "training_session_create");
         let update = entries
             .iter()
-            .find(|entry| entry["kind"] == "training_session_update");
+            .find(|entry| entry["kind"] == "training_session_memo");
         if let (Some(create), Some(update)) = (create, update) {
             if create["state"] == create_state
                 && update["state"] == "blocked"
@@ -337,7 +337,7 @@ async fn wait_for_transient_update(driver: &WebDriver) {
     loop {
         let entries = outbox_entries(driver).await;
         let transient = entries.iter().any(|entry| {
-            entry["kind"] == "training_session_update"
+            entry["kind"] == "training_session_memo"
                 && entry["state"] == "pending"
                 && entry["attempts"].as_u64().unwrap_or(0) >= 1
         });
@@ -372,7 +372,7 @@ async fn wait_for_sending_update(driver: &WebDriver, expected_memo: &str) {
     loop {
         let entries = outbox_entries(driver).await;
         let sending = entries.iter().any(|entry| {
-            entry["kind"] == "training_session_update"
+            entry["kind"] == "training_session_memo"
                 && entry["state"] == "sending"
                 && entry["memo"] == expected_memo
         });
