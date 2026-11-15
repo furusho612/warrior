@@ -22,8 +22,13 @@ pub(super) async fn change_grip(
     let Some((view_id, exercise_id)) = update_set_grip(views, &set_id, grip) else {
         return;
     };
-    if !save_set_loop(training_id.clone(), set_id.clone(), views, error, saver).await {
-        return;
+    let save_finished = saver.clone();
+    let saved = save_set_loop(training_id.clone(), set_id.clone(), views, error, saver).await;
+    if !saved {
+        save_finished.wait_finished(&set_id).await;
+        if (error)().sets.contains_key(&set_id) {
+            return;
+        }
     }
     refresh_previous(&training_id, &view_id, &set_id, &exercise_id, grip, views).await;
 }
