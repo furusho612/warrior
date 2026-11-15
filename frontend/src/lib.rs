@@ -11,6 +11,7 @@ pub mod http;
 pub mod ids;
 pub mod layout;
 pub mod library;
+pub mod notification;
 pub mod passkey;
 pub mod previous;
 pub mod profile;

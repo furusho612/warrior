@@ -13,6 +13,7 @@ pub mod duration;
 pub mod exercise;
 pub mod ids;
 pub mod jst;
+pub mod notification;
 pub mod nutrition;
 pub mod ownership;
 pub mod personal_best;

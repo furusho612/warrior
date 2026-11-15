@@ -22,6 +22,7 @@ pub fn App() -> Element {
     let rest_timer = RestTimerState {
         timer: use_signal(|| None),
         wake_lock_enabled: use_signal(|| true),
+        notification_enabled: use_signal(|| false),
     };
     use_context_provider(|| rest_timer);
     use_effect(move || {

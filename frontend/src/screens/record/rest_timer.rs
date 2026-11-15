@@ -2,21 +2,22 @@
 //!
 //! 残り時間は保存した終了予定時刻と現在時刻の差から求め、一定間隔の処理は
 //! 画面の再描画にだけ使う (ADR-007)。延長と短縮は終了予定時刻を変え、スキップは
-//! タイマーを終了する。終了の音と振動は `crate::sound`、画面の消灯防止は
-//! `crate::wake_lock` が担う。
+//! タイマーを終了する。終了の音と振動、ブラウザ通知は `crate::notification`、
+//! 画面の消灯防止は `crate::wake_lock` が担う。
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use dioxus::prelude::*;
+use warrior_core::notification::{PageVisibility, Permission};
 use warrior_core::rest_timer::{self as core_timer, RestTimer, DEFAULT_SECONDS, STEP_SECONDS};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 use super::set_events::SetCompletedEvents;
 use super::sleep_ms;
+use crate::notification;
 use crate::rest_timer::{now_ms, ActiveRestTimer, RestTimerState};
-use crate::sound;
 use crate::storage;
 use crate::text::{text, Key};
 use crate::wake_lock::ScreenWakeLock;
@@ -67,9 +68,10 @@ pub(crate) fn RestTimerBar(training_id: Option<String>) -> Element {
         .map(|active| active.timer.remaining_seconds(now_ms()));
     let finished = remaining == Some(0);
     let end_ms = active.as_ref().map(|active| active.timer.end_ms());
+    let notification_enabled = (state.notification_enabled)();
     use_effect(use_reactive(
-        (&finished, &end_ms),
-        move |(finished, end_ms)| {
+        (&finished, &end_ms, &notification_enabled),
+        move |(finished, end_ms, notification_enabled)| {
             if finished {
                 let Some(end_ms) = end_ms else {
                     return;
@@ -77,7 +79,9 @@ pub(crate) fn RestTimerBar(training_id: Option<String>) -> Element {
                 if *notified_end.peek() == Some(end_ms) {
                     return;
                 }
-                if *seen_running.peek() && !sound::notify_finished() {
+                if *seen_running.peek()
+                    && !notification::notify_rest_finished(notification_enabled, page_visibility())
+                {
                     sound_blocked.set(true);
                 }
                 notified_end.set(Some(end_ms));
@@ -183,6 +187,14 @@ fn document_is_visible() -> bool {
     web_sys::window()
         .and_then(|window| window.document())
         .is_some_and(|document| document.visibility_state() == web_sys::VisibilityState::Visible)
+}
+
+fn page_visibility() -> PageVisibility {
+    if document_is_visible() {
+        PageVisibility::Visible
+    } else {
+        PageVisibility::Hidden
+    }
 }
 
 fn idle_timer(loaded: bool) -> Element {
@@ -352,7 +364,64 @@ pub(crate) fn RestSettingsPanel() -> Element {
             if let Some(message) = error() {
                 p { class: "text-[11px] text-primary", "{message}" }
             }
+            RestNotificationSetting {}
         }
+    }
+}
+
+/// レストの終了をブラウザ通知で知らせる設定。
+///
+/// 通知の許可は、利用者がこの設定を有効にしたときにだけ求める。画面の読み込み時には求めない。
+#[component]
+fn RestNotificationSetting() -> Element {
+    let state = use_context::<RestTimerState>();
+    let mut enabled = state.notification_enabled;
+    let mut message = use_signal(|| Option::<String>::None);
+    let enabled_value = enabled();
+    rsx! {
+        div {
+            class: "flex flex-col gap-1",
+            "data-notification-enabled": if enabled_value { "true" } else { "false" },
+            label {
+                class: "flex min-h-11 items-center gap-2 text-[13px]",
+                input {
+                    r#type: "checkbox",
+                    class: "h-5 w-5",
+                    "data-notification": "true",
+                    checked: enabled_value,
+                    onchange: move |event| {
+                        let next = event.checked();
+                        enabled.set(next);
+                        if !next {
+                            message.set(None);
+                            return;
+                        }
+                        spawn(request_notification_permission(message));
+                    },
+                }
+                "{text(Key::RestNotificationLabel)}"
+            }
+            if let Some(value) = message() {
+                p {
+                    class: "text-[11px] text-primary",
+                    "data-notification-message": "true",
+                    "{value}"
+                }
+            }
+        }
+    }
+}
+
+async fn request_notification_permission(mut message: Signal<Option<String>>) {
+    match notification::request_permission().await {
+        Some(Permission::Granted) => message.set(None),
+        Some(Permission::Denied) => {
+            message.set(Some(text(Key::RestNotificationDenied).to_owned()));
+        }
+        Some(Permission::Default) => {
+            message.set(Some(text(Key::RestNotificationPending).to_owned()));
+        }
+        None => message.set(Some(text(Key::RestNotificationUnsupported).to_owned())),
     }
 }
 
