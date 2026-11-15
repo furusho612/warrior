@@ -349,9 +349,11 @@ async fn check_outbox_has(driver: &WebDriver, kind: &str) {
            const db = request.result; \
            const transaction = db.transaction(['outbox'], 'readonly'); \
            const query = transaction.objectStore('outbox').getAll(); \
-           query.onsuccess = () => done(JSON.stringify(\
-             query.result.map((entry) => entry.operation.kind))); \
-           query.onerror = () => done(JSON.stringify([])); \
+           query.onsuccess = () => { \
+             db.close(); \
+             done(JSON.stringify(query.result.map((entry) => entry.operation.kind))); \
+           }; \
+           query.onerror = () => { db.close(); done(JSON.stringify([])); }; \
          };",
         Vec::new(),
     )
@@ -381,15 +383,23 @@ async fn wait_for_alternative_cache(driver: &WebDriver) {
              request.onerror = () => done(JSON.stringify({ library: 0, recorded: 0 })); \
              request.onsuccess = () => { \
                const db = request.result; \
-               const transaction = db.transaction(\
-                 ['library_exercises', 'recorded_exercises'], 'readonly'); \
-               const library = transaction.objectStore('library_exercises').count(); \
-               const recorded = transaction.objectStore('recorded_exercises').count(); \
-               const result = { library: 0, recorded: 0 }; \
-               library.onsuccess = () => { result.library = library.result; }; \
-               recorded.onsuccess = () => { result.recorded = recorded.result; }; \
-               transaction.oncomplete = () => done(JSON.stringify(result)); \
-               transaction.onerror = () => done(JSON.stringify({ library: 0, recorded: 0 })); \
+               try { \
+                 const transaction = db.transaction(\
+                   ['library_exercises', 'recorded_exercises'], 'readonly'); \
+                 const library = transaction.objectStore('library_exercises').count(); \
+                 const recorded = transaction.objectStore('recorded_exercises').count(); \
+                 const result = { library: 0, recorded: 0 }; \
+                 library.onsuccess = () => { result.library = library.result; }; \
+                 recorded.onsuccess = () => { result.recorded = recorded.result; }; \
+                 transaction.oncomplete = () => { db.close(); done(JSON.stringify(result)); }; \
+                 transaction.onerror = () => { \
+                   db.close(); \
+                   done(JSON.stringify({ library: 0, recorded: 0 })); \
+                 }; \
+               } catch (error) { \
+                 db.close(); \
+                 done(JSON.stringify({ library: 0, recorded: 0 })); \
+               } \
              };",
             Vec::new(),
         )
