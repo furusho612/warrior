@@ -179,6 +179,18 @@ pub struct TrainingExerciseReorderPayload {
     pub ordered_ids: Vec<String>,
 }
 
+/// 左右別の段の、片側の本文。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetSidePayload {
+    /// 重量 (kg)。自重種目は加重である。重量欄が空のときは None。
+    pub weight_kg: Option<f64>,
+    /// 回数。入力が空のときは 0 である。
+    pub reps: u32,
+    /// 時間で記録する場合の秒数。
+    pub duration_seconds: Option<u32>,
+}
+
 /// セットの 1 つの段の本文。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -198,9 +210,9 @@ pub struct SetSegmentPayload {
     /// 時間で記録する場合の秒数。
     pub duration_seconds: Option<u32>,
     /// 左の値。左右別の種目だけが持つ。
-    pub left: Option<crate::set_calc::SideValue>,
+    pub left: Option<SetSidePayload>,
     /// 右の値。左右別の種目だけが持つ。
-    pub right: Option<crate::set_calc::SideValue>,
+    pub right: Option<SetSidePayload>,
 }
 
 /// セットの追加の本文。
@@ -464,11 +476,13 @@ pub enum SyncError {
     InvalidBodyWeight,
     /// 段が空である。
     EmptySegments,
+    /// 通常とウォームアップのセットが 1 つでない段を持つ。
+    InvalidSegmentCount,
     /// 組の ID が UUID v4 でない。
     InvalidSupersetId,
-    /// 組の種目が無い。
+    /// 組の種目が 2 つ未満である。
     EmptySuperset,
-    /// 組の種目の ID が空、重複、または UUID v4 でない。
+    /// 組の種目の ID が重複している、または UUID v4 でない。
     InvalidSupersetMembers,
 }
 
@@ -499,6 +513,7 @@ impl SyncError {
             Self::InvalidDuration => "invalid_duration",
             Self::InvalidBodyWeight => "invalid_body_weight",
             Self::EmptySegments => "empty_segments",
+            Self::InvalidSegmentCount => "invalid_segment_count",
             Self::InvalidSupersetId => "invalid_superset_id",
             Self::EmptySuperset => "empty_superset",
             Self::InvalidSupersetMembers => "invalid_superset_members",

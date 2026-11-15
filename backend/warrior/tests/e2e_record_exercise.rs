@@ -9,7 +9,7 @@ mod support;
 
 use serde_json::{json, Value};
 use support::browser::{self, Browser};
-use support::{DevServer, TestOidc};
+use support::{current_user_id, DevServer, TestOidc};
 use thirtyfour::prelude::*;
 
 const BENCH_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-000000000003";
@@ -469,21 +469,6 @@ async fn count(driver: &WebDriver, selector: &str) -> usize {
 
 async fn wait_for_attribute(driver: &WebDriver, selector: &str, attribute: &str, expected: &str) {
     browser::wait_for_attribute(driver, selector, attribute, expected).await;
-}
-
-async fn current_user_id(driver: &WebDriver) -> String {
-    let me = browser::eval_string(
-        driver,
-        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
-        Vec::new(),
-    )
-    .await;
-    serde_json::from_str::<Value>(&me)
-        .expect("the me response is JSON")
-        .get("id")
-        .and_then(|value| value.as_str())
-        .expect("the user id")
-        .to_owned()
 }
 
 async fn wait_for_session_row(server: &DevServer, training_id: &str) {

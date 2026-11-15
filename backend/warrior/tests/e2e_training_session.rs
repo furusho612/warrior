@@ -285,6 +285,10 @@ async fn check_record_layout(driver: &WebDriver, browser: Browser) {
         browser::attribute(driver, "[data-set-table]", "data-set-row-height").await,
         "44"
     );
+    assert!(
+        driver.find(By::Css("[data-set-drawer]")).await.is_err(),
+        "the set drawer must stay closed until a set is selected"
+    );
     let rail_width = driver
         .execute(
             "return document.querySelector('[data-exercise-rail]').getBoundingClientRect().width;",

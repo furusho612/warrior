@@ -22,8 +22,8 @@ use crate::storage::StorageError;
 /// セットの 1 つの段の左右の値。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SegmentSideValues {
-    /// 重量 (kg)。自重種目は加重である。
-    pub weight_kg: f64,
+    /// 重量 (kg)。自重種目は加重である。重量欄が空のときは None。
+    pub weight_kg: Option<f64>,
     /// 回数。
     pub reps: u32,
     /// 時間で記録する場合の秒数。
@@ -52,25 +52,28 @@ pub struct SetSegmentValues {
 impl SetSegmentValues {
     /// 段が完了に必要な値を持つか。
     ///
-    /// 時間で記録する段は時間、それ以外の段は回数が要る。左右別の段は左右の
-    /// 両方に値があることを求める。
+    /// 時間で記録する段は時間を、重量で記録する段は重量と回数を求める。
+    /// 左右別の段は左右の両方に値があることを求める。
     pub fn is_complete(&self, mode: RecordMode) -> bool {
-        match mode {
-            RecordMode::Time => match (self.left.as_ref(), self.right.as_ref()) {
-                (Some(left), Some(right)) => {
+        match (self.left.as_ref(), self.right.as_ref()) {
+            (Some(left), Some(right)) => match mode {
+                RecordMode::Time => {
                     left.duration_seconds.is_some_and(|duration| duration > 0)
                         && right.duration_seconds.is_some_and(|duration| duration > 0)
                 }
-                (None, None) => self.duration_seconds.is_some_and(|duration| duration > 0),
-                (Some(_), None) | (None, Some(_)) => false,
-            },
-            RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-                match (self.left.as_ref(), self.right.as_ref()) {
-                    (Some(left), Some(right)) => left.reps > 0 && right.reps > 0,
-                    (None, None) => self.reps > 0,
-                    (Some(_), None) | (None, Some(_)) => false,
+                RecordMode::WeightAndReps => {
+                    left.weight_kg.is_some()
+                        && left.reps > 0
+                        && right.weight_kg.is_some()
+                        && right.reps > 0
                 }
-            }
+                RecordMode::BodyweightAndReps => left.reps > 0 && right.reps > 0,
+            },
+            (None, None) => match mode {
+                RecordMode::Time => self.duration_seconds.is_some_and(|duration| duration > 0),
+                RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => self.reps > 0,
+            },
+            (Some(_), None) | (None, Some(_)) => false,
         }
     }
 }
@@ -402,7 +405,7 @@ fn segment_fields(values: &SetSegmentValues, mode: RecordMode) -> SegmentFields 
         left_weight_kg: if is_time {
             None
         } else {
-            values.left.map(|side| side.weight_kg)
+            values.left.and_then(|side| side.weight_kg)
         },
         left_reps: if is_time {
             None
@@ -420,7 +423,7 @@ fn segment_fields(values: &SetSegmentValues, mode: RecordMode) -> SegmentFields 
         right_weight_kg: if is_time {
             None
         } else {
-            values.right.map(|side| side.weight_kg)
+            values.right.and_then(|side| side.weight_kg)
         },
         right_reps: if is_time {
             None
@@ -468,9 +471,9 @@ fn payload_segments(
         .collect()
 }
 
-fn side_payload(values: SegmentSideValues, is_time: bool) -> warrior_core::set_calc::SideValue {
-    warrior_core::set_calc::SideValue {
-        weight_kg: if is_time { 0.0 } else { values.weight_kg },
+fn side_payload(values: SegmentSideValues, is_time: bool) -> warrior_core::sync::SetSidePayload {
+    warrior_core::sync::SetSidePayload {
+        weight_kg: if is_time { None } else { values.weight_kg },
         reps: if is_time { 0 } else { values.reps },
         duration_seconds: if is_time {
             values.duration_seconds

@@ -306,7 +306,7 @@ pub(super) async fn delete_members(
     Ok(())
 }
 
-async fn put_superset(
+pub(super) async fn put_superset(
     store: &IdbObjectStore,
     superset: &SupersetRecord,
 ) -> Result<(), StorageError> {

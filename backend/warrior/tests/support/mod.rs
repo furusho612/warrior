@@ -16,7 +16,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod browser;
 pub mod ownership;
+pub mod record_browser;
 pub mod record_common;
+pub mod record_unilateral_superset;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -248,7 +250,16 @@ impl DevServer {
     }
 
     fn wait_until_healthy(&self) {
-        wait_for_http(self.port, "/api/health");
+        if wait_for_http_until(self.port, "/api/health", STARTUP_TIMEOUT) {
+            return;
+        }
+        let lines = self.log_lines();
+        let start = lines.len().saturating_sub(40);
+        let tail = lines[start..].join("\n");
+        panic!(
+            "the server on port {} did not become ready within {STARTUP_TIMEOUT:?}:\n{tail}",
+            self.port
+        );
     }
 
     fn connect(&self, timeout: Duration) -> std::io::Result<TcpStream> {
@@ -361,15 +372,22 @@ fn stop_process_group(child: &mut Child) {
 }
 
 fn wait_for_http(port: u16, path: &str) {
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    if wait_for_http_until(port, path, STARTUP_TIMEOUT) {
+        return;
+    }
+    panic!("the server on port {port} did not become ready within {STARTUP_TIMEOUT:?}");
+}
+
+fn wait_for_http_until(port: u16, path: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
     loop {
         if let Ok(response) = try_http(port, path) {
             if response.status == 200 {
-                return;
+                return true;
             }
         }
         if Instant::now() >= deadline {
-            panic!("the server on port {port} did not become ready within {STARTUP_TIMEOUT:?}");
+            return false;
         }
         std::thread::sleep(POLL_INTERVAL);
     }
@@ -596,4 +614,30 @@ pub fn unique_user_id() -> String {
         &text[16..20],
         &text[20..32]
     )
+}
+
+/// ログイン中の利用者の ID を返す。
+pub async fn current_user_id(driver: &thirtyfour::WebDriver) -> String {
+    let me = browser::eval_string(
+        driver,
+        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
+        Vec::new(),
+    )
+    .await;
+    serde_json::from_str::<serde_json::Value>(&me)
+        .expect("the me response is JSON")
+        .get("id")
+        .and_then(|value| value.as_str())
+        .expect("the user id")
+        .to_owned()
+}
+
+/// 記録に使う体重を身体情報へ入れる。
+pub fn seed_profile(server: &DevServer, user_id: &str) {
+    server
+        .execute_d1_json(&format!(
+            "INSERT INTO profiles (user_id, weight_kg, created_at, updated_at) \
+             VALUES ('{user_id}', 70.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ))
+        .expect("the profile must be seeded");
 }

@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use support::DevServer;
 use warrior_core::base64url;
 
-const PORT: u16 = 8829;
+const PORT: u16 = 8840;
 
 const FIRST_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5810";
 const FIRST_DROP_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5811";
@@ -39,6 +39,15 @@ const INVALID_REORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5880
 const VALID_REORDER_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5881";
 const COMPLETE_NORMAL_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5890";
 const COMPLETE_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5891";
+const TEMP_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58a0";
+const TEMP_DROP_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58a1";
+const TEMP_DROP_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58a2";
+const INVALID_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58b0";
+const TEMP_DROP_DELETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58b1";
+const INVALID_COMPLETED_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58c0";
+const DELETE_NORMAL_BEFORE_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58d0";
+const DELETE_DROP_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58d1";
+const DELETE_NORMAL_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c58d2";
 
 #[test]
 fn drop_sets_reject_the_first_and_warmup_positions_and_keep_their_segments() {
@@ -60,8 +69,11 @@ fn drop_sets_reject_the_first_and_warmup_positions_and_keep_their_segments() {
     reject_changing_the_previous_set_to_a_warmup(&server, &cookie);
     reject_reordering_the_drop_set_to_the_first_position(&server, &cookie);
     accept_the_current_order(&server, &cookie);
+    reject_incomplete_drop_set_completion(&server, &cookie);
     complete_the_sets(&server, &cookie);
+    reject_an_invalid_completed_update(&server, &cookie);
     finish_and_check_the_summary(&server, &cookie);
+    delete_the_preceding_set_last(&server, &cookie);
 }
 
 fn reject_the_first_drop_set(server: &DevServer, cookie: &str) {
@@ -271,6 +283,86 @@ fn accept_the_current_order(server: &DevServer, cookie: &str) {
     assert_eq!(status(&response), "applied");
 }
 
+fn reject_incomplete_drop_set_completion(server: &DevServer, cookie: &str) {
+    let temp = create_operation(
+        TEMP_DROP_OPERATION_ID,
+        TRAINING_ID,
+        BENCH_ROW_ID,
+        TEMP_DROP_SET_ID,
+        SetSpec {
+            position: 4,
+            kind: "drop",
+            body_weight_kg: Some(70.0),
+        },
+        vec![
+            segment(TEMP_DROP_SEGMENT_ID, 1, 100.0, 5),
+            segment(EXTRA_SEGMENT_ID, 2, 80.0, 0),
+        ],
+    );
+    let response = post(server, cookie, &temp);
+    assert_eq!(response.status, 200, "{}", response.body);
+
+    let complete = complete_operation(
+        INVALID_COMPLETE_OPERATION_ID,
+        TRAINING_ID,
+        TEMP_DROP_SET_ID,
+        true,
+    );
+    let response = post(server, cookie, &complete);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(applied_count(server, INVALID_COMPLETE_OPERATION_ID), 0);
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{TEMP_DROP_SET_ID}'")
+        )["completed"],
+        0
+    );
+
+    let delete = delete_operation(TEMP_DROP_DELETE_OPERATION_ID, TRAINING_ID, TEMP_DROP_SET_ID);
+    let response = post(server, cookie, &delete);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(count(server, "sets", TEMP_DROP_SET_ID), 0);
+}
+
+fn reject_an_invalid_completed_update(server: &DevServer, cookie: &str) {
+    let update = update_operation(
+        INVALID_COMPLETED_UPDATE_OPERATION_ID,
+        TRAINING_ID,
+        DROP_SET_ID,
+        UpdateSpec {
+            position: 3,
+            kind: "drop",
+            completed: true,
+            body_weight_kg: Some(70.0),
+        },
+        vec![
+            segment(DROP_SEGMENT_ONE_ID, 1, 100.0, 8),
+            segment(DROP_SEGMENT_TWO_ID, 2, 80.0, 0),
+        ],
+    );
+    let response = post(server, cookie, &update);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        applied_count(server, INVALID_COMPLETED_UPDATE_OPERATION_ID),
+        0
+    );
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT completed FROM sets WHERE id = '{DROP_SET_ID}'")
+        )["completed"],
+        1
+    );
+    assert_eq!(
+        first_row(
+            server,
+            &format!("SELECT reps FROM set_segments WHERE id = '{DROP_SEGMENT_TWO_ID}'")
+        )["reps"],
+        6
+    );
+}
+
 fn complete_the_sets(server: &DevServer, cookie: &str) {
     for (operation_id, set_id) in [
         (COMPLETE_NORMAL_OPERATION_ID, NORMAL_SET_ID),
@@ -300,4 +392,29 @@ fn finish_and_check_the_summary(server: &DevServer, cookie: &str) {
     let summary: Value = serde_json::from_str(&finish.body).expect("a summary");
     assert_eq!(summary["set_count"], 2);
     assert_eq!(summary["total_weight_kg"].as_f64(), Some(1_780.0));
+}
+
+fn delete_the_preceding_set_last(server: &DevServer, cookie: &str) {
+    let blocked = delete_operation(
+        DELETE_NORMAL_BEFORE_DROP_OPERATION_ID,
+        TRAINING_ID,
+        NORMAL_SET_ID,
+    );
+    let response = post(server, cookie, &blocked);
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        applied_count(server, DELETE_NORMAL_BEFORE_DROP_OPERATION_ID),
+        0
+    );
+    assert_eq!(count(server, "sets", NORMAL_SET_ID), 1);
+
+    let drop = delete_operation(DELETE_DROP_OPERATION_ID, TRAINING_ID, DROP_SET_ID);
+    let response = post(server, cookie, &drop);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(count(server, "sets", DROP_SET_ID), 0);
+
+    let normal = delete_operation(DELETE_NORMAL_OPERATION_ID, TRAINING_ID, NORMAL_SET_ID);
+    let response = post(server, cookie, &normal);
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(count(server, "sets", NORMAL_SET_ID), 0);
 }

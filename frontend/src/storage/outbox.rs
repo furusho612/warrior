@@ -15,21 +15,11 @@ pub const SEQUENCE_KEY_PREFIX: &str = "outbox_sequence:";
 /// 編集権を失ったトレーニングのメタのキーの接頭辞。
 pub const FORBIDDEN_KEY_PREFIX: &str = "forbidden_training:";
 
-/// 身体情報の体重をキャッシュするメタのキー。
-pub const BODY_WEIGHT_KEY: &str = "profile_body_weight";
-
 /// メタの 1 行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MetaRecord {
     key: String,
     value: u64,
-}
-
-/// 身体情報の体重のメタの 1 行。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct BodyWeightRecord {
-    key: String,
-    body_weight_kg: f64,
 }
 
 /// トレーニングの最後の順序を持つメタのキー。
@@ -40,31 +30,6 @@ pub fn sequence_key(training_id: &str) -> String {
 /// 編集権を失ったトレーニングのメタのキー。
 pub fn forbidden_key(training_id: &str) -> String {
     format!("{FORBIDDEN_KEY_PREFIX}{training_id}")
-}
-
-/// 身体情報の体重をキャッシュする。None のときはキャッシュを消す。
-pub async fn save_body_weight(
-    meta: &IdbObjectStore,
-    body_weight_kg: Option<f64>,
-) -> Result<(), StorageError> {
-    match body_weight_kg {
-        Some(body_weight_kg) => {
-            let record = BodyWeightRecord {
-                key: BODY_WEIGHT_KEY.to_owned(),
-                body_weight_kg,
-            };
-            indexeddb::put(meta, &to_js(&record)?).await
-        }
-        None => indexeddb::delete_entry(meta, &JsValue::from_str(BODY_WEIGHT_KEY)).await,
-    }
-}
-
-/// キャッシュした身体情報の体重を返す。
-pub async fn cached_body_weight(meta: &IdbObjectStore) -> Result<Option<f64>, StorageError> {
-    match get(meta, &JsValue::from_str(BODY_WEIGHT_KEY)).await? {
-        Some(value) => Ok(Some(from_js::<BodyWeightRecord>(&value)?.body_weight_kg)),
-        None => Ok(None),
-    }
 }
 
 /// 編集権を失ったトレーニングを、送信を止める対象として記録する。
@@ -82,20 +47,24 @@ pub async fn clear_forbidden(meta: &IdbObjectStore, training_id: &str) -> Result
 }
 
 /// 編集権を失ったトレーニングの ID を返す。
+///
+/// メタには送信の順序など別の行もあるため、印のキーだけを読み、その行を
+/// `MetaRecord` として復元する。
 pub async fn forbidden_trainings(meta: &IdbObjectStore) -> Result<Vec<String>, StorageError> {
-    let mut trainings = indexeddb::get_all(meta)
-        .await?
-        .iter()
-        .map(from_js::<MetaRecord>)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .filter_map(|record| {
-            record
-                .key
-                .strip_prefix(FORBIDDEN_KEY_PREFIX)
-                .map(str::to_owned)
-        })
-        .collect::<Vec<_>>();
+    let mut trainings = Vec::new();
+    for value in indexeddb::get_all(meta).await? {
+        let Ok(key) = js_sys::Reflect::get(&value, &JsValue::from_str("key")) else {
+            continue;
+        };
+        let Some(key) = key.as_string() else {
+            continue;
+        };
+        let Some(training_id) = key.strip_prefix(FORBIDDEN_KEY_PREFIX) else {
+            continue;
+        };
+        from_js::<MetaRecord>(&value)?;
+        trainings.push(training_id.to_owned());
+    }
     trainings.sort();
     Ok(trainings)
 }

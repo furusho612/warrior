@@ -248,6 +248,10 @@ async fn set_ids(driver: &WebDriver, detail: &str) -> Vec<String> {
 
 async fn start_the_stopwatch(driver: &WebDriver, set: &str) {
     browser::wait_for_present(driver, &format!("{set} [data-stopwatch-start]")).await;
+    assert!(
+        is_enabled(driver, &format!("{set} [data-stopwatch-start]")).await,
+        "the stopwatch start button must be enabled"
+    );
     browser::click(driver, &format!("{set} [data-stopwatch-start]")).await;
     wait_for_elapsed_at_least(driver, set, 1).await;
 }

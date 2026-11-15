@@ -1,8 +1,8 @@
 //! 記録のセットの表と、セットの行の状態。
 //!
 //! セットの行は端末内の保存の行と入力を一緒に持つ。入力は画面へすぐ反映し、
-//! 保存は `frontend/src/screens/record/exercises.rs` が端末内の保存へ送る。
-//! ドロップセットは段を 1 行ずつ表示し、段の行を親セットの直後に置く。
+//! 保存は `frontend/src/screens/record/exercise_view.rs` が端末内の保存へ送る。
+//! セットの表は `frontend/src/screens/record/set_table.rs` が描く。
 //! セットの集計は `warrior_core::set_calc` の `SetRecord` に変換して行う。
 
 use dioxus::prelude::*;
@@ -16,7 +16,6 @@ use warrior_core::set_rules;
 use warrior_core::training_record::{SetRecordRow, SetSegmentRecord};
 
 pub(super) use super::set_inputs::Field;
-use super::set_inputs::SegmentInputs;
 use crate::storage::StoredSet;
 use crate::text::{text, Key};
 use crate::training_set::{SegmentSideValues, SetSegmentValues, SetValues};
@@ -131,27 +130,27 @@ impl SegmentView {
             momentum: count_text(record.momentum_reps),
             assisted: count_text(record.assisted_reps),
             duration: duration_text(record.duration_seconds),
-            left_weight: number_text(record.left_weight_kg.unwrap_or(0.0)),
+            left_weight: side_weight_text(record.left_weight_kg),
             left_reps: count_text(record.left_reps.unwrap_or(0)),
             left_duration: duration_text(record.left_duration_seconds),
-            right_weight: number_text(record.right_weight_kg.unwrap_or(0.0)),
+            right_weight: side_weight_text(record.right_weight_kg),
             right_reps: count_text(record.right_reps.unwrap_or(0)),
             right_duration: duration_text(record.right_duration_seconds),
             record,
         }
     }
 
-    fn values(&self, lateral: bool) -> SetSegmentValues {
+    fn values(&self, lateral: bool, mode: RecordMode) -> SetSegmentValues {
         let side = |weight: &str, reps: &str, duration: &str| SegmentSideValues {
-            weight_kg: parse_number(weight).unwrap_or(0.0),
+            weight_kg: side_weight_value(weight, mode),
             reps: parse_count(reps).unwrap_or(0),
             duration_seconds: parse_duration(duration),
         };
         SetSegmentValues {
             weight_kg: parse_number(&self.weight).unwrap_or(0.0),
             reps: parse_count(&self.reps).unwrap_or(0),
-            momentum_reps: parse_count_or_zero(&self.momentum),
-            assisted_reps: parse_count_or_zero(&self.assisted),
+            momentum_reps: parse_count_or_zero(&self.momentum).unwrap_or(0),
+            assisted_reps: parse_count_or_zero(&self.assisted).unwrap_or(0),
             duration_seconds: parse_duration(&self.duration),
             left: lateral.then(|| side(&self.left_weight, &self.left_reps, &self.left_duration)),
             right: lateral
@@ -160,6 +159,9 @@ impl SegmentView {
     }
 
     fn can_complete(&self, mode: RecordMode, lateral: bool) -> bool {
+        if mode != RecordMode::Time && self.breakdown_invalid(lateral) {
+            return false;
+        }
         match mode {
             RecordMode::Time => {
                 if lateral {
@@ -169,15 +171,20 @@ impl SegmentView {
                     parse_duration(&self.duration).is_some()
                 }
             }
-            RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
-                if self.breakdown_invalid(lateral) {
-                    return false;
-                }
+            RecordMode::WeightAndReps => {
                 if lateral {
                     parse_count(&self.left_reps).is_some()
-                        && parse_number(&self.left_weight).is_some()
+                        && parse_weight(&self.left_weight).is_some()
                         && parse_count(&self.right_reps).is_some()
-                        && parse_number(&self.right_weight).is_some()
+                        && parse_weight(&self.right_weight).is_some()
+                } else {
+                    parse_count(&self.reps).is_some() && parse_number(&self.weight).is_some()
+                }
+            }
+            RecordMode::BodyweightAndReps => {
+                if lateral {
+                    parse_count(&self.left_reps).is_some()
+                        && parse_count(&self.right_reps).is_some()
                 } else {
                     parse_count(&self.reps).is_some() && parse_number(&self.weight).is_some()
                 }
@@ -191,40 +198,30 @@ impl SegmentView {
         body_weight_kg: Option<f64>,
         lateral: bool,
     ) -> Option<SetSegment> {
-        let momentum_reps = parse_count_or_zero(&self.momentum);
-        let assisted_reps = parse_count_or_zero(&self.assisted);
         if mode == RecordMode::Time {
             return self.to_time_segment(lateral);
         }
+        let momentum_reps = parse_count_or_zero(&self.momentum)?;
+        let assisted_reps = parse_count_or_zero(&self.assisted)?;
         if lateral {
             return Some(SetSegment {
                 weight_kg: 0.0,
                 reps: 0,
                 momentum_reps,
                 assisted_reps,
-                left: Some(self.to_side(
-                    mode,
-                    body_weight_kg,
-                    &self.left_weight,
-                    &self.left_reps,
-                )?),
+                left: Some(self.to_side(mode, body_weight_kg, &self.left_weight, &self.left_reps)),
                 right: Some(self.to_side(
                     mode,
                     body_weight_kg,
                     &self.right_weight,
                     &self.right_reps,
-                )?),
+                )),
                 duration_seconds: None,
             });
         }
         let weight = parse_number(&self.weight)?;
         let reps = parse_count(&self.reps)?;
-        let weight = match mode {
-            RecordMode::BodyweightAndReps => {
-                bodyweight_set_weight(body_weight_kg, weight).unwrap_or(0.0)
-            }
-            RecordMode::WeightAndReps | RecordMode::Time => weight,
-        };
+        let weight = bodyweight_weight(mode, body_weight_kg, weight);
         Some(SetSegment {
             weight_kg: weight,
             reps,
@@ -270,8 +267,13 @@ impl SegmentView {
     }
 
     fn breakdown_invalid(&self, lateral: bool) -> bool {
-        let used = u64::from(parse_count_or_zero(&self.momentum))
-            + u64::from(parse_count_or_zero(&self.assisted));
+        let Some(momentum_reps) = parse_count_or_zero(&self.momentum) else {
+            return true;
+        };
+        let Some(assisted_reps) = parse_count_or_zero(&self.assisted) else {
+            return true;
+        };
+        let used = u64::from(momentum_reps) + u64::from(assisted_reps);
         if lateral {
             let left = parse_count(&self.left_reps).unwrap_or(0);
             let right = parse_count(&self.right_reps).unwrap_or(0);
@@ -287,20 +289,30 @@ impl SegmentView {
         body_weight_kg: Option<f64>,
         weight: &str,
         reps: &str,
-    ) -> Option<SideValue> {
-        let weight = parse_number(weight)?;
-        let reps = parse_count(reps)?;
-        let weight = match mode {
-            RecordMode::BodyweightAndReps => {
-                bodyweight_set_weight(body_weight_kg, weight).unwrap_or(0.0)
-            }
-            RecordMode::WeightAndReps | RecordMode::Time => weight,
-        };
-        Some(SideValue {
+    ) -> SideValue {
+        let weight = bodyweight_weight(mode, body_weight_kg, parse_number(weight).unwrap_or(0.0));
+        SideValue {
             weight_kg: weight,
-            reps,
+            reps: parse_count(reps).unwrap_or(0),
             duration_seconds: None,
-        })
+        }
+    }
+}
+
+/// 種目の左右の指定から、左右の列を使うか決める。
+///
+/// 時間で記録する種目も左右別の入力を持つ。
+pub(super) fn is_lateral(laterality: Laterality, _mode: RecordMode) -> bool {
+    laterality == Laterality::Unilateral
+}
+
+/// 重量種目は入力した重量を、自重種目は記録した体重に加重を足した値を返す。
+fn bodyweight_weight(mode: RecordMode, body_weight_kg: Option<f64>, weight: f64) -> f64 {
+    match mode {
+        RecordMode::BodyweightAndReps => {
+            bodyweight_set_weight(body_weight_kg, weight).unwrap_or(0.0)
+        }
+        RecordMode::WeightAndReps | RecordMode::Time => weight,
     }
 }
 
@@ -363,7 +375,7 @@ impl SetView {
             segments: self
                 .segments
                 .iter()
-                .map(|segment| segment.values(lateral))
+                .map(|segment| segment.values(lateral, mode))
                 .collect::<Vec<_>>(),
             completed: self.completed(),
             body_weight_kg: self.record.body_weight_kg,
@@ -447,7 +459,7 @@ pub(super) fn previous_values(
     if previous.segments.is_empty() {
         return None;
     }
-    let lateral = laterality == Laterality::Unilateral;
+    let lateral = is_lateral(laterality, mode);
     let segments = previous
         .segments
         .iter()
@@ -469,14 +481,14 @@ pub(super) fn previous_values(
                 }
             };
             let side = |value: Option<&SideValue>| SegmentSideValues {
-                weight_kg: match mode {
+                weight_kg: Some(match mode {
                     RecordMode::BodyweightAndReps => previous.body_weight_kg.map_or(0.0, |body| {
                         (value.map_or(0.0, |side| side.weight_kg) - body).max(0.0)
                     }),
                     RecordMode::WeightAndReps | RecordMode::Time => {
                         value.map_or(0.0, |side| side.weight_kg)
                     }
-                },
+                }),
                 reps: value.map_or(0, |side| side.reps),
                 duration_seconds: match mode {
                     RecordMode::Time => value.and_then(|side| side.duration_seconds),
@@ -505,358 +517,7 @@ pub(super) fn previous_values(
     })
 }
 
-/// セットの表。
-#[component]
-pub(super) fn SetTable(
-    view_id: String,
-    rows: Vec<SetView>,
-    is_time: bool,
-    is_bodyweight: bool,
-    is_lateral: bool,
-    disabled: bool,
-    on_action: EventHandler<SetAction>,
-) -> Element {
-    let add = on_action;
-    let add_view_id = view_id.clone();
-    let kinds = rows.iter().map(SetView::kind).collect::<Vec<_>>();
-    let numbers = set_numbers(&rows);
-    let display_rows = rows.iter().map(|row| row.segments.len()).sum::<usize>();
-    rsx! {
-        div { class: "flex flex-col gap-1",
-            div { class: "flex items-center justify-between gap-2",
-                h4 { class: "text-[11px] font-bold", "{text(Key::RecordSets)}" }
-                button {
-                    class: "min-h-9 border border-primary px-2 text-[11px] font-bold text-primary",
-                    "data-add-set": "true",
-                    disabled,
-                    onclick: move |_| add.call(SetAction::Add { view_id: add_view_id.clone() }),
-                    "{text(Key::RecordSetAdd)}"
-                }
-            }
-            div {
-                class: "h-[222px] overflow-y-auto border border-line bg-surface",
-                "data-set-table": "true",
-                "data-set-rows": "{rows.len()}",
-                "data-set-display-rows": "{display_rows}",
-                "data-set-row-height": "44",
-                if rows.is_empty() {
-                    p {
-                        class: "p-2 text-[11px] text-text-sub",
-                        "data-set-empty": "true",
-                        "{text(Key::RecordExerciseEmpty)}"
-                    }
-                }
-                // セットの ID でキーし、並べ替えと種目切替でストップウォッチの状態が別の行へ移らないようにする。
-                for (index, row) in rows.iter().enumerate() {
-                    SetRow {
-                        key: "{row.record.id}",
-                        index,
-                        set: row.clone(),
-                        number: numbers[index],
-                        drop_allowed: kind_change_allowed(&kinds, index, SetKind::Drop),
-                        warmup_allowed: kind_change_allowed(&kinds, index, SetKind::Warmup),
-                        can_move_up: move_candidate_valid(&kinds, index, -1),
-                        can_move_down: move_candidate_valid(&kinds, index, 1),
-                        is_time,
-                        is_bodyweight,
-                        is_lateral,
-                        disabled,
-                        on_action,
-                    }
-                }
-            }
-            if disabled {
-                p { class: "text-[11px] text-text-sub", "{text(Key::RecordViewOnly)}" }
-            }
-        }
-    }
-}
-
-/// セットの表の 1 行。
-#[component]
-fn SetRow(
-    index: usize,
-    set: SetView,
-    number: Option<usize>,
-    drop_allowed: bool,
-    warmup_allowed: bool,
-    can_move_up: bool,
-    can_move_down: bool,
-    is_time: bool,
-    is_bodyweight: bool,
-    is_lateral: bool,
-    disabled: bool,
-    on_action: EventHandler<SetAction>,
-) -> Element {
-    let set_id = set.record.id.clone();
-    let add_segment_id = set.record.id.clone();
-    let mut selected_set = use_context::<SelectedSet>();
-    let open_id = set.record.id.clone();
-    let completed = set.completed();
-    let mode = if is_time {
-        RecordMode::Time
-    } else if is_bodyweight {
-        RecordMode::BodyweightAndReps
-    } else {
-        RecordMode::WeightAndReps
-    };
-    let ready = set.can_complete(mode, is_lateral);
-    let kind = set.kind();
-    let is_drop = kind == SetKind::Drop;
-    let number_text = number.map_or_else(|| "D".to_owned(), |number| number.to_string());
-    let first_segment = set.segments.first().cloned();
-    let buttons = RowButtonState {
-        set_id: set.record.id.clone(),
-        first_segment_id: set
-            .segments
-            .first()
-            .map(|segment| segment.record.id.clone()),
-        is_drop,
-        can_move_up,
-        can_move_down,
-        ready,
-        completed,
-    };
-    rsx! {
-        div {
-            class: "flex flex-col",
-            "data-set-row": "true",
-            "data-set-row-index": "{index}",
-            "data-set-id": "{set_id}",
-            "data-set-kind": "{kind.as_str()}",
-            "data-set-number": "{number_text}",
-            "data-set-drop": if is_drop { "true" } else { "false" },
-            "data-set-completed": if completed { "true" } else { "false" },
-            div {
-                class: if is_drop { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4" } else { "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1" },
-                button {
-                    class: "w-4 shrink-0 text-left text-[11px] text-text-sub",
-                    "data-set-open": "true",
-                    "aria-label": "{text(Key::RecordSetDetail)}",
-                    onclick: move |_| selected_set.0.set(Some(open_id.clone())),
-                    "{number_text}"
-                }
-                KindSelect {
-                    set_id: set.record.id.clone(),
-                    kind,
-                    disabled,
-                    drop_allowed,
-                    warmup_allowed,
-                    on_action,
-                }
-                if let Some(segment) = first_segment {
-                    div {
-                        class: "flex items-center gap-1",
-                        "data-segment-id": "{segment.record.id}",
-                        "data-segment-index": "0",
-                        SegmentInputs {
-                            segment: segment.clone(),
-                            set_id: set_id.clone(),
-                            mode,
-                            is_bodyweight,
-                            is_lateral,
-                            disabled,
-                            on_action,
-                        }
-                    }
-                }
-                RowButtons { buttons, disabled, on_action }
-            }
-            // 段の ID でキーし、段の追加と削除で入力の状態を正しい段に保つ。
-            for (segment_index, segment) in set.segments.iter().enumerate().skip(1) {
-                SegmentRow {
-                    key: "{set_id}:{segment.record.id}",
-                    set_id: set_id.clone(),
-                    segment: segment.clone(),
-                    segment_index,
-                    is_time,
-                    is_bodyweight,
-                    is_lateral,
-                    disabled,
-                    on_action,
-                }
-            }
-            if is_drop && !is_time {
-                button {
-                    class: "min-h-9 border-t border-line px-2 text-left text-[10px] font-bold text-primary",
-                    "data-add-segment": "true",
-                    disabled,
-                    onclick: move |_| on_action.call(SetAction::AddSegment { set_id: add_segment_id.clone() }),
-                    "{text(Key::RecordSetSegmentAdd)}"
-                }
-            }
-        }
-    }
-}
-
-/// セット種別の選択。
-#[component]
-fn KindSelect(
-    set_id: String,
-    kind: SetKind,
-    disabled: bool,
-    drop_allowed: bool,
-    warmup_allowed: bool,
-    on_action: EventHandler<SetAction>,
-) -> Element {
-    rsx! {
-        select {
-            class: "min-h-8 w-16 shrink-0 border border-line bg-bg px-1 text-[10px]",
-            "data-set-kind": "true",
-            "aria-label": "{text(Key::RecordSetKindLabel)}",
-            disabled,
-            value: "{kind.as_str()}",
-            onchange: move |event| {
-                if let Some(kind) = SetKind::parse(&event.value()) {
-                    on_action.call(SetAction::Kind { set_id: set_id.clone(), kind });
-                }
-            },
-            option { value: "normal", selected: kind == SetKind::Normal, "{text(Key::RecordSetKindNormal)}" }
-            option { value: "warmup", selected: kind == SetKind::Warmup, disabled: !warmup_allowed, "{text(Key::RecordSetKindWarmup)}" }
-            option { value: "drop", selected: kind == SetKind::Drop, disabled: !drop_allowed, "{text(Key::RecordSetKindDrop)}" }
-        }
-    }
-}
-
-/// セットの行の操作のボタン。
-#[derive(Debug, Clone, PartialEq)]
-struct RowButtonState {
-    /// セットの ID。
-    set_id: String,
-    /// 最初の段の ID。
-    first_segment_id: Option<String>,
-    /// ドロップセットか。
-    is_drop: bool,
-    /// 前へ移動できるか。
-    can_move_up: bool,
-    /// 後ろへ移動できるか。
-    can_move_down: bool,
-    /// 完了できるか。
-    ready: bool,
-    /// 完了しているか。
-    completed: bool,
-}
-
-/// セットの行の移動、完了、削除のボタン。
-#[component]
-fn RowButtons(
-    buttons: RowButtonState,
-    disabled: bool,
-    on_action: EventHandler<SetAction>,
-) -> Element {
-    let up_id = buttons.set_id.clone();
-    let down_id = buttons.set_id.clone();
-    let complete_id = buttons.set_id.clone();
-    let delete_id = buttons.set_id.clone();
-    let delete_segment_set_id = buttons.set_id.clone();
-    let first_segment_id = buttons.first_segment_id.clone();
-    let can_move_up = buttons.can_move_up;
-    let can_move_down = buttons.can_move_down;
-    let ready = buttons.ready;
-    let completed = buttons.completed;
-    rsx! {
-        button {
-            class: "min-h-8 shrink-0 border border-line px-1 text-[10px]",
-            "data-set-move-up": "true",
-            disabled: disabled || !can_move_up,
-            onclick: move |_| on_action.call(SetAction::Move { set_id: up_id.clone(), delta: -1 }),
-            "{text(Key::RecordExerciseMoveUp)}"
-        }
-        button {
-            class: "min-h-8 shrink-0 border border-line px-1 text-[10px]",
-            "data-set-move-down": "true",
-            disabled: disabled || !can_move_down,
-            onclick: move |_| on_action.call(SetAction::Move { set_id: down_id.clone(), delta: 1 }),
-            "{text(Key::RecordExerciseMoveDown)}"
-        }
-        button {
-            class: "min-h-8 shrink-0 border border-primary px-1 text-[10px] font-bold text-primary",
-            "data-set-complete": "true",
-            "data-set-complete-ready": if ready { "true" } else { "false" },
-            disabled: disabled || (!completed && !ready),
-            onclick: move |_| on_action.call(SetAction::Complete { set_id: complete_id.clone() }),
-            if completed {
-                "{text(Key::RecordSetCompleted)}"
-            } else {
-                "{text(Key::RecordSetComplete)}"
-            }
-        }
-        if buttons.is_drop {
-            if let Some(segment_id) = first_segment_id {
-                button {
-                    class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
-                    "data-delete-segment": "true",
-                    disabled,
-                    onclick: move |_| on_action.call(SetAction::DeleteSegment {
-                        set_id: delete_segment_set_id.clone(),
-                        segment_id: segment_id.clone(),
-                    }),
-                    "{text(Key::RecordSetSegmentDelete)}"
-                }
-            }
-        }
-        button {
-            class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
-            "data-delete-set": "true",
-            disabled,
-            onclick: move |_| on_action.call(SetAction::Delete { set_id: delete_id.clone() }),
-            "{text(Key::RecordSetDelete)}"
-        }
-    }
-}
-
-/// セットの表の、2 つ目以降の段の行。
-#[component]
-fn SegmentRow(
-    set_id: String,
-    segment: SegmentView,
-    segment_index: usize,
-    is_time: bool,
-    is_bodyweight: bool,
-    is_lateral: bool,
-    disabled: bool,
-    on_action: EventHandler<SetAction>,
-) -> Element {
-    let mode = if is_time {
-        RecordMode::Time
-    } else if is_bodyweight {
-        RecordMode::BodyweightAndReps
-    } else {
-        RecordMode::WeightAndReps
-    };
-    let delete_set_id = set_id.clone();
-    let delete_segment_id = segment.record.id.clone();
-    let segment_id = segment.record.id.clone();
-    rsx! {
-        div {
-            class: "flex h-11 items-center gap-1 overflow-x-auto border-b border-line px-1 pl-4",
-            "data-set-segment-row": "true",
-            "data-segment-id": "{segment_id}",
-            "data-segment-index": "{segment_index}",
-            SegmentInputs {
-                segment,
-                set_id,
-                mode,
-                is_bodyweight,
-                is_lateral,
-                disabled,
-                on_action,
-            }
-            button {
-                class: "min-h-8 shrink-0 border border-line px-1 text-[10px] text-primary",
-                "data-delete-segment": "true",
-                disabled,
-                onclick: move |_| on_action.call(SetAction::DeleteSegment {
-                    set_id: delete_set_id.clone(),
-                    segment_id: delete_segment_id.clone(),
-                }),
-                "{text(Key::RecordSetSegmentDelete)}"
-            }
-        }
-    }
-}
-
-fn set_numbers(rows: &[SetView]) -> Vec<Option<usize>> {
+pub(super) fn set_numbers(rows: &[SetView]) -> Vec<Option<usize>> {
     let mut numbers = Vec::with_capacity(rows.len());
     let mut number = 0usize;
     for row in rows {
@@ -870,7 +531,7 @@ fn set_numbers(rows: &[SetView]) -> Vec<Option<usize>> {
     numbers
 }
 
-fn kind_change_allowed(kinds: &[SetKind], index: usize, kind: SetKind) -> bool {
+pub(super) fn kind_change_allowed(kinds: &[SetKind], index: usize, kind: SetKind) -> bool {
     let mut candidate = kinds.to_vec();
     let Some(slot) = candidate.get_mut(index) else {
         return false;
@@ -885,7 +546,7 @@ pub(super) fn kind_allowed(rows: &[SetView], index: usize, kind: SetKind) -> boo
     kind_change_allowed(&kinds, index, kind)
 }
 
-fn move_candidate_valid(kinds: &[SetKind], index: usize, delta: i32) -> bool {
+pub(super) fn move_candidate_valid(kinds: &[SetKind], index: usize, delta: i32) -> bool {
     let target = index as i32 + delta;
     if target < 0 || target as usize >= kinds.len() {
         return false;
@@ -899,6 +560,32 @@ fn move_candidate_valid(kinds: &[SetKind], index: usize, delta: i32) -> bool {
 pub(super) fn move_allowed(rows: &[SetView], index: usize, delta: i32) -> bool {
     let kinds = rows.iter().map(SetView::kind).collect::<Vec<_>>();
     move_candidate_valid(&kinds, index, delta)
+}
+
+/// 段を減らす変更の前に確認が要るか。
+///
+/// ドロップセットから別の種別へ変えると、2 つ目以降の段を捨てることになる。
+pub(super) fn needs_segment_confirmation(
+    kind: SetKind,
+    new_kind: SetKind,
+    segment_count: usize,
+) -> bool {
+    kind == SetKind::Drop && new_kind != SetKind::Drop && segment_count > 1
+}
+
+/// セット番号のボタンの読み上げの文言。
+pub(super) fn detail_open_label(number_text: &str, is_drop: bool) -> String {
+    let prefix = if is_drop {
+        format!("{}{}", text(Key::RecordSetKindDrop), text(Key::RecordSets))
+    } else {
+        text(Key::RecordSets).to_owned()
+    };
+    format!(
+        "{} {} {}",
+        prefix,
+        number_text,
+        text(Key::RecordSetDetailOpen)
+    )
 }
 
 /// セット種別の文言。
@@ -927,6 +614,18 @@ fn number_text(value: f64) -> String {
     }
 }
 
+fn side_weight_text(value: Option<f64>) -> String {
+    value.map_or_else(String::new, format_number)
+}
+
+fn side_weight_value(text: &str, mode: RecordMode) -> Option<f64> {
+    match mode {
+        RecordMode::WeightAndReps => parse_weight(text),
+        RecordMode::BodyweightAndReps => Some(parse_number(text).unwrap_or(0.0)),
+        RecordMode::Time => None,
+    }
+}
+
 fn count_text(value: i64) -> String {
     if value > 0 {
         value.to_string()
@@ -951,13 +650,27 @@ fn parse_number(text: &str) -> Option<f64> {
     (value.is_finite() && value >= 0.0).then_some(value)
 }
 
+/// 重量欄の入力。空の欄と 0 を区別する。
+fn parse_weight(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let value = text.parse::<f64>().ok()?;
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
+
 fn parse_count(text: &str) -> Option<u32> {
     let value = text.trim().parse::<u32>().ok()?;
     (value > 0).then_some(value)
 }
 
-fn parse_count_or_zero(text: &str) -> u32 {
-    text.trim().parse::<u32>().unwrap_or(0)
+fn parse_count_or_zero(text: &str) -> Option<u32> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some(0);
+    }
+    text.parse::<u32>().ok()
 }
 
 fn rpe_text(value: Option<f64>) -> String {

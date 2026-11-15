@@ -77,3 +77,60 @@ pub(super) async fn clear(
 ) -> Result<(), StorageError> {
     indexeddb::delete_entry(meta, &JsValue::from_str(&key(set_id, side))).await
 }
+
+/// 開始時刻を端末内へ保存する。
+pub(super) async fn save_started_at(
+    store: &super::Storage,
+    set_id: &str,
+    side: StopwatchSide,
+    started_at_ms: i64,
+) -> Result<(), StorageError> {
+    let database = store.database().await?;
+    let transaction = indexeddb::Transaction::new(
+        &database,
+        &[super::Store::Meta.name()],
+        web_sys::IdbTransactionMode::Readwrite,
+    )?;
+    let meta = transaction.store(super::Store::Meta.name())?;
+    match save(&meta, set_id, side, started_at_ms).await {
+        Ok(()) => transaction.finish().await,
+        Err(error) => super::abort(transaction, error).await,
+    }
+}
+
+/// 保存した開始時刻を返す。無ければ None。
+pub(super) async fn load_started_at(
+    store: &super::Storage,
+    set_id: &str,
+    side: StopwatchSide,
+) -> Result<Option<i64>, StorageError> {
+    let database = store.database().await?;
+    let transaction = indexeddb::Transaction::new(
+        &database,
+        &[super::Store::Meta.name()],
+        web_sys::IdbTransactionMode::Readonly,
+    )?;
+    let meta = transaction.store(super::Store::Meta.name())?;
+    let started_at = load(&meta, set_id, side).await?;
+    transaction.finish().await?;
+    Ok(started_at)
+}
+
+/// 保存した開始時刻を消す。
+pub(super) async fn clear_started_at(
+    store: &super::Storage,
+    set_id: &str,
+    side: StopwatchSide,
+) -> Result<(), StorageError> {
+    let database = store.database().await?;
+    let transaction = indexeddb::Transaction::new(
+        &database,
+        &[super::Store::Meta.name()],
+        web_sys::IdbTransactionMode::Readwrite,
+    )?;
+    let meta = transaction.store(super::Store::Meta.name())?;
+    match clear(&meta, set_id, side).await {
+        Ok(()) => transaction.finish().await,
+        Err(error) => super::abort(transaction, error).await,
+    }
+}

@@ -13,16 +13,18 @@ use warrior_core::sync::{
     failed_count, unsaved_count, Operation, OperationKind, OutboxEntry, OutboxState,
     SessionCreatePayload, SessionRecord, SessionUpdatePayload, MEMO_MAX_CHARS,
 };
+use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{SessionSource, TrainingSessionSummary};
 
 use crate::ids::{new_uuid, now_iso};
 use crate::routes::{navigate, Route};
-use crate::storage::{self, ReplacePurpose, StorageError};
+use crate::storage::{self, ReplacePurpose, RestoreOutcome, StorageError};
 use crate::sync::{self, SyncStatus};
 use crate::text::{text, Key};
 use crate::training_session as training_api;
 use crate::training_session::TrainingApiError;
 
+mod errors;
 mod exercise_view;
 mod exercises;
 mod failed_operations;
@@ -30,7 +32,7 @@ mod ownership;
 mod set_drawer;
 mod set_events;
 mod set_inputs;
-mod set_save;
+mod set_table;
 mod sets;
 mod stopwatch;
 mod superset_panel;
@@ -537,54 +539,57 @@ fn MemoEditor(signals: RecordSignals, state_signals: StateSignals) -> Element {
 }
 
 async fn restore_discarded_exercise(
-    training_id: &str,
+    record: &TrainingRecord,
     training_exercise_id: Option<&str>,
     kind: OperationKind,
-) -> bool {
-    let Ok(record) = training_api::record(training_id).await else {
-        return false;
-    };
-    let Ok(storage) = storage::current().await else {
-        return false;
-    };
+    after_sequence: u64,
+) -> Result<RestoreOutcome, ()> {
+    let storage = storage::current().await.map_err(|_| ())?;
     match kind {
         OperationKind::TrainingExerciseDelete => {
             let Some(training_exercise_id) = training_exercise_id else {
-                return false;
+                return Err(());
             };
             storage
-                .restore_training_exercise(&record, training_exercise_id)
+                .restore_training_exercise_with_outcome(
+                    record,
+                    training_exercise_id,
+                    after_sequence,
+                )
                 .await
-                .is_ok()
+                .map_err(|_| ())
         }
         OperationKind::TrainingExerciseReorder => storage
-            .restore_training_exercise_positions(&record)
+            .restore_training_exercise_positions_with_outcome(record, after_sequence)
             .await
-            .is_ok(),
-        _ => false,
+            .map_err(|_| ()),
+        _ => Err(()),
     }
 }
 
 async fn restore_discarded_set(
-    training_id: &str,
+    record: &TrainingRecord,
     set_id: Option<&str>,
+    training_exercise_id: Option<&str>,
     kind: OperationKind,
-) -> bool {
-    let Ok(record) = training_api::record(training_id).await else {
-        return false;
-    };
-    let Ok(storage) = storage::current().await else {
-        return false;
-    };
+    after_sequence: u64,
+) -> Result<RestoreOutcome, ()> {
+    let storage = storage::current().await.map_err(|_| ())?;
     match kind {
         OperationKind::SetUpdate | OperationKind::SetComplete | OperationKind::SetDelete => {
             let Some(set_id) = set_id else {
-                return false;
+                return Err(());
             };
-            storage.restore_set(&record, set_id).await.is_ok()
+            storage
+                .restore_set_with_outcome(record, set_id, after_sequence)
+                .await
+                .map_err(|_| ())
         }
-        OperationKind::SetReorder => storage.restore_set_positions(&record).await.is_ok(),
-        _ => false,
+        OperationKind::SetReorder => storage
+            .restore_set_positions_with_outcome(record, training_exercise_id, after_sequence)
+            .await
+            .map_err(|_| ()),
+        _ => Err(()),
     }
 }
 

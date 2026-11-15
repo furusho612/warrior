@@ -16,7 +16,7 @@ use support::record_common;
 use support::DevServer;
 use warrior_core::base64url;
 
-const PORT: u16 = 8838;
+const PORT: u16 = 8849;
 
 const PLANK_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5600";
 const SIDE_PLANK_EXERCISE_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5601";
@@ -50,17 +50,9 @@ const EMPTY_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5650";
 const EMPTY_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5651";
 const EMPTY_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5652";
 const EMPTY_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5653";
-const EMPTY_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5654";
-const REPS_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5655";
-const REPS_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5656";
-const REPS_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5657";
-const WEIGHT_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5658";
-const WEIGHT_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5659";
-const WEIGHT_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565a";
 const SEEDED_REPS_SET_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565b";
 const SEEDED_REPS_SEGMENT_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565c";
 const SEEDED_REPS_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565d";
-const SIDE_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c565e";
 const PLANK_UPDATE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b0";
 const PLANK_UPDATE_COMPLETE_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b1";
 const PLANK_UPDATE_AGAIN_OPERATION_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c59b2";
@@ -81,10 +73,8 @@ fn saves_time_sets_and_checks_the_duration_bests() {
     create_the_plank_set(&server, &cookie);
     create_the_maximum_plank_set(&server, &cookie);
     create_the_side_plank_set(&server, &cookie);
-    reject_a_duration_only_update_for_a_unilateral_time_set(&server, &cookie);
     create_the_empty_plank_set(&server, &cookie);
     seed_a_reps_only_time_set(&server, &cookie);
-    reject_non_time_values(&server, &cookie);
     reject_invalid_durations(&server, &cookie);
     check_the_record(&server, &cookie);
     update_the_plank_set_with_duration_only(&server, &cookie);
@@ -227,41 +217,6 @@ fn create_the_side_plank_set(server: &DevServer, cookie: &str) {
     );
 }
 
-fn reject_a_duration_only_update_for_a_unilateral_time_set(server: &DevServer, cookie: &str) {
-    let update = update_operation(
-        SIDE_UPDATE_OPERATION_ID,
-        TRAINING_ID,
-        SIDE_SET_ID,
-        UpdateSpec {
-            position: 1,
-            kind: "normal",
-            completed: true,
-            body_weight_kg: None,
-        },
-        vec![duration_segment(SIDE_SEGMENT_ID, 1, 30)],
-    );
-    let response = post(server, cookie, &update);
-    assert_eq!(response.status, 400, "{}", response.body);
-    assert_eq!(applied_count(server, SIDE_UPDATE_OPERATION_ID), 0);
-    assert_eq!(
-        first_row(
-            server,
-            &format!("SELECT completed FROM sets WHERE id = '{SIDE_SET_ID}'")
-        )["completed"],
-        0
-    );
-    assert_eq!(
-        first_row(
-            server,
-            &format!(
-                "SELECT left_duration_seconds, right_duration_seconds \
-                 FROM set_segments WHERE id = '{SIDE_SEGMENT_ID}'"
-            )
-        ),
-        json!({"left_duration_seconds": 30, "right_duration_seconds": 40})
-    );
-}
-
 fn create_the_empty_plank_set(server: &DevServer, cookie: &str) {
     let operation = create_operation(
         EMPTY_OPERATION_ID,
@@ -339,63 +294,6 @@ fn seed_a_reps_only_time_set(server: &DevServer, cookie: &str) {
         0
     );
     assert_eq!(applied_count(server, SEEDED_REPS_COMPLETE_OPERATION_ID), 0);
-}
-
-fn reject_non_time_values(server: &DevServer, cookie: &str) {
-    for (operation_id, set_id, segment_id, weight_kg, reps) in [
-        (REPS_OPERATION_ID, REPS_SET_ID, REPS_SEGMENT_ID, 0.0, 5),
-        (
-            WEIGHT_OPERATION_ID,
-            WEIGHT_SET_ID,
-            WEIGHT_SEGMENT_ID,
-            100.0,
-            0,
-        ),
-    ] {
-        let operation = create_operation(
-            operation_id,
-            TRAINING_ID,
-            PLANK_ROW_ID,
-            set_id,
-            SetSpec {
-                position: 5,
-                kind: "normal",
-                body_weight_kg: None,
-            },
-            vec![segment(segment_id, 1, weight_kg, reps)],
-        );
-        let response = post(server, cookie, &operation);
-        assert_eq!(response.status, 400, "{}", response.body);
-        assert_eq!(count(server, "sets", set_id), 0);
-        assert_eq!(count(server, "set_segments", segment_id), 0);
-        assert_eq!(applied_count(server, operation_id), 0);
-    }
-
-    let update = update_operation(
-        EMPTY_UPDATE_OPERATION_ID,
-        TRAINING_ID,
-        EMPTY_SET_ID,
-        UpdateSpec {
-            position: 3,
-            kind: "normal",
-            completed: false,
-            body_weight_kg: None,
-        },
-        vec![segment(EMPTY_SEGMENT_ID, 1, 0.0, 5)],
-    );
-    let response = post(server, cookie, &update);
-    assert_eq!(response.status, 400, "{}", response.body);
-    assert_eq!(applied_count(server, EMPTY_UPDATE_OPERATION_ID), 0);
-    let row = first_row(
-        server,
-        &format!(
-            "SELECT weight_kg, reps, duration_seconds FROM set_segments \
-             WHERE id = '{EMPTY_SEGMENT_ID}'"
-        ),
-    );
-    assert!(row["weight_kg"].is_null());
-    assert!(row["reps"].is_null());
-    assert!(row["duration_seconds"].is_null());
 }
 
 fn reject_invalid_durations(server: &DevServer, cookie: &str) {

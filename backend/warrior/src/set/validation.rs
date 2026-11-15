@@ -1,205 +1,189 @@
-//! セットの記録方式の検証と、完了に必要な値の判定。
+//! 完了したセットの検証。
 //!
-//! 時間で記録する種目は、時間だけを持ち、重量と回数、反動と補助の回数を持たない。
-//! 左右別の種目は左右それぞれの値を持ち、左右の両方が揃ったときだけ完了できる。
-//! 判定は保存する種目の snapshot の記録方式と左右別の区分で切り替える。
+//! 完了したセットは、すべての段に値を持ち、SetRecord の検証を通る必要がある。
+//! 空の段を含む完了済みのセットで、終了のサマリーが 500 になるのを防ぐ。
 
-use serde::Deserialize;
-use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
+use warrior_core::exercise::{ExerciseSnapshot, GripSelection};
+use warrior_core::set_calc::{BestKey, RecordMode, SetKind, SetRecord};
 use warrior_core::sql::{SqlStatement, SqlValue};
-use warrior_core::sync::{SetSegmentPayload, ValidatedOperation, ValidatedPayload};
+use warrior_core::sync::SetSegmentPayload;
 use worker::{Response, Result};
 
+use super::{parse_rules, set_row, CountRow, ExerciseRules};
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
+use crate::stored_sets::{segment_from_row, SetSegmentRow, SET_SEGMENT_COLUMNS};
 
-/// 種目の記録方式と左右別の区分。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ExerciseShape {
-    /// 記録方式。
-    pub(super) mode: RecordMode,
-    /// 左右別の区分。
-    pub(super) laterality: Laterality,
-}
-
-/// 段のある値の件数。
-#[derive(Debug, Deserialize)]
-struct SetValueRow {
-    /// 段の件数。
-    segments: i64,
-    /// 完了に必要な値を持つ段の件数。
-    ready: i64,
-}
-
-/// 種目の記録方式を読むための snapshot。
-#[derive(Debug, Deserialize)]
-struct ExerciseShapeRow {
-    /// 記録時点の種目の内容の JSON。
-    snapshot: String,
-}
-
-/// 種目の記録方式と左右別の区分を返す。種目がトレーニングに無いときは None。
-pub(super) async fn exercise_shape(
-    db: &Db,
-    user_id: &str,
-    training_id: &str,
-    training_exercise_id: &str,
-) -> Result<Option<ExerciseShape>> {
-    let row = db
-        .first::<ExerciseShapeRow>(&SqlStatement::new(
-            "SELECT snapshot FROM training_exercises \
-             WHERE id = ? AND user_id = ? AND training_id = ?",
-            vec![
-                SqlValue::Text(training_exercise_id.to_owned()),
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(training_id.to_owned()),
-            ],
-        ))
-        .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let snapshot = serde_json::from_str::<ExerciseSnapshot>(&row.snapshot).map_err(|error| {
-        worker::Error::RustError(format!("the exercise snapshot is invalid: {error}"))
-    })?;
-    Ok(Some(ExerciseShape {
-        mode: snapshot.record_mode,
-        laterality: snapshot.laterality,
-    }))
-}
-
-/// 操作の対象の種目の記録方式と左右別の区分を返す。段の値を作らない操作は None。
-pub(super) async fn payload_exercise_shape(
-    db: &Db,
-    user_id: &str,
-    validated: &ValidatedOperation,
-) -> Result<Option<ExerciseShape>> {
-    let training_id = &validated.operation.training_id;
-    match &validated.payload {
-        ValidatedPayload::SetCreate(payload) => {
-            exercise_shape(db, user_id, training_id, &payload.training_exercise_id).await
-        }
-        ValidatedPayload::SetUpdate(payload) => {
-            let Some(row) = super::set_row(db, user_id, training_id, &payload.set_id).await? else {
-                return Ok(None);
-            };
-            exercise_shape(db, user_id, training_id, &row.training_exercise_id).await
-        }
-        ValidatedPayload::SetComplete(payload) => {
-            let Some(row) = super::set_row(db, user_id, training_id, &payload.set_id).await? else {
-                return Ok(None);
-            };
-            exercise_shape(db, user_id, training_id, &row.training_exercise_id).await
-        }
-        ValidatedPayload::Create(_)
-        | ValidatedPayload::Update(_)
-        | ValidatedPayload::SetDelete(_)
-        | ValidatedPayload::SetReorder(_)
-        | ValidatedPayload::ExerciseCreate(_)
-        | ValidatedPayload::ExerciseDelete(_)
-        | ValidatedPayload::ExerciseReorder(_)
-        | ValidatedPayload::SupersetCreate(_)
-        | ValidatedPayload::SupersetDelete(_)
-        | ValidatedPayload::SupersetReorder(_) => Ok(None),
-    }
-}
-
-/// 時間種目に重量、回数、反動、補助の回数が入っているか。
-pub(super) fn has_non_time_values(segments: &[SetSegmentPayload]) -> bool {
-    segments.iter().any(|segment| {
-        segment.weight_kg != 0.0
-            || segment.reps != 0
-            || segment.momentum_reps != 0
-            || segment.assisted_reps != 0
-            || [segment.left.as_ref(), segment.right.as_ref()]
-                .into_iter()
-                .flatten()
-                .any(|side| side.weight_kg != 0.0 || side.reps != 0)
-    })
-}
-
-/// 時間種目に重量、回数、反動、補助の回数を保存しようとしたときの応答。
-pub(super) fn time_value_rejection() -> Response {
-    response(
-        ErrorCode::BadRequest,
-        "a time set cannot store weight, reps, momentum, or assisted reps",
-    )
-}
-
-/// 完了に必要な値を持つ段を数える CASE 式。
-pub(super) fn readiness_case(shape: ExerciseShape) -> &'static str {
-    match (shape.mode, shape.laterality) {
-        (RecordMode::Time, Laterality::Bilateral) => {
-            "CASE WHEN \
-              (left_weight_kg IS NULL AND left_reps IS NULL \
-               AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
-               AND right_reps IS NULL AND right_duration_seconds IS NULL) \
-              AND weight_kg IS NULL AND reps IS NULL AND momentum_reps = 0 \
-              AND assisted_reps = 0 AND duration_seconds > 0 THEN 1 ELSE 0 END"
-        }
-        (RecordMode::Time, Laterality::Unilateral) => {
-            "CASE WHEN \
-              left_duration_seconds > 0 AND right_duration_seconds > 0 \
-              AND left_weight_kg IS NULL AND left_reps IS NULL \
-              AND right_weight_kg IS NULL AND right_reps IS NULL \
-              AND weight_kg IS NULL AND reps IS NULL AND duration_seconds IS NULL \
-              AND momentum_reps = 0 AND assisted_reps = 0 THEN 1 ELSE 0 END"
-        }
-        (RecordMode::WeightAndReps | RecordMode::BodyweightAndReps, Laterality::Bilateral) => {
-            "CASE WHEN \
-              (left_weight_kg IS NULL AND left_reps IS NULL \
-               AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
-               AND right_reps IS NULL AND right_duration_seconds IS NULL) \
-              AND reps > 0 THEN 1 ELSE 0 END"
-        }
-        (RecordMode::WeightAndReps | RecordMode::BodyweightAndReps, Laterality::Unilateral) => {
-            "CASE WHEN left_reps > 0 AND right_reps > 0 THEN 1 ELSE 0 END"
-        }
-    }
-}
-
-/// 保存済みのセットが完了に必要な値を持つか。
+/// 完了したセットのすべての段に値があるか返す。
 pub(super) async fn completed_set_has_values(
     db: &Db,
     user_id: &str,
+    training_id: &str,
     set_id: &str,
-    shape: ExerciseShape,
 ) -> Result<bool> {
-    let sql = format!(
-        "SELECT COUNT(*) AS segments, \
-         COALESCE(SUM({}), 0) AS ready \
-         FROM set_segments WHERE set_id = ? AND user_id = ?",
-        readiness_case(shape)
-    );
-    let row = db
-        .first::<SetValueRow>(&SqlStatement::new(
-            sql,
+    let Some(row) = set_row(db, user_id, training_id, set_id).await? else {
+        return Ok(false);
+    };
+    let rules = parse_rules(&row.snapshot)?;
+    let condition = completed_segment_condition(rules);
+    let total = count_segments(db, user_id, set_id, "").await?;
+    let with_values = count_segments(db, user_id, set_id, &format!("AND ({condition})")).await?;
+    Ok(total > 0 && total == with_values)
+}
+
+/// 段の形が種目の左右の指定と一致するか。
+pub(super) fn segments_shape_rejection(
+    segments: &[SetSegmentPayload],
+    rules: ExerciseRules,
+) -> Option<Response> {
+    let valid = if rules.record_mode == RecordMode::Time {
+        segments.iter().all(|segment| {
+            matches!(
+                (segment.left.as_ref(), segment.right.as_ref()),
+                (None, None) | (Some(_), Some(_))
+            )
+        })
+    } else {
+        segments
+            .iter()
+            .all(|segment| segment.has_matching_sides(rules.lateral()))
+    };
+    if valid {
+        return None;
+    }
+    Some(response(
+        ErrorCode::BadRequest,
+        "the set does not match the exercise laterality",
+    ))
+}
+
+/// 時間種目の段が、全体または左右の両方の時間を持つか。
+pub(super) fn time_segment_has_values(segment: &SetSegmentPayload) -> bool {
+    match (segment.left.as_ref(), segment.right.as_ref()) {
+        (Some(left), Some(right)) => {
+            left.duration_seconds.is_some_and(|duration| duration > 0)
+                && right.duration_seconds.is_some_and(|duration| duration > 0)
+        }
+        (None, None) => segment
+            .duration_seconds
+            .is_some_and(|duration| duration > 0),
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
+/// 段が完了に必要な値を持つ条件。
+fn completed_segment_condition(rules: ExerciseRules) -> &'static str {
+    if rules.record_mode == RecordMode::Time {
+        return "((duration_seconds > 0 AND left_duration_seconds IS NULL \
+                 AND right_duration_seconds IS NULL) \
+                 OR (left_duration_seconds > 0 AND right_duration_seconds > 0 \
+                 AND duration_seconds IS NULL))";
+    }
+    if rules.lateral() {
+        return match rules.record_mode {
+            RecordMode::Time => "left_duration_seconds > 0 AND right_duration_seconds > 0",
+            RecordMode::WeightAndReps => {
+                "left_weight_kg IS NOT NULL AND left_reps > 0 \
+                 AND right_weight_kg IS NOT NULL AND right_reps > 0"
+            }
+            RecordMode::BodyweightAndReps => "left_reps > 0 AND right_reps > 0",
+        };
+    }
+    match rules.record_mode {
+        RecordMode::Time => "duration_seconds > 0",
+        RecordMode::WeightAndReps | RecordMode::BodyweightAndReps => {
+            "left_weight_kg IS NULL AND left_reps IS NULL \
+             AND left_duration_seconds IS NULL AND right_weight_kg IS NULL \
+             AND right_reps IS NULL AND right_duration_seconds IS NULL AND reps > 0"
+        }
+    }
+}
+
+/// 保存済みのセットが SetRecord の検証を通るか返す。
+pub(super) async fn completed_set_is_valid(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    set_id: &str,
+) -> Result<bool> {
+    let rows = db
+        .all(&SqlStatement::new(
+            format!(
+                "SELECT {SET_SEGMENT_COLUMNS} FROM sets s \
+                 JOIN training_exercises te ON te.id = s.training_exercise_id \
+                 LEFT JOIN set_segments sg ON sg.set_id = s.id AND sg.user_id = s.user_id \
+                 WHERE s.id = ? AND s.user_id = ? AND te.training_id = ? AND te.user_id = ? \
+                 ORDER BY sg.position, sg.id"
+            ),
+            vec![
+                SqlValue::Text(set_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+            ],
+        ))
+        .await?
+        .results::<SetSegmentRow>()?;
+    let Some(first) = rows.first() else {
+        return Ok(false);
+    };
+    let Some(kind) = SetKind::parse(&first.kind) else {
+        return Ok(false);
+    };
+    let Ok(snapshot) = serde_json::from_str::<ExerciseSnapshot>(&first.snapshot) else {
+        return Ok(false);
+    };
+    let Ok(grip) = first
+        .grip
+        .as_deref()
+        .map(serde_json::from_str::<GripSelection>)
+        .transpose()
+    else {
+        return Ok(false);
+    };
+    let (grip, attachment) = grip
+        .map(|grip| grip.comparison_key())
+        .unwrap_or((None, None));
+    let key = BestKey {
+        exercise_id: snapshot.exercise_id.clone(),
+        grip,
+        attachment,
+    };
+    let segments = rows
+        .iter()
+        .filter(|row| row.segment_id.is_some())
+        .map(|row| segment_from_row(row, snapshot.laterality, snapshot.record_mode))
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return Ok(false);
+    }
+    if kind != SetKind::Drop && segments.len() != 1 {
+        return Ok(false);
+    }
+    Ok(SetRecord::new(
+        key,
+        kind,
+        segments,
+        first.set_rpe,
+        None,
+        snapshot.record_mode,
+    )
+    .is_ok())
+}
+
+async fn count_segments(db: &Db, user_id: &str, set_id: &str, condition: &str) -> Result<i64> {
+    let count = db
+        .first::<CountRow>(&SqlStatement::new(
+            format!(
+                "SELECT COUNT(*) AS count FROM set_segments \
+                 WHERE set_id = ? AND user_id = ? {condition}"
+            ),
             vec![
                 SqlValue::Text(set_id.to_owned()),
                 SqlValue::Text(user_id.to_owned()),
             ],
         ))
-        .await?;
-    Ok(row.is_some_and(|row| row.segments > 0 && row.ready == row.segments))
-}
-
-/// 保存する時間種目の段がすべて完了に必要な値を持つか。
-pub(super) fn time_segments_are_complete(
-    segments: &[SetSegmentPayload],
-    laterality: Laterality,
-) -> bool {
-    !segments.is_empty()
-        && segments.iter().all(|segment| match laterality {
-            Laterality::Bilateral => {
-                segment.left.is_none()
-                    && segment.right.is_none()
-                    && segment.is_complete(RecordMode::Time)
-            }
-            Laterality::Unilateral => {
-                segment.duration_seconds.is_none()
-                    && segment.left.is_some()
-                    && segment.right.is_some()
-                    && segment.is_complete(RecordMode::Time)
-            }
-        })
+        .await?
+        .map_or(0, |row| row.count);
+    Ok(count)
 }

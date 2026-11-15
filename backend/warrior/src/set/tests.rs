@@ -3,26 +3,21 @@
 //! 対応する要求: `REQ-SET-001`、`REQ-SET-002`、`REQ-SET-010`。
 
 use serde_json::json;
-use warrior_core::exercise::Laterality;
-use warrior_core::set_calc::{RecordMode, SetKind, SideValue};
+use warrior_core::set_calc::{RecordMode, SetKind};
 use warrior_core::sql::SqlValue;
 use warrior_core::sync::{
     Operation, OperationKind, SetCompletePayload, SetCreatePayload, SetDeletePayload,
-    SetReorderPayload, SetSegmentPayload, SetUpdatePayload, ValidatedOperation, ValidatedPayload,
+    SetReorderPayload, SetSegmentPayload, SetSidePayload, SetUpdatePayload, ValidatedOperation,
+    ValidatedPayload,
 };
 
-use super::segments::segment_bindings;
-use super::validation::{has_non_time_values, ExerciseShape};
+use super::bindings::{applied_exists, ownership_condition_placeholder, segment_bindings};
 use super::{
-    applied_exists, delete_set_statement, ownership_condition_placeholder, same_set_ids,
-    set_statements, update_set_statement, ExerciseOwnership,
+    delete_set_statement, same_set_ids, set_statements, update_set_statement, ExerciseOwnership,
 };
 
-fn weight_shape() -> ExerciseShape {
-    ExerciseShape {
-        mode: RecordMode::WeightAndReps,
-        laterality: Laterality::Bilateral,
-    }
+fn weight_mode() -> RecordMode {
+    RecordMode::WeightAndReps
 }
 
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c5301";
@@ -90,7 +85,7 @@ fn the_create_statements_scope_the_set_and_the_segments() {
     let data = set_statements(
         USER_ID,
         &validated,
-        Some(weight_shape()),
+        Some(weight_mode()),
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
     )
@@ -194,7 +189,7 @@ fn every_set_statement_uses_the_applied_operation_condition() {
     let data = set_statements(
         USER_ID,
         &create,
-        Some(weight_shape()),
+        Some(weight_mode()),
         ExerciseOwnership::Terminal(TERMINAL_ID),
         NOW,
     )
@@ -288,13 +283,14 @@ fn set_ids_match_regardless_of_the_input_order() {
 #[test]
 fn segment_bindings_keep_the_sides() {
     let mut segment = segment();
-    segment.left = Some(SideValue {
-        weight_kg: 10.0,
+    segment.duration_seconds = Some(30);
+    segment.left = Some(SetSidePayload {
+        weight_kg: Some(10.0),
         reps: 4,
         duration_seconds: None,
     });
-    segment.right = Some(SideValue {
-        weight_kg: 12.0,
+    segment.right = Some(SetSidePayload {
+        weight_kg: Some(12.0),
         reps: 3,
         duration_seconds: None,
     });
@@ -340,56 +336,17 @@ fn segment_bindings_store_no_weight_or_reps_for_an_empty_time_segment() {
 }
 
 #[test]
-fn time_sets_reject_weight_reps_and_the_breakdown() {
-    let mut zero = segment();
-    zero.weight_kg = 0.0;
-    zero.reps = 0;
-    assert!(!has_non_time_values(&[zero.clone()]));
-
-    let mut weighted = zero.clone();
-    weighted.weight_kg = 100.0;
-    assert!(has_non_time_values(&[weighted]));
-
-    let mut repped = zero.clone();
-    repped.reps = 5;
-    assert!(has_non_time_values(&[repped]));
-
-    let mut momentum = zero.clone();
-    momentum.reps = 5;
-    momentum.momentum_reps = 1;
-    assert!(has_non_time_values(&[momentum]));
-
-    let mut assisted = zero.clone();
-    assisted.reps = 5;
-    assisted.assisted_reps = 1;
-    assert!(has_non_time_values(&[assisted]));
-
-    let mut side = zero.clone();
-    side.left = Some(SideValue {
-        weight_kg: 0.0,
-        reps: 5,
-        duration_seconds: None,
-    });
-    side.right = Some(SideValue {
-        weight_kg: 0.0,
-        reps: 0,
-        duration_seconds: None,
-    });
-    assert!(has_non_time_values(&[side]));
-}
-
-#[test]
 fn segment_bindings_store_no_weight_or_reps_for_a_unilateral_time_segment() {
     let mut segment = segment();
     segment.weight_kg = 0.0;
     segment.reps = 0;
-    segment.left = Some(SideValue {
-        weight_kg: 10.0,
+    segment.left = Some(SetSidePayload {
+        weight_kg: Some(10.0),
         reps: 4,
         duration_seconds: Some(30),
     });
-    segment.right = Some(SideValue {
-        weight_kg: 12.0,
+    segment.right = Some(SetSidePayload {
+        weight_kg: Some(12.0),
         reps: 3,
         duration_seconds: Some(40),
     });

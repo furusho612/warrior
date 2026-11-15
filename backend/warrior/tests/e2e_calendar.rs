@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use serde_json::{json, Value};
 use support::browser::{self, Browser};
-use support::{DevServer, TestOidc};
+use support::{current_user_id, DevServer, TestOidc};
 use thirtyfour::prelude::*;
 use warrior_core::calendar::{next_month, parse_month, previous_month};
 use warrior_core::datetime;
@@ -119,21 +119,6 @@ async fn login(driver: &WebDriver, server: &DevServer, provider: &TestOidc) {
         "true",
     )
     .await;
-}
-
-async fn current_user_id(driver: &WebDriver) -> String {
-    let me = browser::eval_string(
-        driver,
-        "const done = arguments[arguments.length - 1]; fetch('/api/me').then((response) => response.text()).then((text) => done(text));",
-        Vec::new(),
-    )
-    .await;
-    serde_json::from_str::<Value>(&me)
-        .expect("the me response is JSON")
-        .get("id")
-        .and_then(|value| value.as_str())
-        .expect("the user id")
-        .to_owned()
 }
 
 async fn check_the_current_month(driver: &WebDriver, dates: &FixtureDates) {

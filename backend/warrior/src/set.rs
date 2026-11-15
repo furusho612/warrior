@@ -7,13 +7,13 @@
 //! 段の重量は、自重種目ではセットごとの加重を表す。記録した時点の体重は `sets` が持つ。
 
 use serde::Deserialize;
-use warrior_core::exercise::{GripSelection, RecordMode};
+use warrior_core::exercise::{ExerciseSnapshot, Laterality, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::sync::{
-    SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetSegmentPayload,
-    SetUpdatePayload, ValidatedOperation, ValidatedPayload,
+    SetCompletePayload, SetCreatePayload, SetDeletePayload, SetReorderPayload, SetUpdatePayload,
+    ValidatedOperation, ValidatedPayload,
 };
 use worker::{Response, Result};
 
@@ -25,6 +25,28 @@ use crate::sync::{
 };
 use crate::training_session_exercise::{ownership_condition, ExerciseOwnership};
 
+mod bindings;
+mod validation;
+
+use bindings::{applied_exists, grip_json, optional_real};
+use validation::{completed_set_has_values, completed_set_is_valid};
+
+/// 種目の記録方式と左右の指定。
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct ExerciseRules {
+    /// 左右別に行うか。
+    laterality: Laterality,
+    /// 記録方式。
+    record_mode: RecordMode,
+}
+
+impl ExerciseRules {
+    /// 左右の列を使う種目か。時間で記録する種目も左右別の入力を持つ。
+    fn lateral(self) -> bool {
+        self.laterality == Laterality::Unilateral
+    }
+}
+
 /// トレーニングに属するセットの状態。
 #[derive(Debug, Deserialize)]
 struct SetRow {
@@ -32,6 +54,8 @@ struct SetRow {
     completed: i64,
     /// セットを持つ種目の行の ID。
     training_exercise_id: String,
+    /// 記録した時点の種目の内容。
+    snapshot: String,
 }
 
 /// セットの ID とセット種別。
@@ -54,11 +78,18 @@ struct SetOwnerRow {
     training_id: String,
 }
 
-/// 行の件数。
+/// 段の件数。
 #[derive(Debug, Deserialize)]
 struct CountRow {
     /// 件数。
     count: i64,
+}
+
+/// 種目のスナップショット。
+#[derive(Debug, Deserialize)]
+struct SnapshotRow {
+    /// 記録した時点の種目の JSON。
+    snapshot: String,
 }
 
 /// セットの操作の batch を組み立てる。
@@ -92,17 +123,43 @@ pub(crate) async fn set_batch(
             "the training is being edited on another terminal",
         )));
     };
-    if let Some(rejection) = precheck(db, user_id, validated).await? {
+
+    let rules = payload_rules(
+        db,
+        user_id,
+        &validated.operation.training_id,
+        &validated.payload,
+    )
+    .await?;
+    if matches!(
+        validated.payload,
+        ValidatedPayload::SetCreate(_)
+            | ValidatedPayload::SetUpdate(_)
+            | ValidatedPayload::SetComplete(_)
+    ) && rules.is_none()
+    {
+        return Ok(BatchOutcome::Reject(response(
+            ErrorCode::NotFound,
+            "resource not found",
+        )));
+    }
+
+    if let Some(rejection) = precheck(db, user_id, validated, rules).await? {
         return Ok(BatchOutcome::Reject(rejection));
     }
-    let shape = validation::payload_exercise_shape(db, user_id, validated).await?;
     let ownership = match owner {
         OwnerCondition::Claim(terminal_id) | OwnerCondition::Owned(terminal_id) => {
             ExerciseOwnership::Terminal(terminal_id)
         }
         OwnerCondition::Finished => ExerciseOwnership::Finished,
     };
-    let Some(data) = set_statements(user_id, validated, shape, ownership, now) else {
+    let Some(data) = set_statements(
+        user_id,
+        validated,
+        rules.map(|rules| rules.record_mode),
+        ownership,
+        now,
+    ) else {
         return Ok(BatchOutcome::Reject(response(
             ErrorCode::BadRequest,
             "operation is invalid",
@@ -130,14 +187,21 @@ async fn precheck(
     db: &Db,
     user_id: &str,
     validated: &ValidatedOperation,
+    rules: Option<ExerciseRules>,
 ) -> Result<Option<Response>> {
     let training_id = &validated.operation.training_id;
     match &validated.payload {
         ValidatedPayload::SetCreate(payload) => {
-            precheck_create(db, user_id, training_id, payload).await
+            let Some(rules) = rules else {
+                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+            };
+            precheck_create(db, user_id, training_id, payload, rules).await
         }
         ValidatedPayload::SetUpdate(payload) => {
-            precheck_update(db, user_id, training_id, payload).await
+            let Some(rules) = rules else {
+                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+            };
+            precheck_update(db, user_id, training_id, payload, rules).await
         }
         ValidatedPayload::SetDelete(payload) => {
             precheck_delete(db, user_id, training_id, payload).await
@@ -146,7 +210,10 @@ async fn precheck(
             precheck_reorder(db, user_id, training_id, payload).await
         }
         ValidatedPayload::SetComplete(payload) => {
-            precheck_complete(db, user_id, training_id, payload).await
+            let Some(rules) = rules else {
+                return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+            };
+            precheck_complete(db, user_id, training_id, payload, rules).await
         }
         ValidatedPayload::Create(_)
         | ValidatedPayload::Update(_)
@@ -164,14 +231,10 @@ async fn precheck_create(
     user_id: &str,
     training_id: &str,
     payload: &SetCreatePayload,
+    rules: ExerciseRules,
 ) -> Result<Option<Response>> {
-    let Some(shape) =
-        validation::exercise_shape(db, user_id, training_id, &payload.training_exercise_id).await?
-    else {
-        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-    };
-    if shape.mode == RecordMode::Time && validation::has_non_time_values(&payload.segments) {
-        return Ok(Some(validation::time_value_rejection()));
+    if let Some(rejection) = validation::segments_shape_rejection(&payload.segments, rules) {
+        return Ok(Some(rejection));
     }
     if let Some(existing) = set_owner_row(db, user_id, &payload.set_id).await? {
         if existing.training_id != training_id
@@ -187,11 +250,11 @@ async fn precheck_create(
         db,
         user_id,
         &payload.training_exercise_id,
-        Some(SetChange {
+        SetChange {
             set_id: &payload.set_id,
             position: payload.position,
             kind: payload.kind,
-        }),
+        },
     )
     .await?
     {
@@ -205,41 +268,43 @@ async fn precheck_update(
     user_id: &str,
     training_id: &str,
     payload: &SetUpdatePayload,
+    rules: ExerciseRules,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    let Some(shape) =
-        validation::exercise_shape(db, user_id, training_id, &row.training_exercise_id).await?
-    else {
-        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-    };
-    if shape.mode == RecordMode::Time && validation::has_non_time_values(&payload.segments) {
-        return Ok(Some(validation::time_value_rejection()));
-    }
-    // 重量種目の完了は保存後の段で判定する。ここでは時間種目の入力だけを確かめる。
-    if shape.mode == RecordMode::Time
-        && payload.completed
-        && !validation::time_segments_are_complete(&payload.segments, shape.laterality)
-    {
-        return Ok(Some(response(
-            ErrorCode::BadRequest,
-            "the set has no values to complete",
-        )));
+    if let Some(rejection) = validation::segments_shape_rejection(&payload.segments, rules) {
+        return Ok(Some(rejection));
     }
     if !drop_positions_allowed(
         db,
         user_id,
         &row.training_exercise_id,
-        Some(SetChange {
+        SetChange {
             set_id: &payload.set_id,
             position: payload.position,
             kind: payload.kind,
-        }),
+        },
     )
     .await?
     {
         return Ok(Some(drop_position_rejection()));
+    }
+    if payload.completed {
+        let snapshot = parse_snapshot(&row.snapshot)?;
+        if payload
+            .to_record(&snapshot.exercise_id, snapshot.record_mode)
+            .is_err()
+            || !payload.segments.iter().all(|segment| {
+                if rules.record_mode == RecordMode::Time {
+                    validation::time_segment_has_values(segment)
+                } else {
+                    segment.has_completion_values(rules.record_mode, rules.lateral())
+                }
+            })
+        {
+            return Ok(Some(invalid_completion()));
+        }
     }
     Ok(None)
 }
@@ -250,11 +315,11 @@ async fn precheck_delete(
     training_id: &str,
     payload: &SetDeletePayload,
 ) -> Result<Option<Response>> {
-    if set_row(db, user_id, training_id, &payload.set_id)
-        .await?
-        .is_none()
-    {
+    let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
+    };
+    if !delete_positions_allowed(db, user_id, &row.training_exercise_id, &payload.set_id).await? {
+        return Ok(Some(delete_before_drop_rejection()));
     }
     Ok(None)
 }
@@ -287,23 +352,24 @@ async fn precheck_complete(
     user_id: &str,
     training_id: &str,
     payload: &SetCompletePayload,
+    _rules: ExerciseRules,
 ) -> Result<Option<Response>> {
     let Some(row) = set_row(db, user_id, training_id, &payload.set_id).await? else {
         return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
     };
-    let Some(shape) =
-        validation::exercise_shape(db, user_id, training_id, &row.training_exercise_id).await?
-    else {
-        return Ok(Some(response(ErrorCode::NotFound, "resource not found")));
-    };
-    if payload.completed
-        && row.completed == 0
-        && !validation::completed_set_has_values(db, user_id, &payload.set_id, shape).await?
-    {
-        return Ok(Some(response(
-            ErrorCode::BadRequest,
-            "the set has no values to complete",
-        )));
+    if payload.completed && row.completed == 0 {
+        if !completed_set_has_values(db, user_id, training_id, &payload.set_id).await? {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "the set has an incomplete segment",
+            )));
+        }
+        if !completed_set_is_valid(db, user_id, training_id, &payload.set_id).await? {
+            return Ok(Some(response(
+                ErrorCode::BadRequest,
+                "the set is not valid for completion",
+            )));
+        }
     }
     Ok(None)
 }
@@ -311,7 +377,7 @@ async fn precheck_complete(
 fn set_statements(
     user_id: &str,
     validated: &ValidatedOperation,
-    shape: Option<validation::ExerciseShape>,
+    mode: Option<RecordMode>,
     ownership: ExerciseOwnership<'_>,
     now: &str,
 ) -> Option<SetData> {
@@ -320,57 +386,52 @@ fn set_statements(
     let applied = applied_exists(user_id, &operation.operation_id);
     match &validated.payload {
         ValidatedPayload::SetCreate(payload) => {
-            let shape = shape?;
-            let context = SegmentStatements {
+            let mode = mode?;
+            let context = bindings::SegmentStatements {
                 user_id,
                 training_id,
                 set_id: &payload.set_id,
-                mode: shape.mode,
+                mode,
                 ownership,
                 applied: &applied,
                 now,
             };
             Some(SetData {
                 main: create_set_statement(user_id, training_id, payload, ownership, now)?,
-                children: segment_replace_statements(&context, &payload.segments),
+                children: bindings::segment_replace_statements(&context, &payload.segments),
             })
         }
         ValidatedPayload::SetUpdate(payload) => {
-            let shape = shape?;
-            let context = SegmentStatements {
+            let mode = mode?;
+            let context = bindings::SegmentStatements {
                 user_id,
                 training_id,
                 set_id: &payload.set_id,
-                mode: shape.mode,
+                mode,
                 ownership,
                 applied: &applied,
                 now,
             };
             Some(SetData {
                 main: update_set_statement(user_id, training_id, payload, ownership, now),
-                children: {
-                    let mut children = segment_replace_statements(&context, &payload.segments);
-                    children.push(update_completed_statement(
-                        user_id,
-                        training_id,
-                        payload,
-                        shape,
-                        ownership,
-                        &applied,
-                    ));
-                    children
-                },
+                children: bindings::segment_replace_statements(&context, &payload.segments),
             })
         }
-        ValidatedPayload::SetDelete(payload) => Some(SetData {
-            main: delete_set_statement(user_id, training_id, payload, ownership),
-            children: vec![delete_segments_statement(
+        ValidatedPayload::SetDelete(payload) => {
+            let context = bindings::SegmentStatements {
                 user_id,
-                &payload.set_id,
+                training_id,
+                set_id: &payload.set_id,
+                mode: RecordMode::WeightAndReps,
                 ownership,
-                &applied,
-            )],
-        }),
+                applied: &applied,
+                now,
+            };
+            Some(SetData {
+                main: delete_set_statement(user_id, training_id, payload, ownership),
+                children: bindings::segment_replace_statements(&context, &[]),
+            })
+        }
         ValidatedPayload::SetReorder(payload) => Some(SetData {
             main: reorder_set_statement(user_id, training_id, payload, ownership, now),
             children: Vec::new(),
@@ -442,10 +503,11 @@ fn update_set_statement(
     now: &str,
 ) -> SqlStatement {
     let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
+    let completed = payload.completed;
     let mut bindings = vec![
         SqlValue::Integer(payload.position),
         SqlValue::Text(payload.kind.as_str().to_owned()),
-        SqlValue::Integer(0),
+        SqlValue::Integer(if completed { 1 } else { 0 }),
         optional_real(payload.rpe),
         grip_json(payload.grip).unwrap_or(SqlValue::Null),
         optional_real(payload.body_weight_kg),
@@ -464,44 +526,6 @@ fn update_set_statement(
              AND training_exercise_id IN \
               (SELECT id FROM training_exercises WHERE training_id = ? AND user_id = ?) \
              AND {condition}"
-        ),
-        bindings,
-    )
-}
-
-/// 更新で置き換えた段を読み直し、セットの完了状態を決める。
-fn update_completed_statement(
-    user_id: &str,
-    training_id: &str,
-    payload: &SetUpdatePayload,
-    shape: validation::ExerciseShape,
-    ownership: ExerciseOwnership<'_>,
-    applied: &AppliedCondition,
-) -> SqlStatement {
-    let (condition, mut condition_bindings) = ownership_condition(user_id, training_id, ownership);
-    let mut bindings = vec![
-        SqlValue::Integer(if payload.completed { 1 } else { 0 }),
-        SqlValue::Text(payload.set_id.clone()),
-        SqlValue::Text(user_id.to_owned()),
-        SqlValue::Text(payload.set_id.clone()),
-        SqlValue::Text(user_id.to_owned()),
-        SqlValue::Text(training_id.to_owned()),
-        SqlValue::Text(user_id.to_owned()),
-    ];
-    bindings.append(&mut condition_bindings);
-    bindings.extend(applied.bindings.iter().cloned());
-    SqlStatement::new(
-        format!(
-            "UPDATE sets SET completed = CASE WHEN ? AND \
-              (SELECT COUNT(*) > 0 AND SUM({}) = COUNT(*) \
-               FROM set_segments WHERE set_id = ? AND user_id = ?) \
-              THEN 1 ELSE 0 END \
-             WHERE id = ? AND user_id = ? \
-             AND training_exercise_id IN \
-              (SELECT id FROM training_exercises WHERE training_id = ? AND user_id = ?) \
-             AND {condition} AND {}",
-            validation::readiness_case(shape),
-            applied.sql
         ),
         bindings,
     )
@@ -597,145 +621,6 @@ fn reorder_set_statement(
     )
 }
 
-/// 段の文を作るための、対象と条件の組。
-struct SegmentStatements<'a> {
-    user_id: &'a str,
-    training_id: &'a str,
-    set_id: &'a str,
-    mode: RecordMode,
-    ownership: ExerciseOwnership<'a>,
-    applied: &'a AppliedCondition,
-    now: &'a str,
-}
-
-fn segment_replace_statements(
-    context: &SegmentStatements<'_>,
-    segments: &[SetSegmentPayload],
-) -> Vec<SqlStatement> {
-    let mut statements = vec![delete_segments_statement(
-        context.user_id,
-        context.set_id,
-        context.ownership,
-        context.applied,
-    )];
-    for segment in segments {
-        statements.push(segment_insert_statement(context, segment));
-    }
-    statements
-}
-
-fn delete_segments_statement(
-    user_id: &str,
-    set_id: &str,
-    ownership: ExerciseOwnership<'_>,
-    applied: &AppliedCondition,
-) -> SqlStatement {
-    // 段は set_id と user_id に絞る。トレーニングと操作 ID の条件は、セットの適用が
-    // 成功したときだけ段を動かすために付ける。
-    let (training_condition, training_bindings) =
-        ownership_condition_placeholder(user_id, ownership);
-    let mut bindings = vec![
-        SqlValue::Text(set_id.to_owned()),
-        SqlValue::Text(user_id.to_owned()),
-    ];
-    bindings.extend(training_bindings);
-    bindings.extend(applied.bindings.iter().cloned());
-    SqlStatement::new(
-        format!(
-            "DELETE FROM set_segments WHERE set_id = ? AND user_id = ? \
-             AND {training_condition} AND {}",
-            applied.sql
-        ),
-        bindings,
-    )
-}
-
-fn segment_insert_statement(
-    context: &SegmentStatements<'_>,
-    segment: &SetSegmentPayload,
-) -> SqlStatement {
-    let (condition, mut condition_bindings) =
-        ownership_condition(context.user_id, context.training_id, context.ownership);
-    let mut bindings = segments::segment_bindings(
-        context.user_id,
-        context.set_id,
-        segment,
-        context.mode,
-        context.now,
-    );
-    bindings.append(&mut condition_bindings);
-    bindings.extend(context.applied.bindings.iter().cloned());
-    SqlStatement::new(
-        format!(
-            "INSERT INTO set_segments \
-             (id, user_id, set_id, position, weight_kg, reps, momentum_reps, assisted_reps, \
-              duration_seconds, left_weight_kg, left_reps, left_duration_seconds, \
-              right_weight_kg, right_reps, right_duration_seconds, created_at, updated_at) \
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? \
-             WHERE {condition} AND {} \
-             ON CONFLICT(id) DO UPDATE SET position = excluded.position, \
-             weight_kg = excluded.weight_kg, reps = excluded.reps, \
-             momentum_reps = excluded.momentum_reps, assisted_reps = excluded.assisted_reps, \
-             duration_seconds = excluded.duration_seconds, \
-             left_weight_kg = excluded.left_weight_kg, left_reps = excluded.left_reps, \
-             left_duration_seconds = excluded.left_duration_seconds, \
-             right_weight_kg = excluded.right_weight_kg, right_reps = excluded.right_reps, \
-             right_duration_seconds = excluded.right_duration_seconds, \
-             updated_at = excluded.updated_at \
-             WHERE set_segments.user_id = excluded.user_id \
-             AND set_segments.set_id = excluded.set_id",
-            context.applied.sql
-        ),
-        bindings,
-    )
-}
-
-/// 操作 ID を保存したことを表す条件。
-struct AppliedCondition {
-    /// `EXISTS` の SQL。
-    sql: String,
-    /// `EXISTS` に渡すバインド値。
-    bindings: Vec<SqlValue>,
-}
-
-fn applied_exists(user_id: &str, operation_id: &str) -> AppliedCondition {
-    AppliedCondition {
-        sql: "EXISTS (SELECT 1 FROM applied_operations WHERE operation_id = ? AND user_id = ?)"
-            .to_owned(),
-        bindings: vec![
-            SqlValue::Text(operation_id.to_owned()),
-            SqlValue::Text(user_id.to_owned()),
-        ],
-    }
-}
-
-/// 段の文に付ける、トレーニングの行の条件。
-///
-/// 段の文はセットの行を結合しないため、トレーニングの ID を直接は確かめられない。
-/// 編集権の条件だけを付け、操作 ID の保存でセットの適用の成功を確かめる。
-fn ownership_condition_placeholder(
-    user_id: &str,
-    ownership: ExerciseOwnership<'_>,
-) -> (String, Vec<SqlValue>) {
-    match ownership {
-        ExerciseOwnership::Terminal(terminal_id) => (
-            "EXISTS (SELECT 1 FROM training_sessions ts WHERE ts.user_id = ? \
-             AND (ts.finished_at IS NOT NULL OR ts.owner_terminal_id = ?))"
-                .to_owned(),
-            vec![
-                SqlValue::Text(user_id.to_owned()),
-                SqlValue::Text(terminal_id.to_owned()),
-            ],
-        ),
-        ExerciseOwnership::Finished => (
-            "EXISTS (SELECT 1 FROM training_sessions ts WHERE ts.user_id = ? \
-             AND ts.finished_at IS NOT NULL)"
-                .to_owned(),
-            vec![SqlValue::Text(user_id.to_owned())],
-        ),
-    }
-}
-
 async fn exercise_in_training(
     db: &Db,
     user_id: &str,
@@ -764,7 +649,7 @@ async fn set_row(
     set_id: &str,
 ) -> Result<Option<SetRow>> {
     db.first(&SqlStatement::new(
-        "SELECT s.completed, s.training_exercise_id FROM sets s \
+        "SELECT s.completed, s.training_exercise_id, te.snapshot FROM sets s \
          JOIN training_exercises te ON te.id = s.training_exercise_id \
          WHERE s.id = ? AND s.user_id = ? AND te.training_id = ? AND te.user_id = ?",
         vec![
@@ -823,22 +708,20 @@ async fn drop_positions_allowed(
     db: &Db,
     user_id: &str,
     training_exercise_id: &str,
-    change: Option<SetChange<'_>>,
+    change: SetChange<'_>,
 ) -> Result<bool> {
     let mut rows = set_kind_rows(db, user_id, training_exercise_id).await?;
-    if let Some(change) = change {
-        let kind = change.kind.as_str().to_owned();
-        match rows.iter_mut().find(|row| row.id == change.set_id) {
-            Some(row) => {
-                row.position = change.position;
-                row.kind = kind;
-            }
-            None => rows.push(SetKindRow {
-                id: change.set_id.to_owned(),
-                position: change.position,
-                kind,
-            }),
+    let kind = change.kind.as_str().to_owned();
+    match rows.iter_mut().find(|row| row.id == change.set_id) {
+        Some(row) => {
+            row.position = change.position;
+            row.kind = kind;
         }
+        None => rows.push(SetKindRow {
+            id: change.set_id.to_owned(),
+            position: change.position,
+            kind,
+        }),
     }
     rows.sort_by(|left, right| {
         left.position
@@ -847,6 +730,26 @@ async fn drop_positions_allowed(
     });
     let kinds = parse_kinds(rows.iter().map(|row| row.kind.as_str()))?;
     Ok(set_rules::drop_set_positions_valid(&kinds))
+}
+
+async fn delete_positions_allowed(
+    db: &Db,
+    user_id: &str,
+    training_exercise_id: &str,
+    set_id: &str,
+) -> Result<bool> {
+    let rows = set_kind_rows(db, user_id, training_exercise_id).await?;
+    let Some(index) = rows.iter().position(|row| row.id == set_id) else {
+        return Ok(false);
+    };
+    let next = rows.get(index + 1).map(|row| row.kind.as_str());
+    let next = match next {
+        None => None,
+        Some(kind) => Some(SetKind::parse(kind).ok_or_else(|| {
+            worker::Error::RustError("the stored set kind is invalid".to_owned())
+        })?),
+    };
+    Ok(set_rules::delete_set_allowed(next))
 }
 
 fn ordered_drop_positions_allowed(rows: &[SetKindRow], ordered_ids: &[String]) -> Result<bool> {
@@ -872,11 +775,112 @@ fn parse_kinds<'a>(kinds: impl Iterator<Item = &'a str>) -> Result<Vec<SetKind>>
         .collect()
 }
 
+fn parse_snapshot(snapshot: &str) -> Result<ExerciseSnapshot> {
+    serde_json::from_str(snapshot).map_err(|error| {
+        worker::Error::RustError(format!("the stored exercise snapshot is invalid: {error}"))
+    })
+}
+
+fn parse_rules(snapshot: &str) -> Result<ExerciseRules> {
+    serde_json::from_str(snapshot).map_err(|error| {
+        worker::Error::RustError(format!("the stored exercise snapshot is invalid: {error}"))
+    })
+}
+
+/// 操作の対象の種目の記録方式と左右の指定を返す。
+async fn payload_rules(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    payload: &ValidatedPayload,
+) -> Result<Option<ExerciseRules>> {
+    match payload {
+        ValidatedPayload::SetCreate(payload) => {
+            exercise_rules(db, user_id, training_id, &payload.training_exercise_id).await
+        }
+        ValidatedPayload::SetUpdate(payload) => {
+            set_rules_for_set(db, user_id, training_id, &payload.set_id).await
+        }
+        ValidatedPayload::SetComplete(payload) => {
+            set_rules_for_set(db, user_id, training_id, &payload.set_id).await
+        }
+        ValidatedPayload::Create(_)
+        | ValidatedPayload::Update(_)
+        | ValidatedPayload::ExerciseCreate(_)
+        | ValidatedPayload::ExerciseDelete(_)
+        | ValidatedPayload::ExerciseReorder(_)
+        | ValidatedPayload::SetDelete(_)
+        | ValidatedPayload::SetReorder(_)
+        | ValidatedPayload::SupersetCreate(_)
+        | ValidatedPayload::SupersetDelete(_)
+        | ValidatedPayload::SupersetReorder(_) => Ok(None),
+    }
+}
+
+async fn exercise_rules(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    training_exercise_id: &str,
+) -> Result<Option<ExerciseRules>> {
+    let row = db
+        .first::<SnapshotRow>(&SqlStatement::new(
+            "SELECT snapshot FROM training_exercises \
+             WHERE id = ? AND user_id = ? AND training_id = ?",
+            vec![
+                SqlValue::Text(training_exercise_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+            ],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    parse_rules(&row.snapshot).map(Some)
+}
+
+async fn set_rules_for_set(
+    db: &Db,
+    user_id: &str,
+    training_id: &str,
+    set_id: &str,
+) -> Result<Option<ExerciseRules>> {
+    let row = db
+        .first::<SnapshotRow>(&SqlStatement::new(
+            "SELECT te.snapshot FROM sets s \
+             JOIN training_exercises te ON te.id = s.training_exercise_id \
+             WHERE s.id = ? AND s.user_id = ? AND te.training_id = ? AND te.user_id = ?",
+            vec![
+                SqlValue::Text(set_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(training_id.to_owned()),
+                SqlValue::Text(user_id.to_owned()),
+            ],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    parse_rules(&row.snapshot).map(Some)
+}
+
 fn drop_position_rejection() -> Response {
     response(
         ErrorCode::BadRequest,
         "a drop set cannot be first or follow a warmup set",
     )
+}
+
+fn delete_before_drop_rejection() -> Response {
+    response(
+        ErrorCode::BadRequest,
+        "the next drop set must be deleted first",
+    )
+}
+
+fn invalid_completion() -> Response {
+    response(ErrorCode::BadRequest, "the set is not valid for completion")
 }
 
 fn same_set_ids(current: &[String], ordered: &[String]) -> bool {
@@ -886,24 +890,6 @@ fn same_set_ids(current: &[String], ordered: &[String]) -> bool {
     ordered.sort_unstable();
     current == ordered
 }
-
-fn grip_json(grip: Option<GripSelection>) -> Option<SqlValue> {
-    match grip {
-        None => Some(SqlValue::Null),
-        Some(grip) => serde_json::to_string(&grip).ok().map(SqlValue::Text),
-    }
-}
-
-fn optional_real(value: Option<f64>) -> SqlValue {
-    value.map_or(SqlValue::Null, SqlValue::Real)
-}
-
-fn optional_integer(value: Option<i64>) -> SqlValue {
-    value.map_or(SqlValue::Null, SqlValue::Integer)
-}
-
-mod segments;
-mod validation;
 
 #[cfg(test)]
 mod tests;
