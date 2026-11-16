@@ -17,6 +17,7 @@ const SERVER_PORT: u16 = 8863;
 const PROVIDER_PORT: u16 = 8864;
 const BENCH: &str = "a7c4e2f0-0000-4000-8000-000000000003";
 const CROSS_TRAINER: &str = "a7c4e2f0-0000-4000-8000-000000000061";
+const SEATED_ROW: &str = "a7c4e2f0-0000-4000-8000-00000000001b";
 
 #[tokio::test]
 async fn opens_an_exercise_and_shows_the_body_figure_and_the_muscle_names() {
@@ -83,6 +84,20 @@ async fn opens_an_exercise_and_shows_the_body_figure_and_the_muscle_names() {
     )
     .await;
     check_other(&driver).await;
+
+    driver
+        .goto(format!("{}/exercises/{SEATED_ROW}", server.origin()))
+        .await
+        .expect("the seated row detail must open");
+    browser::wait_for_text(&driver, "シーテッドロウ").await;
+    browser::wait_for_attribute(
+        &driver,
+        "[data-exercise-detail]",
+        "data-exercise-loaded",
+        "true",
+    )
+    .await;
+    check_seated_row_grip(&driver).await;
 
     if browser == Browser::Chrome {
         browser::assert_no_panic(&driver).await;
@@ -158,6 +173,86 @@ async fn check_other(driver: &WebDriver) {
     assert!(text_of(driver, "[data-exercise-field=\"other-scope\"]")
         .await
         .contains("全身"));
+}
+
+async fn check_seated_row_grip(driver: &WebDriver) {
+    browser::wait_for_present(driver, "[data-exercise-grip-selector]").await;
+    let back = "[data-figure-side=\"back\"]";
+    browser::wait_for_attribute(driver, back, "data-primary", "trap-upper trap-mid-lower").await;
+    browser::wait_for_attribute(driver, back, "data-secondary", "lats").await;
+    let before = fills(driver, &["lats", "trap-upper", "trap-mid-lower", "quads"]).await;
+    assert_eq!(
+        before[1], before[2],
+        "the wide grip colors both trapezius units as primary"
+    );
+    assert_ne!(
+        before[0], before[1],
+        "the lats must differ from the primary trapezius"
+    );
+    assert_ne!(
+        before[3], before[1],
+        "the rest color must differ from the primary color"
+    );
+    assert_ne!(
+        before[3], before[0],
+        "the rest color must differ from the secondary color"
+    );
+
+    browser::select_value(
+        driver,
+        "[data-exercise-grip-field=\"attachment\"]",
+        "parallel_grip",
+    )
+    .await;
+    browser::wait_for_attribute(driver, back, "data-primary", "lats").await;
+    browser::wait_for_attribute(driver, back, "data-secondary", "trap-mid-lower").await;
+    let after = fills(driver, &["lats", "trap-upper", "trap-mid-lower", "quads"]).await;
+    assert_eq!(
+        after[0], before[1],
+        "the narrow grip makes the lats primary"
+    );
+    assert_eq!(
+        after[1], before[3],
+        "the narrow grip returns the upper trapezius to the rest color"
+    );
+    assert_eq!(
+        after[2], before[0],
+        "the narrow grip makes the middle and lower trapezius secondary"
+    );
+    assert_eq!(
+        after[3], before[3],
+        "the narrow grip leaves the rest color unchanged"
+    );
+}
+
+async fn fills(driver: &WebDriver, units: &[&str]) -> Vec<String> {
+    let result = driver
+        .execute(
+            r#"
+            const units = arguments[0];
+            return units.map((unit) => {
+                const element = document.querySelector(
+                    `[data-figure-side="back"] .wfig-m[data-unit="${unit}"]`
+                );
+                return element ? getComputedStyle(element).fill : null;
+            });
+            "#,
+            vec![serde_json::json!(units)],
+        )
+        .await
+        .expect("the figure colors must be readable");
+    let values = result.json();
+    values
+        .as_array()
+        .expect("the colors must be an array")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("the color must be a string")
+                .to_owned()
+        })
+        .collect()
 }
 
 async fn text_of(driver: &WebDriver, selector: &str) -> String {

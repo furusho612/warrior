@@ -11,10 +11,10 @@ use warrior_core::exercise::{GripMode, GripSelection, RecordMode};
 
 use super::rest_timer::{RestSecondsField, RestSecondsTarget};
 use super::set_inputs::Field;
-use super::sets::{
-    attachment_styles, attachment_with, attachment_with_style, default_grip, grip_attachments,
-    grip_styles, grip_widths, grip_with_style, grip_with_width, set_kind_text, SelectedSet,
-    SetAction, SetView,
+use super::sets::{default_grip, set_kind_text, SelectedSet, SetAction, SetView};
+use crate::grip_options::{
+    attachment_styles, attachment_with, attachment_with_style, grip_attachments, grip_styles,
+    grip_widths, grip_with_style, grip_with_width,
 };
 use crate::grip_text::{
     attachment_from_key, attachment_text, grip_style_from_key, grip_style_text,

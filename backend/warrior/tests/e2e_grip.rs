@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use support::browser::{self, Browser};
 use support::{DevServer, TestOidc};
-use thirtyfour::components::SelectElement;
 use thirtyfour::prelude::*;
 use warrior_core::exercise::GripSelection;
 use warrior_core::set_calc::estimated_one_rep_max;
@@ -106,13 +105,13 @@ async fn check_the_grip_exercise(driver: &WebDriver, server: &DevServer) {
     wait_for_grip_label(driver, &row, "順手 ワイド").await;
 
     open_drawer(driver, &row).await;
-    select_value(
+    browser::select_value(
         driver,
         "[data-set-drawer] [data-set-grip-style]",
         "supinated",
     )
     .await;
-    select_value(driver, "[data-set-drawer] [data-set-grip-width]", "narrow").await;
+    browser::select_value(driver, "[data-set-drawer] [data-set-grip-width]", "narrow").await;
     wait_for_grip_label(driver, &row, "逆手 ナロー").await;
     wait_for_previous_total(driver, &detail, "400").await;
     close_drawer(driver).await;
@@ -267,7 +266,7 @@ async fn check_the_attachment_exercise(driver: &WebDriver, server: &DevServer) {
     wait_for_grip_label(driver, &row, "順手 / ワイドバー").await;
 
     open_drawer(driver, &row).await;
-    select_value(
+    browser::select_value(
         driver,
         "[data-set-drawer] [data-set-grip-attachment]",
         "straight_bar",
@@ -275,7 +274,7 @@ async fn check_the_attachment_exercise(driver: &WebDriver, server: &DevServer) {
     .await;
     wait_for_grip_label(driver, &row, "順手 / ストレートバー").await;
     wait_for_previous_total(driver, &detail, "500").await;
-    select_value(
+    browser::select_value(
         driver,
         "[data-set-drawer] [data-set-grip-style]",
         "supinated",
@@ -283,7 +282,7 @@ async fn check_the_attachment_exercise(driver: &WebDriver, server: &DevServer) {
     .await;
     wait_for_grip_label(driver, &row, "逆手 / ストレートバー").await;
     wait_for_previous_total(driver, &detail, "700").await;
-    select_value(
+    browser::select_value(
         driver,
         "[data-set-drawer] [data-set-grip-style]",
         "pronated",
@@ -436,20 +435,6 @@ async fn open_drawer(driver: &WebDriver, row: &str) {
 async fn close_drawer(driver: &WebDriver) {
     browser::click(driver, "[data-set-drawer-close]").await;
     browser::wait_for_absent(driver, "[data-set-drawer]").await;
-}
-
-async fn select_value(driver: &WebDriver, selector: &str, value: &str) {
-    let select = driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the select {selector} must exist: {error}"));
-    let select = SelectElement::new(&select)
-        .await
-        .unwrap_or_else(|error| panic!("the select {selector} must be a select: {error}"));
-    select
-        .select_by_value(value)
-        .await
-        .unwrap_or_else(|error| panic!("the value {value} must be selectable: {error}"));
 }
 
 async fn wait_for_previous_total(driver: &WebDriver, detail: &str, expected: &str) {

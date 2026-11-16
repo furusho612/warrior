@@ -15,7 +15,7 @@ use warrior_core::library::ExerciseSource;
 ///
 /// PRD の「グリップによる色の変更」はシーテッドロウの手幅だけを対象にする。
 /// 種目の名前は編集できるため、名前ではなく種目 ID で判定する。
-const SEATED_ROW_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-00000000001b";
+pub const SEATED_ROW_EXERCISE_ID: &str = "a7c4e2f0-0000-4000-8000-00000000001b";
 
 /// 人体図の面。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -472,6 +472,7 @@ mod tests {
         SEATED_ROW_EXERCISE_ID,
     };
     use crate::generated::tokens;
+    use crate::grip_options::{attachment_with, initial_grip};
 
     fn exercise(id: &str, body_part: BodyPart, muscles: Vec<(MuscleUnit, MuscleRole)>) -> Exercise {
         Exercise {
@@ -512,11 +513,29 @@ mod tests {
             ],
         );
         value.grip_mode = GripMode::Attachment;
-        value.grip_options = vec![GripSelection::Attachment {
-            attachment: Attachment::WideBar,
-            style: Some(GripStyle::Pronated),
-        }];
+        value.grip_options = seated_row_options();
         value
+    }
+
+    fn seated_row_options() -> Vec<GripSelection> {
+        vec![
+            attachment(Attachment::WideBar, Some(GripStyle::Pronated)),
+            attachment(Attachment::WideBar, Some(GripStyle::Supinated)),
+            attachment(Attachment::StraightBar, Some(GripStyle::Pronated)),
+            attachment(Attachment::StraightBar, Some(GripStyle::Supinated)),
+            attachment(Attachment::ParallelGrip, None),
+            attachment(Attachment::MagNarrowParallel, None),
+            attachment(Attachment::MagNarrowOver, None),
+            attachment(Attachment::MagNarrowUnder, None),
+            attachment(Attachment::MagMediumParallel, None),
+            attachment(Attachment::MagMediumOver, None),
+            attachment(Attachment::MagMediumUnder, None),
+            attachment(Attachment::MagWideOver, None),
+        ]
+    }
+
+    fn attachment(attachment: Attachment, style: Option<GripStyle>) -> GripSelection {
+        GripSelection::Attachment { attachment, style }
     }
 
     fn units(units: &[MuscleUnit]) -> BTreeSet<MuscleUnit> {
@@ -580,16 +599,59 @@ mod tests {
         primary: &[MuscleUnit],
         secondary: &[MuscleUnit],
     ) {
-        let resolved = figure_muscles(
+        assert_grip_selection(
             exercise,
-            Some(GripSelection::Attachment { attachment, style }),
-            ExerciseSource::Master,
+            GripSelection::Attachment { attachment, style },
+            primary,
+            secondary,
         );
-        assert_eq!(units(&resolved.primary), units(primary), "{attachment:?}");
+    }
+
+    fn assert_grip_selection(
+        exercise: &Exercise,
+        selection: GripSelection,
+        primary: &[MuscleUnit],
+        secondary: &[MuscleUnit],
+    ) {
+        let resolved = figure_muscles(exercise, Some(selection), ExerciseSource::Master);
+        assert_eq!(units(&resolved.primary), units(primary), "{selection:?}");
         assert_eq!(
             units(&resolved.secondary),
             units(secondary),
-            "{attachment:?}"
+            "{selection:?}"
+        );
+    }
+
+    #[test]
+    fn req_lib_003_the_screen_selection_walks_the_seated_row_grip_table() {
+        let seated_row = seated_row();
+        let options = seated_row.grip_options.clone();
+        let mut selection = initial_grip(seated_row.grip_mode, &options)
+            .expect("the seated row must have an initial grip");
+        assert_grip_selection(
+            &seated_row,
+            selection,
+            &[MuscleUnit::TrapeziusUpper, MuscleUnit::TrapeziusMiddleLower],
+            &[MuscleUnit::LatissimusDorsi],
+        );
+
+        selection = attachment_with(selection, Attachment::ParallelGrip, &options);
+        assert_grip_selection(
+            &seated_row,
+            selection,
+            &[MuscleUnit::LatissimusDorsi],
+            &[MuscleUnit::TrapeziusMiddleLower],
+        );
+
+        selection = attachment_with(selection, Attachment::StraightBar, &options);
+        assert_grip_selection(
+            &seated_row,
+            selection,
+            &[
+                MuscleUnit::LatissimusDorsi,
+                MuscleUnit::TrapeziusMiddleLower,
+            ],
+            &[],
         );
     }
 
@@ -621,7 +683,7 @@ mod tests {
 
     #[test]
     fn req_lib_003_a_combination_outside_the_table_keeps_the_exercise_muscles() {
-        let lat_pulldown = exercise(
+        let mut lat_pulldown = exercise(
             "a7c4e2f0-0000-4000-8000-00000000001a",
             BodyPart::Back,
             vec![
@@ -630,19 +692,19 @@ mod tests {
                 (MuscleUnit::BicepsBrachii, MuscleRole::Secondary),
             ],
         );
-        let grip = Some(GripSelection::Attachment {
-            attachment: Attachment::WideBar,
-            style: Some(GripStyle::Pronated),
-        });
-        let resolved = figure_muscles(&lat_pulldown, grip, ExerciseSource::Master);
-        assert_eq!(
-            units(&resolved.primary),
-            units(&[MuscleUnit::LatissimusDorsi, MuscleUnit::TeresMajor])
-        );
-        assert_eq!(
-            units(&resolved.secondary),
-            units(&[MuscleUnit::BicepsBrachii])
-        );
+        lat_pulldown.grip_mode = GripMode::Attachment;
+        lat_pulldown.grip_options = vec![
+            attachment(Attachment::WideBar, Some(GripStyle::Pronated)),
+            attachment(Attachment::StraightBar, Some(GripStyle::Pronated)),
+        ];
+        let options = lat_pulldown.grip_options.clone();
+        let selection = initial_grip(lat_pulldown.grip_mode, &options)
+            .expect("the lat pulldown must have an initial grip");
+        let primary = [MuscleUnit::LatissimusDorsi, MuscleUnit::TeresMajor];
+        let secondary = [MuscleUnit::BicepsBrachii];
+        assert_grip_selection(&lat_pulldown, selection, &primary, &secondary);
+        let changed = attachment_with(selection, Attachment::StraightBar, &options);
+        assert_grip_selection(&lat_pulldown, changed, &primary, &secondary);
 
         let seated_row = seated_row();
         let resolved = figure_muscles(&seated_row, None, ExerciseSource::Master);
@@ -657,6 +719,16 @@ mod tests {
             units(&resolved.secondary),
             units(&[MuscleUnit::BicepsBrachii, MuscleUnit::PosteriorDeltoid])
         );
+    }
+
+    #[test]
+    fn req_lib_003_an_exercise_without_grip_options_has_no_initial_grip() {
+        let bench = exercise(
+            "3f2504e0-4f89-41d3-9a0c-0305e82c3303",
+            BodyPart::Chest,
+            vec![(MuscleUnit::PectoralisMajorMiddle, MuscleRole::Primary)],
+        );
+        assert_eq!(initial_grip(bench.grip_mode, &bench.grip_options), None);
     }
 
     #[test]

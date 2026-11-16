@@ -10,6 +10,7 @@ pub mod calendar_view;
 pub mod export;
 pub mod generated;
 pub mod graph;
+pub mod grip_options;
 pub mod grip_text;
 pub mod history;
 pub mod http;

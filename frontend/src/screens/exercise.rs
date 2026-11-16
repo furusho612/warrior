@@ -3,11 +3,21 @@
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use warrior_core::exercise::{ExerciseInput, MuscleUnit, OtherScope};
+use warrior_core::exercise::{
+    ExerciseInput, GripMode, GripSelection, GripStyle, MuscleUnit, OtherScope,
+};
 use warrior_core::library::{ExerciseSource, LibraryExercise};
 
 use crate::body_figure::{figure_muscles, figure_svg, FigureMuscles, FigureSide};
 use crate::calendar_view::part_label;
+use crate::grip_options::{
+    attachment_styles, attachment_with, attachment_with_style, grip_attachments, grip_styles,
+    grip_widths, grip_with_style, grip_with_width, initial_grip,
+};
+use crate::grip_text::{
+    attachment_from_key, attachment_text, grip_style_from_key, grip_style_text,
+    grip_width_from_key, grip_width_text,
+};
 use crate::library::{self as library_api, equipment_label};
 use crate::routes::{navigate, Route};
 use crate::screens::exercise_form::ExerciseForm;
@@ -26,10 +36,11 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
     let editing = use_signal(|| false);
     let confirming_delete = use_signal(|| false);
     let reload = use_signal(|| 0u32);
+    let grip = use_signal(|| Option::<GripSelection>::None);
     let route_id = exercise_id.clone();
     use_effect(move || {
         let _ = (reload)();
-        spawn(load(route_id.clone(), detail, error));
+        spawn(load(route_id.clone(), detail, error, grip));
     });
 
     let current = (detail)();
@@ -100,7 +111,7 @@ pub fn ExerciseScreen(exercise_id: String) -> Element {
                     "{text(Key::ExerciseRetry)}"
                 }
             } else if let Some(item) = current {
-                ExerciseDetailBody { item }
+                ExerciseDetailBody { item, grip }
                 div { class: "flex flex-wrap gap-2",
                     if !deleted {
                         button {
@@ -277,10 +288,11 @@ fn reset_exercise(
 
 /// 種目の内容。
 #[component]
-fn ExerciseDetailBody(item: LibraryExercise) -> Element {
+fn ExerciseDetailBody(item: LibraryExercise, grip: Signal<Option<GripSelection>>) -> Element {
     let source = item.source;
     let exercise = item.exercise;
-    let muscles = figure_muscles(&exercise, None, source);
+    let selection = (grip)();
+    let muscles = figure_muscles(&exercise, selection, source);
     let primary = muscle_names(&muscles.primary);
     let secondary = muscle_names(&muscles.secondary);
     let secondary = if secondary.is_empty() {
@@ -294,6 +306,14 @@ fn ExerciseDetailBody(item: LibraryExercise) -> Element {
 
     rsx! {
         h1 { class: "text-lg font-bold", "data-exercise-name": "true", "{exercise.name}" }
+        if let Some(selection) = selection {
+            GripPreviewSelector {
+                mode: exercise.grip_mode,
+                options: exercise.grip_options.clone(),
+                selection,
+                grip,
+            }
+        }
         if !exercise.body_part.is_other() {
             BodyFigure { muscles }
         }
@@ -349,6 +369,192 @@ fn ExerciseDetailBody(item: LibraryExercise) -> Element {
             }
         }
     }
+}
+
+/// 種目の詳細の人体図の色を確かめるためのグリップの選択。
+///
+/// この選択は表示の切り替えだけに使い、記録には保存しない。
+#[component]
+fn GripPreviewSelector(
+    mode: GripMode,
+    options: Vec<GripSelection>,
+    selection: GripSelection,
+    grip: Signal<Option<GripSelection>>,
+) -> Element {
+    match mode {
+        GripMode::None => rsx! {},
+        GripMode::Grip => rsx! {
+            GripPreviewFields { selection, options, grip }
+        },
+        GripMode::Attachment => rsx! {
+            AttachmentPreviewFields { selection, options, grip }
+        },
+    }
+}
+
+/// 握り方と手幅を選ぶ種目のグリップの選択。
+#[component]
+fn GripPreviewFields(
+    selection: GripSelection,
+    options: Vec<GripSelection>,
+    grip: Signal<Option<GripSelection>>,
+) -> Element {
+    let GripSelection::Grip { style, width } = selection else {
+        return rsx! {};
+    };
+    let style_values = style_select_options(&options);
+    let width_values = width_select_options(&options, style);
+    let style_options = options.clone();
+    let width_options = options;
+    rsx! {
+        div {
+            class: "flex flex-wrap items-center gap-2",
+            "data-exercise-grip-selector": "true",
+            GripPreviewSelect {
+                label: text(Key::ExerciseGripStyle).to_owned(),
+                field: "style",
+                value: style.as_str().to_owned(),
+                options: style_values,
+                on_change: move |value: String| {
+                    if let Some(style) = grip_style_from_key(&value) {
+                        let mut grip = grip;
+                        grip.set(Some(grip_with_style(selection, style, &style_options)));
+                    }
+                },
+            }
+            GripPreviewSelect {
+                label: text(Key::ExerciseGripWidth).to_owned(),
+                field: "width",
+                value: width.as_str().to_owned(),
+                options: width_values,
+                on_change: move |value: String| {
+                    if let Some(width) = grip_width_from_key(&value) {
+                        let mut grip = grip;
+                        grip.set(Some(grip_with_width(selection, width, &width_options)));
+                    }
+                },
+            }
+        }
+    }
+}
+
+/// アタッチメントと、必要なら握り方を選ぶ種目のグリップの選択。
+#[component]
+fn AttachmentPreviewFields(
+    selection: GripSelection,
+    options: Vec<GripSelection>,
+    grip: Signal<Option<GripSelection>>,
+) -> Element {
+    let GripSelection::Attachment { attachment, style } = selection else {
+        return rsx! {};
+    };
+    let attachment_values = attachment_select_options(&options);
+    let styles = attachment_styles(&options, attachment);
+    let current_style = style.or_else(|| styles.first().copied());
+    let style_values = styles
+        .into_iter()
+        .map(|style| (style.as_str().to_owned(), grip_style_text(style).to_owned()))
+        .collect();
+    let attachment_options = options.clone();
+    let style_options = options;
+    rsx! {
+        div {
+            class: "flex flex-wrap items-center gap-2",
+            "data-exercise-grip-selector": "true",
+            GripPreviewSelect {
+                label: text(Key::ExerciseGripAttachment).to_owned(),
+                field: "attachment",
+                value: attachment.as_str().to_owned(),
+                options: attachment_values,
+                on_change: move |value: String| {
+                    if let Some(attachment) = attachment_from_key(&value) {
+                        let mut grip = grip;
+                        grip.set(Some(attachment_with(
+                            selection,
+                            attachment,
+                            &attachment_options,
+                        )));
+                    }
+                },
+            }
+            if let Some(current_style) = current_style {
+                GripPreviewSelect {
+                    label: text(Key::ExerciseGripStyle).to_owned(),
+                    field: "style",
+                    value: current_style.as_str().to_owned(),
+                    options: style_values,
+                    on_change: move |value: String| {
+                        if let Some(style) = grip_style_from_key(&value) {
+                            let mut grip = grip;
+                            grip.set(Some(attachment_with_style(
+                                selection,
+                                style,
+                                &style_options,
+                            )));
+                        }
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// 種目の詳細のグリップの選択欄。
+#[component]
+fn GripPreviewSelect(
+    label: String,
+    field: &'static str,
+    value: String,
+    options: Vec<(String, String)>,
+    on_change: EventHandler<String>,
+) -> Element {
+    let current = value.clone();
+    rsx! {
+        label {
+            class: "flex items-center gap-1 text-[11px] font-bold",
+            "{label}"
+            select {
+                class: "min-h-11 border border-line bg-bg px-1 text-[12px]",
+                "data-exercise-grip-field": field,
+                "aria-label": "{label}",
+                value: "{value}",
+                onchange: move |event| on_change.call(event.value()),
+                for (option_value, option_label) in options {
+                    option {
+                        value: "{option_value}",
+                        selected: option_value == current,
+                        "{option_label}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn style_select_options(options: &[GripSelection]) -> Vec<(String, String)> {
+    grip_styles(options)
+        .into_iter()
+        .map(|style| (style.as_str().to_owned(), grip_style_text(style).to_owned()))
+        .collect()
+}
+
+fn width_select_options(options: &[GripSelection], style: GripStyle) -> Vec<(String, String)> {
+    grip_widths(options, style)
+        .into_iter()
+        .map(|width| (width.as_str().to_owned(), grip_width_text(width).to_owned()))
+        .collect()
+}
+
+fn attachment_select_options(options: &[GripSelection]) -> Vec<(String, String)> {
+    grip_attachments(options)
+        .into_iter()
+        .map(|attachment| {
+            (
+                attachment.as_str().to_owned(),
+                attachment_text(attachment).to_owned(),
+            )
+        })
+        .collect()
 }
 
 /// 前面と背面の人体図と、その面の名前。
@@ -410,11 +616,21 @@ async fn load(
     exercise_id: String,
     mut detail: Signal<Option<LibraryExercise>>,
     mut error: Signal<Option<String>>,
+    mut grip: Signal<Option<GripSelection>>,
 ) {
     error.set(None);
     match library_api::exercise(&exercise_id).await {
-        Ok(item) => detail.set(Some(item)),
-        Err(_) => error.set(Some(text(Key::ExerciseLoadFailed).to_owned())),
+        Ok(item) => {
+            grip.set(initial_grip(
+                item.exercise.grip_mode,
+                &item.exercise.grip_options,
+            ));
+            detail.set(Some(item));
+        }
+        Err(_) => {
+            grip.set(None);
+            error.set(Some(text(Key::ExerciseLoadFailed).to_owned()));
+        }
     }
 }
 

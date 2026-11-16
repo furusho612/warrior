@@ -13,10 +13,13 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 
 use super::{
-    attachment_styles, attachment_with, attachment_with_style, default_grip, detail_open_label,
-    fill_missing_grips, grip_attachments, grip_styles, grip_widths, grip_with_style,
-    grip_with_width, needs_segment_confirmation, parse_count_or_zero, previous_response_is_current,
-    previous_values, set_numbers, SegmentView, SetView,
+    default_grip, detail_open_label, fill_missing_grips, needs_segment_confirmation,
+    parse_count_or_zero, previous_response_is_current, previous_values, set_numbers, SegmentView,
+    SetView,
+};
+use crate::grip_options::{
+    attachment_styles, attachment_with, attachment_with_style, grip_attachments, grip_styles,
+    grip_widths, grip_with_style, grip_with_width,
 };
 use crate::text::Key;
 
