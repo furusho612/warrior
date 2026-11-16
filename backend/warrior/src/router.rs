@@ -20,6 +20,7 @@ use crate::library;
 use crate::profile;
 use crate::push;
 use crate::recovery;
+use crate::rest_push;
 use crate::routine;
 use crate::settings;
 use crate::sync;
@@ -87,6 +88,14 @@ pub const SETTINGS_ROUTE_NAME: &str = "settings";
 pub const PUSH_PUBLIC_KEY_ROUTE_NAME: &str = "push_public_key";
 /// プッシュ通知の購読を登録し、解除する経路の名前。
 pub const PUSH_SUBSCRIPTIONS_ROUTE_NAME: &str = "push_subscriptions";
+/// レスト終了のプッシュ通知を予約する経路の名前。
+pub const REST_RESERVATIONS_ROUTE_NAME: &str = "rest_reservations";
+/// レスト終了のプッシュ通知の予約を変更する経路の名前。
+pub const REST_RESERVATION_UPDATE_ROUTE_NAME: &str = "rest_reservation_update";
+/// レスト終了のプッシュ通知の予約を取り消す経路の名前。
+pub const REST_RESERVATION_DELETE_ROUTE_NAME: &str = "rest_reservation_delete";
+/// プッシュ通知の受信時刻を記録する経路の名前。
+pub const PUSH_RECEIVED_ROUTE_NAME: &str = "push_received";
 /// ルーティンの一覧を返す経路の名前。
 pub const ROUTINES_ROUTE_NAME: &str = "routines";
 /// ルーティンからトレーニングを開始する経路の名前。
@@ -113,6 +122,10 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/push/public-key", push::public_key)
         .post_async("/api/push/subscriptions", push::create)
         .delete_async("/api/push/subscriptions", push::delete)
+        .post_async("/api/push/received", rest_push::received)
+        .post_async("/api/rest/reservations", rest_push::create)
+        .patch_async("/api/rest/reservations/:id", rest_push::update)
+        .delete_async("/api/rest/reservations/:id", rest_push::delete)
         .get_async("/api/ai/jobs/:id", ai_job::status)
         .get_async("/api/me/passkeys", passkey::list)
         .delete_async("/api/account", account::delete)
@@ -181,6 +194,12 @@ pub fn route_name(path: &str) -> &'static str {
     if path.starts_with("/api/exercises/") && path.ends_with("/favorite") {
         return EXERCISE_FAVORITE_ROUTE_NAME;
     }
+    if path == "/api/rest/reservations" {
+        return REST_RESERVATIONS_ROUTE_NAME;
+    }
+    if path.starts_with("/api/rest/reservations/") {
+        return REST_RESERVATION_UPDATE_ROUTE_NAME;
+    }
     if path.starts_with("/api/exercises/") && path.ends_with("/reset") {
         return EXERCISE_RESET_ROUTE_NAME;
     }
@@ -234,6 +253,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/settings" => SETTINGS_ROUTE_NAME,
         "/api/push/public-key" => PUSH_PUBLIC_KEY_ROUTE_NAME,
         "/api/push/subscriptions" => PUSH_SUBSCRIPTIONS_ROUTE_NAME,
+        "/api/push/received" => PUSH_RECEIVED_ROUTE_NAME,
         "/api/routines" => ROUTINES_ROUTE_NAME,
         "/api/sync/operations" => SYNC_OPERATION_ROUTE_NAME,
         "/api/exercises" => EXERCISES_ROUTE_NAME,

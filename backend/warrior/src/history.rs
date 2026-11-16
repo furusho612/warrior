@@ -25,7 +25,6 @@ use worker::{console_error, Request, Response, Result, RouteContext};
 use crate::auth::{self, session};
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
-use crate::exercise;
 use crate::goal::{self, GoalRow};
 use crate::stored_sets::{self, SetSegmentRow, StoredExercise};
 
@@ -360,6 +359,7 @@ fn exercise_bests(
     let mut bests = Vec::new();
     for row in rows {
         let Some(kind) = BestKind::parse(&row.kind) else {
+            #[cfg(target_arch = "wasm32")]
             console_error!("the stored personal best kind is invalid");
             return Err(worker::Error::RustError(
                 "the stored personal best kind is invalid".to_owned(),
@@ -445,6 +445,7 @@ fn graph_sets<'a>(
 
 pub(crate) fn parse_date(text: &str) -> Result<JstDate> {
     JstDate::parse(text).ok_or_else(|| {
+        #[cfg(target_arch = "wasm32")]
         console_error!("the stored date is invalid");
         worker::Error::RustError("the stored date is invalid".to_owned())
     })
@@ -452,6 +453,7 @@ pub(crate) fn parse_date(text: &str) -> Result<JstDate> {
 
 fn ensure_instant(text: &str) -> Result<()> {
     UtcInstant::parse(text).ok_or_else(|| {
+        #[cfg(target_arch = "wasm32")]
         console_error!("the stored finished time is invalid");
         worker::Error::RustError("the stored finished time is invalid".to_owned())
     })?;

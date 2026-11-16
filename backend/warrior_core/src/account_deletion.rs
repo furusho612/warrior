@@ -163,6 +163,11 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の端末のプッシュ購読。",
     },
     Table {
+        name: "rest_push_reservations",
+        class: TableClass::Owned,
+        reason: "利用者のレスト終了のプッシュ通知の予約。",
+    },
+    Table {
         name: "user_settings",
         class: TableClass::Owned,
         reason: "利用者のレスト時間、表示モード、PFC の配分。",
@@ -220,6 +225,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "passkeys",
     "auth_sessions",
     "push_subscriptions",
+    "rest_push_reservations",
     "export_jobs",
     "terminal_tokens",
     "ai_outputs",
@@ -291,6 +297,7 @@ mod tests {
             "oauth_states",
             "profiles",
             "push_subscriptions",
+            "rest_push_reservations",
             "user_settings",
             "export_jobs",
             "ai_generation",

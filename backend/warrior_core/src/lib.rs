@@ -32,6 +32,7 @@ pub mod push;
 pub mod pwa;
 pub mod rate_limit;
 pub mod recovery;
+pub mod rest_push;
 pub mod rest_timer;
 pub mod routine;
 pub mod rpe;
@@ -46,6 +47,7 @@ mod sync_set;
 mod sync_superset;
 pub mod training_record;
 pub mod training_session;
+pub mod web_push;
 pub mod webauthn;
 
 /// ヘルスチェックが返す状態の値。

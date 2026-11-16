@@ -9,7 +9,7 @@
 
 mod support;
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use support::browser::{self, Browser};
@@ -105,7 +105,41 @@ async fn the_app_subscribes_and_the_service_worker_shows_the_push_notification()
     );
 
     wait_for_service_worker(&driver).await;
-    deliver_push(&driver, &origin).await;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock must be after the epoch")
+        .as_secs() as i64;
+    deliver_push(
+        &driver,
+        &origin,
+        &json!({
+            "reservation_id": "late-reservation",
+            "version": 1,
+            "end_at": now - 31,
+            "exercise": "ベンチプレス",
+            "weight": 100,
+            "reps": 5,
+        }),
+    )
+    .await;
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        notifications(&driver).await.is_empty(),
+        "a notification later than 30 seconds after the end must be discarded"
+    );
+    deliver_push(
+        &driver,
+        &origin,
+        &json!({
+            "reservation_id": "fresh-reservation",
+            "version": 1,
+            "end_at": now,
+            "exercise": "ベンチプレス",
+            "weight": 100,
+            "reps": 5,
+        }),
+    )
+    .await;
     let notification = wait_for_notification(&driver).await;
     assert_eq!(notification["title"], NOTIFICATION_TITLE);
     assert_eq!(notification["body"], NOTIFICATION_BODY);
@@ -198,7 +232,7 @@ async fn wait_for_service_worker(driver: &WebDriver) {
     }
 }
 
-async fn deliver_push(driver: &WebDriver, origin: &str) {
+async fn deliver_push(driver: &WebDriver, origin: &str, payload: &Value) {
     driver
         .cdp()
         .send_raw(
@@ -221,16 +255,25 @@ async fn deliver_push(driver: &WebDriver, origin: &str) {
             json!({
                 "origin": origin,
                 "registrationId": "0",
-                "data": json!({
-                    "exercise": "ベンチプレス",
-                    "weight": 100,
-                    "reps": 5,
-                })
-                .to_string(),
+                "data": payload.to_string(),
             }),
         )
         .await
         .expect("the push message must be delivered");
+}
+
+async fn notifications(driver: &WebDriver) -> Vec<Value> {
+    let notifications = browser::eval_json(
+        driver,
+        "const done = arguments[arguments.length - 1]; \
+         navigator.serviceWorker.ready \
+           .then((registration) => registration.getNotifications()) \
+           .then((list) => done(JSON.stringify(list.map((notification) => ({ title: notification.title, body: notification.body }))))) \
+           .catch((error) => done(JSON.stringify({ error: String(error) })));",
+        Vec::new(),
+    )
+    .await;
+    notifications.as_array().cloned().unwrap_or_default()
 }
 
 async fn wait_for_notification(driver: &WebDriver) -> Value {

@@ -15,6 +15,7 @@ use warrior_core::base64url;
 const ORIGIN: &str = "http://localhost:8787";
 const ALLOWLIST_PORT: u16 = 8830;
 const DELETION_PORT: u16 = 8831;
+const RATE_LIMIT_PORT: u16 = 8832;
 const USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3a01";
 const OTHER_USER_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3a02";
 const TERMINAL_ID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3a10";
@@ -367,4 +368,72 @@ fn count_with(server: &DevServer, sql: &str) -> i64 {
         .and_then(|row| row.get("count"))
         .and_then(Value::as_i64)
         .expect("a count")
+}
+
+#[test]
+fn the_push_subscription_requests_are_rate_limited_per_user() {
+    let server = DevServer::start_with_vars(
+        RATE_LIMIT_PORT,
+        &[
+            ("RATE_LIMIT_PUSH_USER", "1"),
+            ("RATE_LIMIT_PUSH_WINDOW", "60"),
+        ],
+    );
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    seed_users_and_terminals(&server);
+    let cookie = cookies(SESSION_SEED, TERMINAL_SEED);
+    let other_cookie = cookies(OTHER_SESSION_SEED, OTHER_TERMINAL_SEED);
+
+    let first = post(
+        &server,
+        &[("Cookie", cookie.as_str())],
+        &subscription(
+            "https://fcm.googleapis.com/fcm/send/rate-a",
+            "p256dh",
+            "auth",
+        ),
+    );
+    assert_eq!(first.status, 204, "{}", first.body);
+    let limited = post(
+        &server,
+        &[("Cookie", cookie.as_str())],
+        &subscription(
+            "https://fcm.googleapis.com/fcm/send/rate-b",
+            "p256dh",
+            "auth",
+        ),
+    );
+    assert_eq!(limited.status, 429, "{}", limited.body);
+    assert!(limited.body.contains("\"code\":\"rate_limited\""));
+    let retry = limited
+        .header("retry-after")
+        .and_then(|value| value.parse::<u64>().ok())
+        .expect("Retry-After");
+    assert!((1..=60).contains(&retry));
+    assert_eq!(
+        subscription_count(&server, USER_ID),
+        1,
+        "the rejected request must not be stored"
+    );
+
+    let other = post(
+        &server,
+        &[("Cookie", other_cookie.as_str())],
+        &subscription(
+            "https://fcm.googleapis.com/fcm/send/rate-other",
+            "p256dh",
+            "auth",
+        ),
+    );
+    assert_eq!(other.status, 204, "{}", other.body);
+    assert_eq!(subscription_count(&server, OTHER_USER_ID), 1);
+
+    let deleted = delete(
+        &server,
+        &cookie,
+        "https://fcm.googleapis.com/fcm/send/rate-a",
+    );
+    assert_eq!(deleted.status, 429, "{}", deleted.body);
 }

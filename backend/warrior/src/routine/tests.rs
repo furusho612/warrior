@@ -46,7 +46,11 @@ fn req_rtn_001_create_statements_scope_the_routine_and_the_exercises_to_the_user
         .contains("WHERE EXISTS (SELECT 1 FROM routines WHERE id = ? AND user_id = ?)"));
     let target = statements
         .iter()
-        .find(|statement| statement.sql().contains("routine_exercise_targets"))
+        .find(|statement| {
+            statement
+                .sql()
+                .contains("INSERT INTO routine_exercise_targets")
+        })
         .expect("a target insert");
     assert!(target
         .sql()

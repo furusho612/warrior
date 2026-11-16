@@ -18,6 +18,7 @@ use super::set_events::SetCompletedEvents;
 use super::sleep_ms;
 use crate::notification;
 use crate::push::PushSubscriptionSetting;
+use crate::rest_push::{self as rest_push_api, RestReservation};
 use crate::rest_timer::{now_ms, ActiveRestTimer, RestTimerState};
 use crate::storage;
 use crate::text::{text, Key};
@@ -227,6 +228,9 @@ fn render_timer(
     let skip_id = training_id.clone();
     let extend_timer = active.timer;
     let shorten_timer = active.timer;
+    let extend_reservation = active.reservation.clone();
+    let shorten_reservation = active.reservation.clone();
+    let skip_reservation = active.reservation;
     rsx! {
         div {
             class: "flex w-full flex-col gap-1 px-3 py-1",
@@ -254,6 +258,14 @@ fn render_timer(
                             let timer = extend_timer.extended(STEP_SECONDS);
                             state.replace(&extend_id, timer);
                             spawn(persist_timer(extend_id.clone(), timer));
+                            if let Some(reservation) = extend_reservation.clone() {
+                                spawn(update_reservation(
+                                    reservation,
+                                    remaining_seconds(timer),
+                                    extend_id.clone(),
+                                    state,
+                                ));
+                            }
                         },
                         "{text(Key::RestTimerExtend)}"
                     }
@@ -264,6 +276,14 @@ fn render_timer(
                             let timer = shorten_timer.shortened(STEP_SECONDS);
                             state.replace(&shorten_id, timer);
                             spawn(persist_timer(shorten_id.clone(), timer));
+                            if let Some(reservation) = shorten_reservation.clone() {
+                                spawn(update_reservation(
+                                    reservation,
+                                    remaining_seconds(timer),
+                                    shorten_id.clone(),
+                                    state,
+                                ));
+                            }
                         },
                         "{text(Key::RestTimerShorten)}"
                     }
@@ -272,6 +292,9 @@ fn render_timer(
                         "data-rest-timer-skip": "true",
                         onclick: move |_| {
                             state.clear();
+                            if let Some(reservation) = skip_reservation.clone() {
+                                spawn(cancel_reservation(reservation));
+                            }
                             spawn(clear_timer(skip_id.clone()));
                         },
                         if finished {
@@ -302,8 +325,9 @@ async fn load_timer(training_id: Option<String>, state: RestTimerState, mut load
         loaded.set(true);
         return;
     };
+    let reservation = storage.rest_reservation(&training_id).await.ok().flatten();
     if let Ok(Some(end_ms)) = storage.rest_timer_end(&training_id).await {
-        state.start(&training_id, RestTimer::from_end_ms(end_ms));
+        state.start_with_reservation(&training_id, RestTimer::from_end_ms(end_ms), reservation);
     }
     loaded.set(true);
 }
@@ -320,6 +344,31 @@ async fn clear_timer(training_id: String) {
         return;
     };
     let _ = storage.clear_rest_timer(&training_id).await;
+}
+
+fn remaining_seconds(timer: RestTimer) -> u32 {
+    u32::try_from(timer.remaining_seconds(now_ms()))
+        .unwrap_or(u32::MAX)
+        .clamp(1, 3_600)
+}
+
+async fn update_reservation(
+    reservation: RestReservation,
+    remaining_seconds: u32,
+    training_id: String,
+    state: RestTimerState,
+) {
+    let Ok(updated) = rest_push_api::update(&reservation.id, remaining_seconds).await else {
+        return;
+    };
+    state.set_reservation(&training_id, Some(updated.clone()));
+    if let Ok(storage) = storage::current().await {
+        let _ = storage.save_rest_reservation(&training_id, &updated).await;
+    }
+}
+
+async fn cancel_reservation(reservation: RestReservation) {
+    let _ = rest_push_api::cancel(&reservation.id).await;
 }
 
 /// レスト時間の設定。画面の消灯防止と、全体の既定値を持つ。
@@ -727,6 +776,12 @@ pub(super) async fn start_after_set_completed(
     let Some(timer) = RestTimer::start(now_ms(), seconds) else {
         return;
     };
-    state.start(&training_id, timer);
+    let reservation = rest_push_api::create(&training_id, seconds).await.ok();
+    if let Some(reservation) = &reservation {
+        let _ = storage
+            .save_rest_reservation(&training_id, reservation)
+            .await;
+    }
+    state.start_with_reservation(&training_id, timer, reservation);
     let _ = storage.save_rest_timer(&training_id, timer.end_ms()).await;
 }

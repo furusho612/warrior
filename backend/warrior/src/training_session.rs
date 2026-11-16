@@ -136,6 +136,11 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
     {
         console_error!("failed to create the AI generation rows: {error}");
     }
+    if let Err(error) =
+        crate::rest_push::cancel_training_reservations(&db, &authenticated.id, &training_id).await
+    {
+        console_error!("failed to cancel the rest push reservations: {error}");
+    }
     summary_response(&saved, personal_bests)
 }
 

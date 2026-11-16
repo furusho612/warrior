@@ -47,7 +47,13 @@ pub async fn alternatives(request: Request, context: RouteContext<()>) -> Result
     let Some(origin) = origin else {
         return Ok(response(ErrorCode::NotFound, "resource not found"));
     };
-    let library = match exercise::list_master(&db).await {
+    let library = exercise::list_master(&db).await.map(|items| {
+        items
+            .into_iter()
+            .map(|(exercise, _)| exercise)
+            .collect::<Vec<_>>()
+    });
+    let library = match library {
         Ok(library) => library,
         Err(error) => {
             console_error!("failed to list the exercises: {error}");

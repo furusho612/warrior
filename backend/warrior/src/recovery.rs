@@ -101,12 +101,14 @@ impl RecoveryRow {
 
 fn parse_instant(text: &str) -> Result<UtcInstant> {
     UtcInstant::parse(text).ok_or_else(|| {
+        #[cfg(target_arch = "wasm32")]
         console_error!("the stored finished time is invalid");
         worker::Error::RustError("the stored finished time is invalid".to_owned())
     })
 }
 
 fn invalid_stored(reason: &str) -> worker::Error {
+    #[cfg(target_arch = "wasm32")]
     console_error!("the stored recovery row is invalid: {reason}");
     worker::Error::RustError(reason.to_owned())
 }

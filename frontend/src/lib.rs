@@ -25,6 +25,7 @@ pub mod profile;
 pub mod push;
 pub mod pwa;
 pub mod record_rail;
+pub mod rest_push;
 pub mod rest_timer;
 pub mod routes;
 pub mod routine;

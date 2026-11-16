@@ -17,6 +17,9 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _context: ScheduleConte
     if let Err(error) = ai_job::enqueue_pending(&env, now).await {
         worker::console_error!("the scheduled AI job enqueue failed: {error}");
     }
+    if let Err(error) = crate::rest_push::enqueue_due(&env, now).await {
+        worker::console_error!("the scheduled rest push enqueue failed: {error}");
+    }
 }
 
 async fn remove_expired(env: &Env) -> Result<()> {

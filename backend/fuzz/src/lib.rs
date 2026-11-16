@@ -10,7 +10,8 @@ use std::sync::LazyLock;
 use warrior_core::ai::{AiContext, AiOutput, AiProfile, TrainingExperience};
 use warrior_core::nutrition::{Goal, Sex};
 use warrior_core::{
-    auth, base64url, cbor, cose, datetime, duration, ids, push, rpe, sync, webauthn,
+    auth, base64url, cbor, cose, datetime, duration, ids, push, rest_push, rpe, sync, web_push,
+    webauthn,
 };
 
 /// Fuzzing の対象。1 つの対象が、1 つの入力の境界に対応する。
@@ -39,6 +40,8 @@ pub enum Target {
     Duration,
     /// RPE の値。
     Rpe,
+    /// Web Push の VAPID JWT と aes128gcm の本文。
+    WebPush,
 }
 
 impl Target {
@@ -54,6 +57,7 @@ impl Target {
         Target::Uuid,
         Target::Duration,
         Target::Rpe,
+        Target::WebPush,
     ];
 
     /// corpus のディレクトリ名と `cargo fuzz` のターゲット名。
@@ -69,6 +73,7 @@ impl Target {
             Target::Uuid => "uuid",
             Target::Duration => "duration",
             Target::Rpe => "rpe",
+            Target::WebPush => "web_push",
         }
     }
 }
@@ -88,6 +93,7 @@ pub fn run(target: Target, data: &[u8]) {
         Target::Uuid => run_uuid(data),
         Target::Duration => run_duration(data),
         Target::Rpe => run_rpe(data),
+        Target::WebPush => run_web_push(data),
     }
 }
 
@@ -260,4 +266,35 @@ fn run_rpe(data: &[u8]) {
         return;
     };
     let _ = rpe::parse(text);
+}
+
+/// Web Push の VAPID JWT と aes128gcm の本文へ入力を渡す。
+fn run_web_push(data: &[u8]) {
+    let secret = p256::SecretKey::from_slice(&[1u8; 32]).expect("the fixed key is a scalar");
+    let public_key =
+        p256::elliptic_curve::sec1::ToSec1Point::to_sec1_point(&secret.public_key(), false);
+    if let Ok(text) = std::str::from_utf8(data) {
+        let _ = web_push::verify_vapid(
+            text,
+            public_key.as_bytes(),
+            "https://push.example.net",
+            1_800_000_000,
+        );
+        let _ = endpoint_origin(text);
+    }
+    let _ = web_push::decrypt(data, &secret, &[0u8; 16]);
+    let _ = rest_push::should_send(
+        rest_push::ReservationState {
+            active: true,
+            version: 1,
+            end_at: 0,
+            sent_at: None,
+        },
+        1,
+        i64::from(data.first().copied().unwrap_or(0)),
+    );
+}
+
+fn endpoint_origin(text: &str) -> Result<String, web_push::Error> {
+    web_push::endpoint_origin(text)
 }

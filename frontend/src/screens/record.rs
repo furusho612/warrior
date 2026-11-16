@@ -17,6 +17,8 @@ use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{PersonalBestItem, SessionSource, TrainingSessionSummary};
 
 use crate::ids::{new_uuid, now_iso};
+use crate::rest_push as rest_push_api;
+use crate::rest_timer::RestTimerState;
 use crate::routes::{navigate, Route};
 use crate::storage::{self, ReplacePurpose, RestoreOutcome, StorageError};
 use crate::sync::{self, SyncStatus};
@@ -308,6 +310,7 @@ fn ProfilePrompt() -> Element {
 fn RecordFinish(signals: RecordSignals) -> Element {
     let finishing = use_signal(|| false);
     let error = use_signal(|| Option::<String>::None);
+    let rest_state = use_context::<RestTimerState>();
     let session = (signals.session)();
     let finished = session
         .as_ref()
@@ -335,7 +338,7 @@ fn RecordFinish(signals: RecordSignals) -> Element {
                 "data-finish": "true",
                 disabled: busy || !enabled,
                 onclick: move |_| {
-                    spawn(finish_training(signals, finishing, error));
+                    spawn(finish_training(signals, finishing, error, rest_state));
                 },
                 if busy {
                     "{text(Key::RecordFinishing)}"
@@ -350,7 +353,7 @@ fn RecordFinish(signals: RecordSignals) -> Element {
                 button {
                     class: "min-h-11 border border-line px-3 text-[13px]",
                     onclick: move |_| {
-                        spawn(finish_training(signals, finishing, error));
+                        spawn(finish_training(signals, finishing, error, rest_state));
                     },
                     "{text(Key::RecordRetry)}"
                 }
@@ -363,10 +366,14 @@ async fn finish_training(
     mut signals: RecordSignals,
     mut finishing: Signal<bool>,
     mut error: Signal<Option<String>>,
+    rest_state: RestTimerState,
 ) {
     let Some(record) = (signals.session)() else {
         return;
     };
+    let reservation = (rest_state.timer)()
+        .filter(|active| active.training_id == record.id)
+        .and_then(|active| active.reservation);
     finishing.set(true);
     error.set(None);
     // 送信待ちが残ったまま終了すると、サーバーの記録とサマリーが食い違う。
@@ -410,6 +417,13 @@ async fn finish_training(
     match saved {
         Ok(()) => {
             error.set(None);
+            rest_state.clear();
+            if let Ok(storage) = storage::current().await {
+                let _ = storage.clear_rest_timer(&completed.id).await;
+            }
+            if let Some(reservation) = reservation {
+                let _ = rest_push_api::cancel(&reservation.id).await;
+            }
             signals.session.set(Some(completed.clone()));
             navigate(&format!("/summary/{}", completed.id));
         }

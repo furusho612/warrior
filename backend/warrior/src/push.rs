@@ -35,6 +35,12 @@ pub async fn create(mut request: Request, context: RouteContext<()>) -> Result<R
     let Some(authenticated) = session::resolve(&request, &env).await? else {
         return Ok(response(ErrorCode::Unauthorized, "authentication required"));
     };
+    if let Some(denied) =
+        crate::rate_limit::check_user(&env, &authenticated.id, crate::rate_limit::Kind::PushUser)
+            .await?
+    {
+        return Ok(denied);
+    }
     let input: SubscriptionInput = match request.json().await {
         Ok(input) => input,
         Err(_) => {
@@ -69,6 +75,12 @@ pub async fn delete(mut request: Request, context: RouteContext<()>) -> Result<R
     let Some(authenticated) = session::resolve(&request, &env).await? else {
         return Ok(response(ErrorCode::Unauthorized, "authentication required"));
     };
+    if let Some(denied) =
+        crate::rate_limit::check_user(&env, &authenticated.id, crate::rate_limit::Kind::PushUser)
+            .await?
+    {
+        return Ok(denied);
+    }
     let input: EndpointInput = match request.json().await {
         Ok(input) => input,
         Err(_) => return Ok(response(ErrorCode::BadRequest, "the endpoint is required")),

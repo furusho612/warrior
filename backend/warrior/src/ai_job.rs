@@ -15,9 +15,7 @@ use warrior_core::ai_job::{
 use warrior_core::datetime;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::training_session::SessionSet;
-use worker::{
-    console_error, Date, Env, MessageBatch, MessageExt, Request, Response, Result, RouteContext,
-};
+use worker::{console_error, Date, Env, Request, Response, Result, RouteContext};
 
 use crate::auth::{self, session};
 use crate::db::{changed_rows, Db};
@@ -91,32 +89,22 @@ struct PendingRow {
     attempts: u32,
 }
 
-/// Queue のメッセージを処理する。
-pub async fn consume(batch: MessageBatch<JobMessage>, env: Env) -> Result<()> {
-    for message in batch.iter() {
-        let message = match message {
-            Ok(message) => message,
-            Err(error) => {
-                console_error!("failed to read the AI job message: {error}");
-                continue;
-            }
-        };
-        let correlation_id = message.id();
-        let generation_id = message.body().generation_id.clone();
-        let started = Date::now().as_millis();
-        if let Err(error) = consumer::process_message(&env, &generation_id, &correlation_id).await {
-            console_error!("failed to process the AI job {generation_id}: {error}");
-            log_job(
-                "unknown",
-                &generation_id,
-                0,
-                "error",
-                elapsed_ms(started),
-                Some("internal"),
-                &correlation_id,
-            );
-        }
-        message.ack();
+/// Queue の 1 つのメッセージを処理する。
+///
+/// 呼び出し側は [crate::queue] がメッセージの種別を判定して呼ぶ。
+pub async fn consume_one(env: &Env, generation_id: &str, correlation_id: &str) -> Result<()> {
+    let started = Date::now().as_millis();
+    if let Err(error) = consumer::process_message(env, generation_id, correlation_id).await {
+        console_error!("failed to process the AI job {generation_id}: {error}");
+        log_job(
+            "unknown",
+            generation_id,
+            0,
+            "error",
+            elapsed_ms(started),
+            Some("internal"),
+            correlation_id,
+        );
     }
     Ok(())
 }

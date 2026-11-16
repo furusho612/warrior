@@ -7,12 +7,14 @@
 use js_sys::{Array, Promise};
 use warrior_core::push::{NOTIFICATION_BODY, NOTIFICATION_TITLE};
 use warrior_core::pwa::{cache_name, is_cacheable_path};
+use warrior_core::rest_push::{RestPushPayload, DELIVERY_WINDOW_SECONDS};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::{future_to_promise, JsFuture};
 use web_sys::{
     Cache, CacheStorage, Client, ClientQueryOptions, ClientType, Clients, Event, ExtendableEvent,
-    FetchEvent, NotificationOptions, Request, Response, ServiceWorkerGlobalScope, WindowClient,
+    FetchEvent, Headers, NotificationOptions, PushEvent, Request, RequestCredentials, RequestInit,
+    Response, ServiceWorkerGlobalScope, WindowClient,
 };
 
 /// Service Worker のキャッシュの版。wasm と JS のビルドごとに更新する。
@@ -125,12 +127,16 @@ fn connect_message(scope: &ServiceWorkerGlobalScope) {
 fn connect_push(scope: &ServiceWorkerGlobalScope) {
     let scope_for_push = scope.clone();
     let closure = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
-        let Ok(event) = event.dyn_into::<ExtendableEvent>() else {
+        let Ok(push) = event.dyn_into::<PushEvent>() else {
             return;
         };
+        let Ok(event) = push.clone().dyn_into::<ExtendableEvent>() else {
+            return;
+        };
+        let payload = push.data().map(|data| data.text());
         let scope = scope_for_push.clone();
         let promise = future_to_promise(async move {
-            if let Err(error) = show_rest_finished(&scope).await {
+            if let Err(error) = show_rest_finished(&scope, payload.as_deref()).await {
                 worker_log(&format!("push failed: {error:?}"));
             }
             Ok(JsValue::UNDEFINED)
@@ -165,12 +171,55 @@ fn connect_notification_click(scope: &ServiceWorkerGlobalScope) {
     closure.forget();
 }
 
-async fn show_rest_finished(scope: &ServiceWorkerGlobalScope) -> Result<(), JsValue> {
+async fn show_rest_finished(
+    scope: &ServiceWorkerGlobalScope,
+    payload: Option<&str>,
+) -> Result<(), JsValue> {
+    if let Some(payload) = payload {
+        if let Ok(payload) = serde_json::from_str::<RestPushPayload>(payload) {
+            let now = (js_sys::Date::now() / 1_000.0) as i64;
+            if now > payload.end_at.saturating_add(DELIVERY_WINDOW_SECONDS) {
+                return Ok(());
+            }
+            show_notification(scope).await?;
+            if let Err(error) = report_received(scope, &payload).await {
+                worker_log(&format!("report received failed: {error:?}"));
+            }
+            return Ok(());
+        }
+    }
+    show_notification(scope).await
+}
+
+async fn show_notification(scope: &ServiceWorkerGlobalScope) -> Result<(), JsValue> {
     let options = NotificationOptions::new();
     options.set_body(NOTIFICATION_BODY);
     let registration = scope.registration();
     let shown = registration.show_notification_with_options(NOTIFICATION_TITLE, &options)?;
     JsFuture::from(shown).await?;
+    Ok(())
+}
+
+async fn report_received(
+    scope: &ServiceWorkerGlobalScope,
+    payload: &RestPushPayload,
+) -> Result<(), JsValue> {
+    let body = serde_json::to_string(&serde_json::json!({
+        "reservation_id": payload.reservation_id,
+        "version": payload.version,
+    }))
+    .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let headers = Headers::new()?;
+    headers.set("Content-Type", "application/json")?;
+    let init = RequestInit::new();
+    init.set_method("POST");
+    init.set_credentials(RequestCredentials::SameOrigin);
+    init.set_headers(&headers);
+    init.set_body(&JsValue::from_str(&body));
+    let url = format!("{}/api/push/received", scope.origin());
+    let request = Request::new_with_str_and_init(&url, &init)?;
+    let promise = scope.fetch_with_request(&request);
+    JsFuture::from(promise).await?;
     Ok(())
 }
 

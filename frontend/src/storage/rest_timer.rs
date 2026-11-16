@@ -12,6 +12,8 @@ use wasm_bindgen::JsValue;
 
 use warrior_core::rest_timer::is_valid_seconds;
 
+use crate::rest_push::RestReservation;
+
 use super::{abort, indexeddb, Storage, StorageError, Store};
 
 /// 秒数を保存するメタの 1 行。
@@ -28,8 +30,19 @@ struct EndRecord {
     end_ms: i64,
 }
 
+/// プッシュ通知の予約を保存するメタの 1 行。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ReservationRecord {
+    key: String,
+    reservation: RestReservation,
+}
+
 fn timer_key(training_id: &str) -> String {
     format!("rest_timer:{training_id}")
+}
+
+fn reservation_key(training_id: &str) -> String {
+    format!("rest_reservation:{training_id}")
 }
 
 fn exercise_seconds_key(training_exercise_id: &str) -> String {
@@ -135,7 +148,36 @@ impl Storage {
 
     /// 保存した終了予定時刻を消す。
     pub async fn clear_rest_timer(&self, training_id: &str) -> Result<(), StorageError> {
-        delete_meta(self, &timer_key(training_id)).await
+        delete_meta(self, &timer_key(training_id)).await?;
+        delete_meta(self, &reservation_key(training_id)).await
+    }
+
+    /// プッシュ通知の予約を端末内へ保存する。
+    pub async fn save_rest_reservation(
+        &self,
+        training_id: &str,
+        reservation: &RestReservation,
+    ) -> Result<(), StorageError> {
+        save_meta(
+            self,
+            &ReservationRecord {
+                key: reservation_key(training_id),
+                reservation: reservation.clone(),
+            },
+        )
+        .await
+    }
+
+    /// 保存したプッシュ通知の予約を返す。無ければ None。
+    pub async fn rest_reservation(
+        &self,
+        training_id: &str,
+    ) -> Result<Option<RestReservation>, StorageError> {
+        Ok(
+            load_meta::<ReservationRecord>(self, &reservation_key(training_id))
+                .await?
+                .map(|record| record.reservation),
+        )
     }
 
     /// レスト時間の既定値を保存する。None のときは初期値に戻す。

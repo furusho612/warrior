@@ -7,6 +7,8 @@
 use dioxus::prelude::*;
 use warrior_core::rest_timer::RestTimer;
 
+use crate::rest_push::RestReservation;
+
 /// 記録中のトレーニングと、そのレストタイマー。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveRestTimer {
@@ -14,6 +16,8 @@ pub struct ActiveRestTimer {
     pub training_id: String,
     /// 終了予定時刻を持つタイマー。
     pub timer: RestTimer,
+    /// サーバーのプッシュ通知の予約。予約できない場合は None。
+    pub reservation: Option<RestReservation>,
 }
 
 /// 記録画面と下部のタイマーが共有する状態。
@@ -30,10 +34,21 @@ pub struct RestTimerState {
 impl RestTimerState {
     /// タイマーを開始する。ほかのトレーニングのタイマーは置き換える。
     pub fn start(self, training_id: &str, timer: RestTimer) {
+        self.start_with_reservation(training_id, timer, None);
+    }
+
+    /// プッシュ通知の予約と一緒にタイマーを開始する。
+    pub fn start_with_reservation(
+        self,
+        training_id: &str,
+        timer: RestTimer,
+        reservation: Option<RestReservation>,
+    ) {
         let mut signal = self.timer;
         signal.set(Some(ActiveRestTimer {
             training_id: training_id.to_owned(),
             timer,
+            reservation,
         }));
     }
 
@@ -46,14 +61,25 @@ impl RestTimerState {
     /// 表示中のタイマーの終了予定時刻を変える。
     pub fn replace(self, training_id: &str, timer: RestTimer) {
         let mut signal = self.timer;
-        if signal
-            .peek()
-            .as_ref()
-            .is_some_and(|active| active.training_id == training_id)
-        {
+        let current = signal.peek().clone();
+        if let Some(active) = current.filter(|active| active.training_id == training_id) {
             signal.set(Some(ActiveRestTimer {
                 training_id: training_id.to_owned(),
                 timer,
+                reservation: active.reservation,
+            }));
+        }
+    }
+
+    /// 表示中のタイマーの予約を置き換える。
+    pub fn set_reservation(self, training_id: &str, reservation: Option<RestReservation>) {
+        let mut signal = self.timer;
+        let current = signal.peek().clone();
+        if let Some(active) = current.filter(|active| active.training_id == training_id) {
+            signal.set(Some(ActiveRestTimer {
+                training_id: training_id.to_owned(),
+                timer: active.timer,
+                reservation,
             }));
         }
     }

@@ -25,9 +25,11 @@ pub mod ownership;
 pub mod personal_best;
 pub mod profile;
 pub mod push;
+pub mod queue;
 pub mod random;
 pub mod rate_limit;
 pub mod recovery;
+pub mod rest_push;
 pub mod router;
 pub mod routine;
 pub mod scheduled;
@@ -98,11 +100,11 @@ pub async fn fetch(request: Request, env: Env, _context: Context) -> Result<Resp
 /// AI の生成ジョブの Queue のメッセージを処理する。
 #[event(queue)]
 pub async fn jobs_queue(
-    batch: MessageBatch<ai_job::JobMessage>,
+    batch: MessageBatch<queue::JobMessage>,
     env: Env,
     _context: Context,
 ) -> Result<()> {
-    ai_job::consume(batch, env).await
+    queue::consume(batch, env).await
 }
 
 /// 状態を変更するリクエストの `Origin` が、環境の Origin と一致するかを返す。
