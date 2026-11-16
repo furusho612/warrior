@@ -41,14 +41,14 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 - [ ] production の D1、R2、Queues が作成され、Workers AI のバインディングと Cron Triggers の設定が `[env.production]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision と Consequences に対応する。
 - [ ] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list DB --remote --env production` に未適用がない。これは ADR-023 の Decision に対応する。
-- [ ] production の vars にある Relying Party ID と Origin が production のホスト名である。これは ADR-023 の Decision に対応する。
-- [ ] production のレート制限の上限値と時間窓が production の vars にある。これは `REQ-NFR-017` の受入基準「上限と時間窓は環境ごとの設定で変えられる」に対応する。
+- [x] production の vars にある Relying Party ID と Origin が production のホスト名である。これは ADR-023 の Decision に対応する。
+- [x] production のレート制限の上限値と時間窓が production の vars にある。これは `REQ-NFR-017` の受入基準「上限と時間窓は環境ごとの設定で変えられる」に対応する。
 - [ ] production の R2 バケットは 1 つで、`exports/` の接頭辞に、書き出しを 7 日で削除するライフサイクルルールが設定され、`wrangler r2 bucket lifecycle list <BUCKET>` が `exports/` の接頭辞の規則だけを返し、`users/` の接頭辞に規則がない。これは ADR-017 の Decision と ADR-023 の Decision と Consequences に対応する。
 - [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録され、production の vars にある Google のクライアント ID とリダイレクト URI が production のホスト名に対応する。これは ADR-023 の Decision と Consequences に対応する。
 - [ ] VAPID の公開鍵と subject が production の vars に、Google のクライアントシークレットと VAPID の秘密鍵が production の Secret に設定されている。これは ADR-023 の Decision に対応する。
-- [ ] `wrangler deploy --dry-run --env production` が成功する。これはデプロイ設定の検証の内部条件である。
+- [x] `wrangler deploy --dry-run --env production` が成功する。これはデプロイ設定の検証の内部条件である。
 - [ ] ローカルの `.dev.vars` に production の資格情報がない。これは ADR-023 の Decision に対応する。
-- [ ] staging の資源を作っていない。これはこの issue の対象範囲に対応する。
+- [x] staging の資源を作っていない。これはこの issue の対象範囲に対応する。
 
 ## 解決方法
 
@@ -64,9 +64,9 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 ## 進捗
 
-`wrangler.toml` の `[env.production]` に D1、R2、Queues、Workers AI、Cron Triggers、vars を置き、レート制限の上限と窓も含めた。
+`wrangler.toml` の `[env.production]` に D1、R2、Queues、Workers AI、Cron Triggers、vars を置き、レート制限の上限と窓も含めた。D1 の `database_id` は `2b764b0f-85ea-4582-932a-479d9c83d14f` とし、RP_ID と Origin は `warrior.phack.workers.dev`、Google のクライアント ID とリダイレクト URI は production のホスト名に合わせた。
 `wrangler deploy --dry-run --env production` が成功することを確認した。
-残りは Cloudflare の資源作成、`database_id` と Secret の設定、D1 のマイグレーションの適用、Google OAuth と VAPID の実値の設定であり、利用者の資格情報が必要である。
+残りは R2 と Queues の作成確認、R2 のライフサイクルルール、Google OAuth のリダイレクト URI の登録、VAPID の実値と Secret、D1 のマイグレーションの適用である。
 
 ## 止める理由
 

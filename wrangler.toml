@@ -87,7 +87,7 @@ enabled = true
 binding = "DB"
 database_name = "warrior"
 migrations_dir = "migrations"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "2b764b0f-85ea-4582-932a-479d9c83d14f"
 
 [[env.production.r2_buckets]]
 binding = "BUCKET"
@@ -110,14 +110,14 @@ binding = "AI"
 crons = ["* * * * *"]
 
 [env.production.vars]
-RP_ID = "warrior.example.workers.dev"
-ORIGIN = "https://warrior.example.workers.dev"
+RP_ID = "warrior.phack.workers.dev"
+ORIGIN = "https://warrior.phack.workers.dev"
 GOOGLE_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_OAUTH_ISSUER = "https://accounts.google.com"
 GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_OAUTH_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
-GOOGLE_CLIENT_ID = "REPLACE_WITH_PRODUCTION_GOOGLE_CLIENT_ID"
-GOOGLE_OAUTH_REDIRECT_URI = "https://warrior.example.workers.dev/api/auth/google/callback"
+GOOGLE_CLIENT_ID = "913960898555-oev8vaaq3nn3iier1p96nqjva320ulq2.apps.googleusercontent.com"
+GOOGLE_OAUTH_REDIRECT_URI = "https://warrior.phack.workers.dev/api/auth/google/callback"
 AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 VAPID_PUBLIC_KEY = "REPLACE_WITH_PRODUCTION_VAPID_PUBLIC_KEY"
 VAPID_SUBJECT = "mailto:owner@example.com"
