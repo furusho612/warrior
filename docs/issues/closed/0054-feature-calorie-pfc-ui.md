@@ -84,3 +84,4 @@ PFC の調整は、たんぱく質を体重 1 kg あたり 1.6 g から 2.2 g �
 `GET /api/nutrition` と `PUT /api/nutrition` を追加し、身体情報、目的、活動量、週あたりの日数から目標カロリーと PFC を計算する。
 未入力の項目、医療上の注意、ダイエットの減量の目安、PFC の調整と既定値への復帰、体重による範囲の補正を画面に表示する。
 `backend/warrior/tests/nutrition.rs` で計算、保存、範囲外の拒否を確認し、`backend/pbt/tests/nutrition_ui.rs` で丸めの合計を確認した。
+`backend/warrior/tests/e2e_nutrition.rs` で、目標カロリーと PFC、ダイエットの目安、注意書き、PFC の調整と既定値への復帰を実ブラウザで確認した。

@@ -147,6 +147,52 @@ fn a_custom_program_is_created_updated_selected_and_deleted() {
     assert_eq!(current["program"]["id"], custom_id);
     assert_eq!(current["total_days"], 2);
 
+    let first_routine = current["routine_id"]
+        .as_str()
+        .expect("the first routine")
+        .to_owned();
+    let started = post(
+        &server,
+        &format!("/api/routines/{first_routine}/start"),
+        &cookie_a,
+    );
+    assert_eq!(started.status, 200, "{}", started.body);
+    let started: Value = serde_json::from_str(&started.body).expect("the record is JSON");
+    assert_eq!(started["session"]["source_kind"], "custom_program");
+    assert!(started["session"]["custom_program_day_id"].is_string());
+    let training_id = started["session"]["id"].as_str().expect("the training id");
+    let finished = post(
+        &server,
+        &format!("/api/trainings/{training_id}/finish"),
+        &cookie_a,
+    );
+    assert_eq!(finished.status, 200, "{}", finished.body);
+    let current = get(&server, "/api/programs/current", &cookie_a);
+    let current: Value = serde_json::from_str(&current.body).expect("the current is JSON");
+    assert_eq!(current["day_position"], 2);
+
+    let second_routine = current["routine_id"]
+        .as_str()
+        .expect("the second routine")
+        .to_owned();
+    let started = post(
+        &server,
+        &format!("/api/routines/{second_routine}/start"),
+        &cookie_a,
+    );
+    assert_eq!(started.status, 200, "{}", started.body);
+    let started: Value = serde_json::from_str(&started.body).expect("the record is JSON");
+    let training_id = started["session"]["id"].as_str().expect("the training id");
+    let finished = post(
+        &server,
+        &format!("/api/trainings/{training_id}/finish"),
+        &cookie_a,
+    );
+    assert_eq!(finished.status, 200, "{}", finished.body);
+    let current = get(&server, "/api/programs/current", &cookie_a);
+    let current: Value = serde_json::from_str(&current.body).expect("the current is JSON");
+    assert_eq!(current["day_position"], 1);
+
     let usage = get(
         &server,
         &format!("/api/routines/{ROUTINE_A}/usage"),

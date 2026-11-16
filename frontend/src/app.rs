@@ -29,9 +29,8 @@ pub fn App() -> Element {
         notification_enabled: use_signal(|| false),
     };
     use_context_provider(|| rest_timer);
-    let theme_preference = use_context_provider(|| ThemePreference {
-        mode: use_signal(theme::cached_display_mode),
-    });
+    let theme_mode = use_signal(theme::cached_display_mode);
+    let theme_preference = use_context_provider(|| ThemePreference { mode: theme_mode });
     use_hook(theme::watch_system_preference);
     let mut theme_mode = theme_preference.mode;
     use_effect(move || {

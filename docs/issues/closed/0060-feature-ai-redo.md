@@ -86,3 +86,4 @@ AI の出力は記録の事実ではなく、利用者が採用を決める提�
 `redo_of` に入力の出力のキーを保存し、前回の出力をプロンプトに含める。断定を減らせない場合は `minimal` を返し、再生成しない。
 `frontend/src/screens/evaluations.rs`、`record/proposals.rs`、`menu_optimization.rs` に作り直しの操作を置いた。
 `backend/warrior/tests/ai_output.rs` で `pending` への遷移を確認した。
+`backend/warrior/tests/e2e_daily_evaluation.rs` で、一覧の作り直しの操作の後に状態が `pending` になることを実ブラウザで確認した。

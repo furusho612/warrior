@@ -84,4 +84,5 @@ PRD の `REQ-PRG-021` から `REQ-PRG-024` が、この機能の要求を定め�
 `backend/warrior/src/custom_program.rs` に作成、取得、更新、削除、選択の API を置き、`warrior_core::custom_program` で名前と 2 日以上 7 日以下の検証を共有する。
 `frontend/src/screens/custom_program.rs` に一覧、作成、編集、削除、選択を置き、`routines` の画面に表示する。
 使用中のルーティンの削除は、`GET /api/routines/:id/usage` でプログラム名を返して画面で拒否し、同期の適用でも 409 にする。
-`backend/warrior/tests/programs.rs` で作成、更新、選択、削除、使用中のルーティンの削除の拒否を確認した。`backend/pbt/tests/custom_program.rs` で入力と進行の性質を確認した。
+`backend/warrior/tests/programs.rs` で作成、更新、選択、削除、使用中のルーティンの削除の拒否、開始後の進行を確認した。`backend/pbt/tests/custom_program.rs` で入力と進行の性質を確認した。
+`backend/warrior/tests/e2e_custom_program.rs` で、独自のプログラムの作成、開始、終了後の次の日への進行、削除を実ブラウザで確認した。

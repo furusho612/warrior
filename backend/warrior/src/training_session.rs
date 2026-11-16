@@ -144,17 +144,21 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
     {
         console_error!("failed to cancel the rest push reservations: {error}");
     }
-    if let Some(program_day_id) = saved.program_day_id.as_deref() {
-        if let Err(error) = crate::program::advance_progress(
+    let advanced = if let Some(program_day_id) = saved.program_day_id.as_deref() {
+        crate::program::advance_progress(
             &db,
             &authenticated.id,
             program_day_id,
             saved.custom_program_day_id.as_deref(),
         )
         .await
-        {
-            console_error!("failed to advance the program progress: {error}");
-        }
+    } else if let Some(custom_day_id) = saved.custom_program_day_id.as_deref() {
+        crate::custom_program::advance_progress(&db, &authenticated.id, custom_day_id).await
+    } else {
+        Ok(())
+    };
+    if let Err(error) = advanced {
+        console_error!("failed to advance the program progress: {error}");
     }
     summary_response(&saved, personal_bests)
 }

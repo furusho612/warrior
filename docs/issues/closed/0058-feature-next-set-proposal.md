@@ -88,3 +88,4 @@ AI の生成に失敗した場合、または提案がない場合は、候補�
 `GET /api/ai/proposals` と `PUT /api/ai/proposals/:id`、`/api/proposals/:id` を追加し、提案の理由、値の修正、採用を扱う。
 `frontend/src/screens/record/proposals.rs` に候補の表示、採用、修正、保存、作り直しを置いた。
 `backend/warrior/tests/ai_output.rs` で提案の取得、修正、別の利用者の 404、保存後の再取得を確認した。
+`backend/warrior/tests/e2e_next_set_proposal.rs` で、固定の提案の表示、採用、修正、保存後の再表示を実ブラウザで確認した。

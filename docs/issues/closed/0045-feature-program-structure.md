@@ -98,3 +98,4 @@
 進行の位置は `warrior_core::program::next_position`、推奨は `warrior_core::program::recommend` に置き、`backend/pbt/tests/program.rs` で性質を確認した。
 `backend/warrior/tests/programs.rs` で推奨、選択、開始、終了後の進行、やめる、独自のプログラムとの切り替えを確認した。
 アカウントの削除の対象に `user_program_progress` を追加した。
+`backend/warrior/tests/e2e_program_home.rs` で、プログラムの選択、ホームからの開始、終了後の次の日への進行を実ブラウザで確認した。

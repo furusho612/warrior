@@ -80,3 +80,4 @@
 `GET /api/ai/menu` と `POST /api/ai/menu/apply` を追加し、承認した変更だけをルーティンへ反映する。
 `frontend/src/screens/menu_optimization.rs` に変更ごとの承認を置き、`routines` の画面に表示する。
 `backend/warrior/tests/ai_output.rs` でメニューの取得と入れ替えの反映を確認した。
+`backend/warrior/tests/e2e_menu_optimization.rs` で、固定の変更の表示と承認、ルーティンのセット数への反映を実ブラウザで確認した。

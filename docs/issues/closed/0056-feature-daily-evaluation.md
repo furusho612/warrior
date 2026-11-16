@@ -86,3 +86,4 @@ AI の生成に失敗した場合、または評価できない場合は、サ�
 `GET /api/ai/evaluations` と `GET /api/evaluations`、`GET /api/evaluations/:id` を追加し、`EvaluationEntry` と `EvaluationDetail` で評価、根拠、目的、日付を返す。
 `frontend/src/screens/summary.rs` と `frontend/src/screens/evaluations.rs` に評価の表示、生成中、失敗、評価できない場合の表示、医療上の注意を置いた。
 `backend/warrior/tests/ai_output.rs` で評価、提案、メニュー、詳細、別の利用者の 404、作り直しを確認した。
+`backend/warrior/tests/e2e_daily_evaluation.rs` で、固定の評価の出力を投入し、一覧に根拠付きで表示されることを実ブラウザで確認した。
