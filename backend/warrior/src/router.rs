@@ -6,6 +6,7 @@ use warrior_core::{HEALTH_PATH, HEALTH_STATUS};
 use worker::{Request, Response, Result, RouteContext, Router};
 
 use crate::account;
+use crate::ai_job;
 use crate::analysis;
 use crate::auth::{oauth, passkey, session};
 use crate::calendar;
@@ -82,6 +83,8 @@ pub const PUSH_SUBSCRIPTIONS_ROUTE_NAME: &str = "push_subscriptions";
 pub const ROUTINES_ROUTE_NAME: &str = "routines";
 /// ルーティンからトレーニングを開始する経路の名前。
 pub const ROUTINE_START_ROUTE_NAME: &str = "routine_start";
+/// AI の生成の状態を返す経路の名前。
+pub const AI_JOB_ROUTE_NAME: &str = "ai_job";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -102,6 +105,7 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/push/public-key", push::public_key)
         .post_async("/api/push/subscriptions", push::create)
         .delete_async("/api/push/subscriptions", push::delete)
+        .get_async("/api/ai/jobs/:id", ai_job::status)
         .get_async("/api/me/passkeys", passkey::list)
         .delete_async("/api/account", account::delete)
         .post_async("/api/sync/operations", sync::apply_operation)
@@ -153,6 +157,9 @@ pub fn build_router() -> Router<'static, ()> {
 
 /// 経路のパスからログに載せる名前を決める。
 pub fn route_name(path: &str) -> &'static str {
+    if ai_job_id_path(path).is_some() {
+        return AI_JOB_ROUTE_NAME;
+    }
     if path.starts_with("/api/me/passkeys/") {
         return "passkeys_delete";
     }
@@ -240,6 +247,15 @@ fn training_id_path(path: &str) -> Option<&str> {
     Some(rest)
 }
 
+/// `/api/ai/jobs/:id` の形の経路から、生成の ID の部分を取り出す。
+fn ai_job_id_path(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api/ai/jobs/")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(rest)
+}
+
 /// `/api/exercises/:id` の形の経路から、種目の ID の部分を取り出す。
 fn exercise_id_path(path: &str) -> Option<&str> {
     let rest = path.strip_prefix("/api/exercises/")?;
@@ -260,6 +276,7 @@ fn export_id_path(path: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    use super::AI_JOB_ROUTE_NAME;
     use super::ANALYSIS_BODY_PARTS_ROUTE_NAME;
     use super::ANALYSIS_RECOVERY_ROUTE_NAME;
     use super::{
@@ -431,6 +448,19 @@ mod tests {
         assert_eq!(
             route_name("/api/analysis/recovery"),
             ANALYSIS_RECOVERY_ROUTE_NAME
+        );
+    }
+
+    #[test]
+    fn names_the_ai_job_route() {
+        assert_eq!(
+            route_name("/api/ai/jobs/3f2504e0-4f89-41d3-9a0c-0305e82c6601"),
+            AI_JOB_ROUTE_NAME
+        );
+        assert_eq!(route_name("/api/ai/jobs/"), NOT_FOUND_ROUTE_NAME);
+        assert_eq!(
+            route_name("/api/ai/jobs/3f2504e0-4f89-41d3-9a0c-0305e82c6601/extra"),
+            NOT_FOUND_ROUTE_NAME
         );
     }
 

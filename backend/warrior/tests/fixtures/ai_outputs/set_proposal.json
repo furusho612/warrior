@@ -1,0 +1,31 @@
+{
+  "evaluation": null,
+  "proposals": [
+    {
+      "exercise_id": "bench-press",
+      "grip": null,
+      "attachment": null,
+      "weight_kg": 82.5,
+      "reps": 8,
+      "duration_seconds": null,
+      "sets": 3,
+      "reason": "前回 80 kg で 8 回を達成したため、2.5 kg 増やす",
+      "reference_reason": null
+    },
+    {
+      "exercise_id": "plank",
+      "grip": null,
+      "attachment": null,
+      "weight_kg": null,
+      "reps": null,
+      "duration_seconds": 75,
+      "sets": 3,
+      "reason": "前回 60 秒を 3 セット行えたため、15 秒延ばす",
+      "reference_reason": null
+    }
+  ],
+  "menu_changes": [],
+  "goal_response": null,
+  "nutrition_advice": null,
+  "safety_advice": null
+}
