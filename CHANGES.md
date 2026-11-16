@@ -138,3 +138,6 @@
 - [FIX] 独自のプログラムのトレーニングを終了した後に、次の日へ進むようにする
   - 独自のプログラムの日 ID を持つトレーニングの終了で進行を更新する
   - @Shoichi
+- [ADD] staging の設定とデプロイのタスクを追加する
+  - `[env.staging]` の D1、R2、Queues、Workers AI、Cron Triggers、vars と `mise run deploy-staging` を追加する。資源の作成と実機の確認は利用者が行う
+  - @Shoichi

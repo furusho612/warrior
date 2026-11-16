@@ -5,6 +5,7 @@
 - Created: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-split-set-calc
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -48,3 +49,9 @@
 `mod.rs` から `pub use` して今の公開パスを保つ。
 関数とテストは意味を変えずに移動するだけにし、整形以外の差分を出さない。
 0027 の左右別の値の追加分もこの issue の範囲に含め、同じ方針で移す。
+
+## 結果
+
+`backend/warrior_core/src/set_calc.rs` を `backend/warrior_core/src/set_calc/mod.rs` へ移し、例示テストを `backend/warrior_core/src/set_calc/tests.rs` に分けた。
+`mod.rs` は 690 行、`tests.rs` は 537 行で、どちらも 1000 行以下である。
+`warrior_core::set_calc` の公開パスは変えず、`cargo test -p warrior_core` と `cargo test -p warrior_pbt` で同じ計算と検証を確認した。

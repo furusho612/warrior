@@ -15,6 +15,14 @@ pub enum HttpError {
     Unavailable,
     /// サーバーが要求を受け付けない。
     Rejected,
+    /// サーバーが権限または記録の状態を理由に拒否した。
+    Forbidden,
+    /// 要求元の Origin がアプリの Origin と一致しない。
+    OriginRejected,
+    /// 資源が見つからない。
+    NotFound,
+    /// 記録の状態が変わったなどの競合。
+    Conflict,
     /// 応答の本文が期待した形に一致しない。
     InvalidResponse,
     /// 要求の本文を JSON にできない。
@@ -86,10 +94,23 @@ pub async fn request_status_for_operation(
 /// 同じオリジンへ要求を送り、成功した応答だけを返す。
 async fn send_ok(method: &str, url: &str, body: Option<String>) -> Result<Response, HttpError> {
     let response = send(method, url, body, None).await?;
-    if !response.ok() {
-        return Err(HttpError::Rejected);
+    if response.ok() {
+        return Ok(response);
     }
-    Ok(response)
+    let status = response.status();
+    let body = read_text(response).await.unwrap_or_default();
+    Err(status_error(status, &body))
+}
+
+/// 状態コードと応答の本文から、画面が使う失敗を決める。
+pub fn status_error(status: u16, body: &str) -> HttpError {
+    match status {
+        403 if body.contains("origin") => HttpError::OriginRejected,
+        403 => HttpError::Forbidden,
+        404 => HttpError::NotFound,
+        409 => HttpError::Conflict,
+        _ => HttpError::Rejected,
+    }
 }
 
 async fn send(
@@ -122,9 +143,37 @@ async fn send(
 }
 
 async fn read_json<T: DeserializeOwned>(response: Response) -> Result<T, HttpError> {
+    let body = read_text(response).await?;
+    serde_json::from_str(&body).map_err(|_| HttpError::InvalidResponse)
+}
+
+async fn read_text(response: Response) -> Result<String, HttpError> {
     let body = JsFuture::from(response.text().map_err(|_| HttpError::Unavailable)?)
         .await
         .map_err(|_| HttpError::Unavailable)?;
-    let body: String = body.as_string().ok_or(HttpError::InvalidResponse)?;
-    serde_json::from_str(&body).map_err(|_| HttpError::InvalidResponse)
+    body.as_string().ok_or(HttpError::InvalidResponse)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{status_error, HttpError};
+
+    #[test]
+    fn the_status_and_the_body_classify_the_failure() {
+        assert_eq!(status_error(400, "{}"), HttpError::Rejected);
+        assert_eq!(
+            status_error(403, r#"{"error":{"code":"forbidden"}}"#),
+            HttpError::Forbidden
+        );
+        assert_eq!(
+            status_error(
+                403,
+                r#"{"error":{"code":"forbidden","message":"the request origin is not the app origin"}}"#
+            ),
+            HttpError::OriginRejected
+        );
+        assert_eq!(status_error(404, "{}"), HttpError::NotFound);
+        assert_eq!(status_error(409, "{}"), HttpError::Conflict);
+        assert_eq!(status_error(500, "{}"), HttpError::Rejected);
+    }
 }

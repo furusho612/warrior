@@ -76,6 +76,13 @@ staging を追加した後は、production と同じ `AI_MODEL` を staging に�
 作業の結果は issue に追記し、Secret の値は書かない。
 利用者が staging で iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm の起動と PWA の起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録と復帰後の同期、未保存の表示、HTTPS と暗号化を確認し、結果を issue に追記する。
 
+## 進捗
+
+`wrangler.toml` に `[env.staging]` の D1、R2、Queues、Workers AI、Cron Triggers、vars を追加した。
+`mise.toml` に `deploy-staging` を追加し、`.dev.vars.example` に staging の資格情報を置く場所を明記した。
+`wrangler deploy --dry-run --env staging` が成功することを確認した。
+残りは Cloudflare の staging の資源作成、Secret の設定、実機での確認であり、利用者の資格情報と実機が必要である。
+
 ## 止める理由
 
 今は production を先に用意するため、staging を作らない。

@@ -5,6 +5,7 @@
 - Created: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-unify-frontend-http-client
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -43,3 +44,11 @@
 `frontend/src/training_session.rs` の `request`、`request_body`、`status_error` を削除し、`HttpError` から `TrainingApiError` への変換を置く。
 `frontend/src/calendar.rs` と `frontend/src/screens/record/ownership.rs` の分岐を新しい値に合わせる。
 `frontend/tests/` に分類のテストを追加する。
+
+## 結果
+
+`HttpError` に `Forbidden`、`OriginRejected`、`NotFound`、`Conflict` を追加し、`status_error` で状態コードと本文から分類するようにした。
+`training_session.rs` の要求の組み立てと `status_error` を削除し、`http::request_json` と `TrainingApiError` への変換に置き換えた。
+403 の本文に Origin の拒否を示す文がある場合は `OriginRejected` として通信の失敗に倒し、記録の状態変更は `Forbidden` のまま保つ。
+`frontend/src/push.rs` の分類も新しい値に合わせた。
+`frontend/src/http.rs` と `frontend/src/training_session.rs` の単体テストで分類を確認した。

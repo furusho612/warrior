@@ -55,7 +55,12 @@ impl From<HttpError> for RegistrationError {
         match error {
             HttpError::Rejected => Self::Rejected,
             HttpError::InvalidRequest => Self::Failed,
-            HttpError::Unavailable | HttpError::InvalidResponse => Self::Failed,
+            HttpError::Unavailable
+            | HttpError::OriginRejected
+            | HttpError::Forbidden
+            | HttpError::NotFound
+            | HttpError::Conflict
+            | HttpError::InvalidResponse => Self::Failed,
         }
     }
 }
