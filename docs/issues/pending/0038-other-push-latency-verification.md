@@ -54,6 +54,12 @@ PC の Safari で通知を許可する。
 各端末で 10 回のレストを終了し、結果を issue に追記する。
 結果に応じて ADR-008 または新しい ADR を更新し、PRD の REQ-TMR-012 の扱いを揃える。
 
+## 進捗
+
+`mise run verify-staging` を追加した。staging の D1 から `end_at`、`sent_at`、`received_at` を読み、試行数、受信数、欠落数、5 秒以内の件数、遅れの中央値と最大値を出力する。
+`scripts/verify_staging.sh` は Cloudflare の資格情報と実機で作られた予約の行を必要とする。
+残りは iPhone の Safari、Android の Chrome、PC の Safari の実機で 10 回ずつ計測し、結果を記録する作業である。
+
 ## 止める理由
 
 0067 の staging へのデプロイ、iPhone、Android、PC の Safari の実機、通知の許可が利用者に依存する。

@@ -184,6 +184,10 @@ description = "production の Worker をデプロイする"
 depends = ["backend:build", "frontend:build"]
 run = "wrangler deploy --env production"
 
+[tasks."verify-staging"]
+description = "staging のプッシュ通知の遅延を D1 から集計する"
+run = "sh scripts/verify_staging.sh staging"
+
 [tasks.db-migrate-local]
 description = "ローカルの D1 にマイグレーションを適用する"
 run = "wrangler d1 migrations apply DB --local"
