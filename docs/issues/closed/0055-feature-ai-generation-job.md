@@ -2,6 +2,7 @@
 
 - Requirements: REQ-AI-014, REQ-AI-018
 - Priority: Medium
+- Completed: 2026-11-16
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-ai-generation-job
@@ -109,3 +110,11 @@ Queue と生成のログには、ジョブの種別、生成の ID、試行回�
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `ai_generation` と `ai_outputs` を追加する。
 `backend/warrior/tests/ai_job.rs` に結合テストを追加する。
 `backend/pbt/tests/ai_job.rs` に状態の性質テストを置く。
+
+## 結果
+
+AI の生成の状態、再試行、lease の回復、Queue の投入と消費、R2 の入出力スナップショット、アカウントの削除、`GET /api/ai/jobs/:id` を実装した。
+トレーニングの終了時に、日の評価と記録のある種目ごとの提案の `pending` の行を作り、記録の無い種目には作らない。
+一時的な失敗は 1 秒、5 秒、30 秒の間隔で再試行し、初回を含めて 4 回目の失敗で `failed` にする。恒久的な失敗は再試行しない。
+結合テストの `wait_for_terminal` が、画面と同じように `generated` または `failed` になるまで状態を取得することを確かめる。
+統合時に、生成の行の材料を ID の生成から分け、wasm 以外の単体テストが乱数を呼ばないようにした。
