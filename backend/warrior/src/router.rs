@@ -7,17 +7,21 @@ use worker::{Request, Response, Result, RouteContext, Router};
 
 use crate::account;
 use crate::ai_job;
+use crate::ai_output;
 use crate::alternative;
 use crate::analysis;
 use crate::auth::{oauth, passkey, session};
 use crate::calendar;
 use crate::custom_exercise;
+use crate::custom_program;
 use crate::exercise_override;
 use crate::export;
 use crate::goal;
 use crate::history;
 use crate::library;
+use crate::nutrition;
 use crate::profile;
+use crate::program;
 use crate::push;
 use crate::recovery;
 use crate::rest_push;
@@ -82,6 +86,8 @@ pub const CALENDAR_MONTH_ROUTE_NAME: &str = "calendar_month";
 pub const CALENDAR_DAY_ROUTE_NAME: &str = "calendar_day";
 /// 身体情報を取得し、更新する経路の名前。
 pub const PROFILE_ROUTE_NAME: &str = "profile";
+/// 目標カロリーと PFC を取得し、調整する経路の名前。
+pub const NUTRITION_ROUTE_NAME: &str = "nutrition";
 /// 利用者共通の設定を取得し、更新する経路の名前。
 pub const SETTINGS_ROUTE_NAME: &str = "settings";
 /// VAPID の公開鍵を返す経路の名前。
@@ -98,10 +104,30 @@ pub const REST_RESERVATION_DELETE_ROUTE_NAME: &str = "rest_reservation_delete";
 pub const PUSH_RECEIVED_ROUTE_NAME: &str = "push_received";
 /// ルーティンの一覧を返す経路の名前。
 pub const ROUTINES_ROUTE_NAME: &str = "routines";
+/// プログラムの一覧を返す経路の名前。
+pub const PROGRAMS_ROUTE_NAME: &str = "programs";
+/// プログラムを選ぶ経路の名前。
+pub const PROGRAM_SELECT_ROUTE_NAME: &str = "program_select";
+/// 進行中のプログラムを返す経路の名前。
+pub const PROGRAM_CURRENT_ROUTE_NAME: &str = "program_current";
+/// 進行中のプログラムをやめる経路の名前。
+pub const PROGRAM_STOP_ROUTE_NAME: &str = "program_stop";
+/// ルーティンを使っている独自のプログラムを返す経路の名前。
+pub const ROUTINE_USAGE_ROUTE_NAME: &str = "routine_usage";
 /// ルーティンからトレーニングを開始する経路の名前。
 pub const ROUTINE_START_ROUTE_NAME: &str = "routine_start";
 /// AI の生成の状態を返す経路の名前。
 pub const AI_JOB_ROUTE_NAME: &str = "ai_job";
+/// AI の評価の一覧を返す経路の名前。
+pub const AI_EVALUATIONS_ROUTE_NAME: &str = "ai_evaluations";
+/// AI の評価の詳細を返す経路の名前。
+pub const AI_EVALUATION_DETAIL_ROUTE_NAME: &str = "ai_evaluation_detail";
+/// AI の次回セットの提案の一覧を返す経路の名前。
+pub const AI_PROPOSALS_ROUTE_NAME: &str = "ai_proposals";
+/// AI のメニューの最適化を返す経路の名前。
+pub const AI_MENU_ROUTE_NAME: &str = "ai_menu";
+/// AI のメニューの変更を承認する経路の名前。
+pub const AI_MENU_APPLY_ROUTE_NAME: &str = "ai_menu_apply";
 /// 経路が見つからないときのログの名前。
 pub const NOT_FOUND_ROUTE_NAME: &str = "not_found";
 
@@ -117,6 +143,8 @@ pub fn build_router() -> Router<'static, ()> {
         .get_async("/api/exports/:id", export::download)
         .get_async("/api/profile", profile::get)
         .put_async("/api/profile", profile::update)
+        .get_async("/api/nutrition", nutrition::get)
+        .put_async("/api/nutrition", nutrition::update)
         .get_async("/api/settings", settings::get)
         .put_async("/api/settings", settings::update)
         .get_async("/api/push/public-key", push::public_key)
@@ -126,11 +154,30 @@ pub fn build_router() -> Router<'static, ()> {
         .post_async("/api/rest/reservations", rest_push::create)
         .patch_async("/api/rest/reservations/:id", rest_push::update)
         .delete_async("/api/rest/reservations/:id", rest_push::delete)
+        .post_async("/api/ai/jobs/:id/redo", ai_job::redo)
         .get_async("/api/ai/jobs/:id", ai_job::status)
+        .get_async("/api/ai/evaluations", ai_output::evaluations)
+        .get_async("/api/evaluations", ai_output::evaluations)
+        .get_async("/api/evaluations/:id", ai_output::evaluation_detail)
+        .get_async("/api/ai/proposals", ai_output::proposals)
+        .put_async("/api/ai/proposals/:id", ai_output::update_proposal)
+        .put_async("/api/proposals/:id", ai_output::update_proposal)
+        .get_async("/api/ai/menu", ai_output::menu)
+        .post_async("/api/ai/menu/apply", ai_output::apply_menu)
         .get_async("/api/me/passkeys", passkey::list)
         .delete_async("/api/account", account::delete)
         .post_async("/api/sync/operations", sync::apply_operation)
         .get_async("/api/routines", routine::list)
+        .get_async("/api/programs", program::list)
+        .get_async("/api/programs/current", program::current)
+        .post_async("/api/programs/:id/select", program::select)
+        .get_async("/api/custom-programs", custom_program::list)
+        .post_async("/api/custom-programs", custom_program::create)
+        .put_async("/api/custom-programs/:id", custom_program::update)
+        .delete_async("/api/custom-programs/:id", custom_program::delete)
+        .post_async("/api/custom-programs/:id/select", custom_program::select)
+        .delete_async("/api/programs/current", program::stop)
+        .get_async("/api/routines/:id/usage", routine::usage)
         .post_async("/api/routines/:id/start", routine::start)
         .post_async("/api/trainings/:id/finish", training_session::finish)
         .get_async("/api/trainings/:id/summary", training_session::summary)
@@ -182,8 +229,41 @@ pub fn build_router() -> Router<'static, ()> {
 
 /// 経路のパスからログに載せる名前を決める。
 pub fn route_name(path: &str) -> &'static str {
+    if path.starts_with("/api/ai/jobs/") && path.ends_with("/redo") {
+        return AI_JOB_ROUTE_NAME;
+    }
     if ai_job_id_path(path).is_some() {
         return AI_JOB_ROUTE_NAME;
+    }
+    if path == "/api/ai/evaluations" {
+        return AI_EVALUATIONS_ROUTE_NAME;
+    }
+    if path == "/api/evaluations" {
+        return AI_EVALUATIONS_ROUTE_NAME;
+    }
+    if path.starts_with("/api/evaluations/") {
+        return AI_EVALUATION_DETAIL_ROUTE_NAME;
+    }
+    if path == "/api/ai/proposals" || path == "/api/proposals" {
+        return AI_PROPOSALS_ROUTE_NAME;
+    }
+    if path.starts_with("/api/ai/proposals/") || path.starts_with("/api/proposals/") {
+        return AI_PROPOSALS_ROUTE_NAME;
+    }
+    if path == "/api/ai/menu" {
+        return AI_MENU_ROUTE_NAME;
+    }
+    if path == "/api/ai/menu/apply" {
+        return AI_MENU_APPLY_ROUTE_NAME;
+    }
+    if path == "/api/programs" {
+        return PROGRAMS_ROUTE_NAME;
+    }
+    if path == "/api/programs/current" {
+        return PROGRAM_CURRENT_ROUTE_NAME;
+    }
+    if path.starts_with("/api/programs/") && path.ends_with("/select") {
+        return PROGRAM_SELECT_ROUTE_NAME;
     }
     if path.starts_with("/api/me/passkeys/") {
         return "passkeys_delete";
@@ -214,6 +294,9 @@ pub fn route_name(path: &str) -> &'static str {
     }
     if exercise_id_path(path).is_some() {
         return EXERCISE_ROUTE_NAME;
+    }
+    if path.starts_with("/api/routines/") && path.ends_with("/usage") {
+        return ROUTINE_USAGE_ROUTE_NAME;
     }
     if path.starts_with("/api/routines/") && path.ends_with("/start") {
         return ROUTINE_START_ROUTE_NAME;
@@ -250,6 +333,7 @@ pub fn route_name(path: &str) -> &'static str {
         "/api/me" => ME_ROUTE_NAME,
         "/api/exports" => EXPORTS_ROUTE_NAME,
         "/api/profile" => PROFILE_ROUTE_NAME,
+        "/api/nutrition" => NUTRITION_ROUTE_NAME,
         "/api/settings" => SETTINGS_ROUTE_NAME,
         "/api/push/public-key" => PUSH_PUBLIC_KEY_ROUTE_NAME,
         "/api/push/subscriptions" => PUSH_SUBSCRIPTIONS_ROUTE_NAME,

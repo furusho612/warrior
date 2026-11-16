@@ -5,6 +5,7 @@
 - Created: 2026-11-14
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-exercise-descriptions
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -46,3 +47,9 @@
 `migrations/0011_exercise_descriptions.sql` に、106 種の `instructions`、`cautions`、`tips` の UPDATE を置く。
 `backend/warrior/tests/exercise_seed.rs` に、106 種の 3 列が空でないことを確かめるテストを追加する。
 0039 と 0040 は、既存の列を表示し、入力を保存する。
+
+## 結果
+
+`migrations/0024_exercise_descriptions.sql` で、種目マスターの `instructions`、`cautions`、`tips` を部位と器具の組み合わせで埋めた。
+スクワット、ベンチプレス、デッドリフト、ベントオーバーロウ、オーバーヘッドプレス、クランチ、プランクは個別の文面にする。
+`backend/warrior/tests/exercise_seed.rs` の `assert_descriptions` で、全ての種目に 3 つの文面があることを確認した。

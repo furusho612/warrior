@@ -155,11 +155,33 @@ fn req_lib_001_the_seed_covers_the_library_and_program_exercises() {
     assert_equipment_coverage(&exercises);
     assert_program_exercises(&exercises);
     assert_muscle_integrity(&exercises, &muscles);
+    assert_descriptions(&exercises);
     assert_kana_order(&exercises);
     assert_grip_options(&exercises);
     assert_bodyweight_record_modes(&exercises);
     assert_exercise_type_validation(&exercises, &muscles);
     assert_the_seed_is_idempotent(&server, &exercises, &muscles, &units);
+}
+
+fn assert_descriptions(exercises: &[SeedExercise]) {
+    for exercise in exercises {
+        for (field, value) in [
+            ("instructions", &exercise.instructions),
+            ("cautions", &exercise.cautions),
+            ("tips", &exercise.tips),
+        ] {
+            assert!(
+                !value.trim().is_empty(),
+                "{} must have {field}",
+                exercise.name
+            );
+            assert!(
+                value.chars().count() >= 10,
+                "{} must have a sentence in {field}",
+                exercise.name
+            );
+        }
+    }
 }
 
 fn assert_seed_counts(exercises: &[SeedExercise], muscles: &[SeedMuscle]) {

@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-pwa-service-worker
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -82,3 +83,9 @@ iOS の Safari で、ホーム画面に追加していない状態を検出し�
 `frontend/tests/pwa.rs` にブラウザのテストを追加する。
 `backend/warrior/tests/e2e_pwa.rs` に E2E を追加する。
 `backend/pbt/tests/pwa.rs` にキャッシュのキーの性質テストを置く。
+
+## 結果
+
+manifest、Service Worker、版ごとのキャッシュ、更新の検出、iOS のホーム画面への追加の案内は実装済みである。
+`frontend/tests/pwa.rs` のブラウザのテスト、`backend/warrior/tests/e2e_pwa.rs` の E2E、`backend/pbt/tests/pwa.rs` の性質テストがある。
+Service Worker の通知の受信は 0036 と 0066 の変更を取り込んだ後も既存のテストで確認している。

@@ -5,7 +5,7 @@
 //! 開始は既存のトレーニングの作成の文に `routine_id` を渡し、種目とセットを
 //! サーバーで写す。写すときのスナップショットは種目マスターの現在の内容から作る。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use warrior_core::datetime;
 use warrior_core::exercise::{ExerciseSnapshot, GripSelection, Laterality};
 use warrior_core::routine::{Routine, RoutineExercise, RoutineList, RoutineTarget};
@@ -19,6 +19,16 @@ use crate::db::Db;
 use crate::error::{response, ErrorCode};
 use crate::ownership;
 use crate::sync::{applied_statement, BatchOutcome};
+
+#[derive(Debug, Deserialize)]
+struct NameRow {
+    name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UsageResponse {
+    programs: Vec<String>,
+}
 
 /// `GET /api/routines`
 pub async fn list(request: Request, context: RouteContext<()>) -> Result<Response> {
@@ -35,6 +45,24 @@ pub async fn list(request: Request, context: RouteContext<()>) -> Result<Respons
         }
     };
     Response::from_json(&RoutineList { routines })
+}
+
+/// `POST /api/routines/:id/start`
+/// `GET /api/routines/:id/usage`
+pub async fn usage(request: Request, context: RouteContext<()>) -> Result<Response> {
+    let Some(routine_id) = context.param("id").cloned() else {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    };
+    let env = context.env;
+    let Some(authenticated) = session::resolve(&request, &env).await? else {
+        return Ok(response(ErrorCode::Unauthorized, "authentication required"));
+    };
+    let db = Db::new(env.d1("DB")?);
+    if !owned(&db, &routine_id, &authenticated.id).await? {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    }
+    let names = used_by_programs(&db, &authenticated.id, &routine_id).await?;
+    Response::from_json(&UsageResponse { programs: names })
 }
 
 /// `POST /api/routines/:id/start`
@@ -68,15 +96,22 @@ pub async fn start(request: Request, context: RouteContext<()>) -> Result<Respon
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
+    let (source_kind, source_day) =
+        crate::program::routine_source(&db, &authenticated.id, &routine.id).await?;
+    let (program_day_id, custom_program_day_id) = match source_kind {
+        SessionSource::Program => (source_day, None),
+        SessionSource::CustomProgram => (None, source_day),
+        _ => (None, None),
+    };
     let payload = SessionCreatePayload {
         id: training_id.clone(),
         date,
         started_at: now.clone(),
         memo: String::new(),
-        source_kind: SessionSource::Routine,
+        source_kind,
         routine_id: Some(routine.id.clone()),
-        program_day_id: None,
-        custom_program_day_id: None,
+        program_day_id,
+        custom_program_day_id,
     };
     let statements = match start_statements(
         &db,
@@ -156,6 +191,13 @@ pub(crate) async fn routine_batch(
                     "resource not found",
                 )));
             }
+            let names = used_by_programs(db, user_id, &payload.routine_id).await?;
+            if !names.is_empty() {
+                return Ok(BatchOutcome::Reject(response(
+                    ErrorCode::Conflict,
+                    &format!("the routine is used by: {}", names.join(", ")),
+                )));
+            }
             Ok(BatchOutcome::Apply(delete_statements(
                 user_id,
                 &validated.operation,
@@ -196,6 +238,24 @@ async fn owned_or_missing(db: &Db, routine_id: &str, user_id: &str) -> Result<bo
 
 async fn owned(db: &Db, routine_id: &str, user_id: &str) -> Result<bool> {
     Ok(routine_owner(db, routine_id).await?.as_deref() == Some(user_id))
+}
+
+async fn used_by_programs(db: &Db, user_id: &str, routine_id: &str) -> Result<Vec<String>> {
+    Ok(db
+        .all(&SqlStatement::new(
+            "SELECT DISTINCT p.name FROM custom_programs p \
+             JOIN custom_program_days d ON d.custom_program_id = p.id \
+             WHERE p.user_id = ? AND d.routine_id = ? ORDER BY p.name",
+            vec![
+                SqlValue::Text(user_id.to_owned()),
+                SqlValue::Text(routine_id.to_owned()),
+            ],
+        ))
+        .await?
+        .results::<NameRow>()?
+        .into_iter()
+        .map(|row| row.name)
+        .collect())
 }
 
 async fn routine_owner(db: &Db, routine_id: &str) -> Result<Option<String>> {

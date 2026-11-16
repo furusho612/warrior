@@ -1,0 +1,14 @@
+{
+  "case": "menu_optimization_unbalanced_week",
+  "kind": "menu_optimization",
+  "profile": {
+    "goal": "hypertrophy",
+    "training_experience": "intermediate",
+    "training_days_per_week": 4
+  },
+  "records": [
+    {"date": "2026-11-04", "body_part": "chest", "sets": 12},
+    {"date": "2026-11-06", "body_part": "back", "sets": 4},
+    {"date": "2026-11-08", "body_part": "legs", "sets": 6}
+  ]
+}

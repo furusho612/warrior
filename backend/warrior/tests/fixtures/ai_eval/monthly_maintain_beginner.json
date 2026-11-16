@@ -1,0 +1,13 @@
+{
+  "case": "monthly_evaluation_maintain_beginner",
+  "kind": "monthly_evaluation",
+  "profile": {
+    "goal": "maintain",
+    "training_experience": "beginner",
+    "training_days_per_week": 2
+  },
+  "records": [
+    {"date": "2026-10-07", "exercise": "ラットプルダウン", "sets": [{"weight_kg": 40.0, "reps": 10, "rpe": 7}]},
+    {"date": "2026-10-21", "exercise": "ラットプルダウン", "sets": [{"weight_kg": 45.0, "reps": 10, "rpe": 8}]}
+  ]
+}

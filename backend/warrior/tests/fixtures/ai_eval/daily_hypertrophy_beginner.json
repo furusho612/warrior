@@ -1,0 +1,20 @@
+{
+  "case": "daily_evaluation_hypertrophy_beginner",
+  "kind": "daily_evaluation",
+  "profile": {
+    "goal": "hypertrophy",
+    "training_experience": "beginner",
+    "training_days_per_week": 3
+  },
+  "records": [
+    {
+      "date": "2026-11-10",
+      "exercise": "ベンチプレス",
+      "sets": [
+        {"weight_kg": 40.0, "reps": 8, "rpe": 7},
+        {"weight_kg": 40.0, "reps": 8, "rpe": 8},
+        {"weight_kg": 40.0, "reps": 7, "rpe": 9}
+      ]
+    }
+  ]
+}

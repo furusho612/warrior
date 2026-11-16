@@ -7,7 +7,9 @@ use warrior_core::ai::context::{
     AiContext, AiProfile, ContextExercise, ContextTraining, PartAnalysis, PartCategory,
     PartSetReference, TrainingExperience,
 };
-use warrior_core::ai::output::{AiOutput, Evaluation, EvaluationItem, OutputError, SetProposal};
+use warrior_core::ai::output::{
+    AiOutput, Certainty, Evaluation, EvaluationItem, OutputError, SetProposal,
+};
 use warrior_core::ai::safety::{apply_safety, SAFETY_ADVICE, SAFETY_TERMS};
 use warrior_core::jst::JstDate;
 use warrior_core::nutrition::{Goal, Sex};
@@ -58,16 +60,19 @@ fn evaluation(evidence: &str) -> Evaluation {
         good: vec![EvaluationItem {
             text: "重量が伸びた".to_owned(),
             evidence: evidence.to_owned(),
+            certainty: Certainty::Assertion,
             reference_reason: None,
         }],
         improvements: vec![EvaluationItem {
             text: "量を増やす".to_owned(),
             evidence: "胸は週 10 セット".to_owned(),
+            certainty: Certainty::Assertion,
             reference_reason: None,
         }],
         next_actions: vec![EvaluationItem {
             text: "続ける".to_owned(),
             evidence: "前回 70 kg".to_owned(),
+            certainty: Certainty::Assertion,
             reference_reason: None,
         }],
     }
@@ -140,16 +145,19 @@ proptest! {
                 good: vec![EvaluationItem {
                     text: "重量が伸びた".to_owned(),
                     evidence: format!("{number} kg を扱えた"),
+                    certainty: Certainty::Assertion,
                     reference_reason: None,
                 }],
                 improvements: vec![EvaluationItem {
                     text: "量を増やす".to_owned(),
                     evidence: "胸は週 10 セット".to_owned(),
+                    certainty: Certainty::Assertion,
                     reference_reason: None,
                 }],
                 next_actions: vec![EvaluationItem {
                     text: "続ける".to_owned(),
                     evidence: format!("体重 {number} kg"),
+                    certainty: Certainty::Assertion,
                     reference_reason: None,
                 }],
             }),
@@ -205,6 +213,7 @@ proptest! {
             evaluation.good.push(EvaluationItem {
                 text: "追加".to_owned(),
                 evidence: "70 kg".to_owned(),
+                certainty: Certainty::Assertion,
                 reference_reason: None,
             });
         }

@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-daily-evaluation
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -78,3 +79,10 @@ AI の生成に失敗した場合、または評価できない場合は、サ�
 `backend/warrior/tests/e2e_daily_evaluation.rs` に E2E を追加する。
 `backend/pbt/tests/evaluation.rs` に性質テストを置く。
 実モデルの品質は 0069 で確認する。
+
+## 結果
+
+トレーニングの終了時に日の評価の生成の行を作り、Queue で生成する。一意キーは `daily:<日付>` とし、同じ日の終了で 1 行を上書きする。
+`GET /api/ai/evaluations` と `GET /api/evaluations`、`GET /api/evaluations/:id` を追加し、`EvaluationEntry` と `EvaluationDetail` で評価、根拠、目的、日付を返す。
+`frontend/src/screens/summary.rs` と `frontend/src/screens/evaluations.rs` に評価の表示、生成中、失敗、評価できない場合の表示、医療上の注意を置いた。
+`backend/warrior/tests/ai_output.rs` で評価、提案、メニュー、詳細、別の利用者の 404、作り直しを確認した。

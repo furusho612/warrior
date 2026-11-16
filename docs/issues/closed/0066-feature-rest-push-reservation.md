@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-rest-push-reservation
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -101,3 +102,10 @@ Cron Triggers で、期限を過ぎた予約と、lease の期限を過ぎた Qu
 `backend/warrior/tests/rest_push.rs` に結合テストを追加する。
 `backend/pbt/tests/rest_push.rs` に性質テストを置く。
 `backend/warrior_core/src/web_push.rs` の送信の関数を呼ぶ。
+
+## 結果
+
+`rest_push_reservations` の表と、予約の作成、変更、取り消し、受信の記録の API を追加した。
+Queue の消費で送信の対象を選び、Cron で期限の来た予約を Queue へ送る。トレーニングの終了とアカウントの削除で予約を取り消す。
+`backend/warrior_core/src/rest_push.rs` に送信の判断、TTL、遅延、次の版を置き、`backend/pbt/tests/rest_push.rs` で確認した。
+`backend/warrior/tests/rest_push.rs` で予約、送信、遅れた通知の破棄を確認した。

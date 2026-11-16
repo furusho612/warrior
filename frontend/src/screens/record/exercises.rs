@@ -25,6 +25,7 @@ use super::exercise_view::{
     ExerciseView, SetSaver, SupersetGroupView,
 };
 use super::memo_save::{run_save_loop, MemoSaveState};
+use super::proposals::ProposalPanel;
 use super::rest_timer::{RestSecondsField, RestSecondsTarget};
 use super::set_drawer::SetDrawer;
 use super::set_events::SetCompletedEvents;
@@ -591,6 +592,8 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
     let laterality = view.snapshot.laterality;
     let superset_view_id = view.record.id.clone();
     let rest_exercise_id = view.record.id.clone();
+    let proposal_view_id = view.record.id.clone();
+    let proposal_exercise_id = view.snapshot.exercise_id.clone();
     let superset = view.superset.clone();
     let rows = view.sets.clone();
     let has_completed = rows.iter().any(SetView::completed);
@@ -653,6 +656,16 @@ fn ExerciseDetail(state: ExerciseDetailState, actions: ExerciseDetailActions) ->
                 disabled,
                 has_completed,
                 on_changed,
+            }
+            ProposalPanel {
+                exercise_id: proposal_exercise_id,
+                disabled,
+                on_apply: move |proposal| {
+                    on_action.call(SetAction::ApplyProposal {
+                        view_id: proposal_view_id.clone(),
+                        proposal,
+                    });
+                },
             }
             ExerciseMemoEditor {
                 training_id: training_id.clone(),

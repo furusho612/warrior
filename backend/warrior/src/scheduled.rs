@@ -1,5 +1,6 @@
 //! Cron Triggers の入口と、期限切れの短期データの削除。
 
+use warrior_core::jst::UtcInstant;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use worker::{event, Env, Result, ScheduleContext, ScheduledEvent};
 
@@ -14,6 +15,13 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _context: ScheduleConte
         worker::console_error!("the scheduled cleanup failed: {error}");
     }
     let now = now_seconds();
+    if let Some(today) = UtcInstant::from_epoch_seconds(now).jst_date() {
+        if let Ok(db) = env.d1("DB").map(Db::new) {
+            if let Err(error) = ai_job::create_period_jobs(&db, today).await {
+                worker::console_error!("the scheduled period evaluation creation failed: {error}");
+            }
+        }
+    }
     if let Err(error) = ai_job::enqueue_pending(&env, now).await {
         worker::console_error!("the scheduled AI job enqueue failed: {error}");
     }

@@ -1,7 +1,8 @@
 //! セットの追加、削除、コピーと、端末内への保存。
 
 use dioxus::prelude::*;
-use warrior_core::exercise::RecordMode;
+use warrior_core::ai::output::SetProposal;
+use warrior_core::exercise::{GripSelection, RecordMode};
 use warrior_core::set_calc::SetKind;
 use warrior_core::set_rules;
 
@@ -20,15 +21,49 @@ use crate::training_set::{self, SegmentSideValues, SetSegmentValues, SetValues};
 pub(super) async fn add_set(
     training_id: String,
     view_id: String,
-    mut views: Signal<Vec<ExerciseView>>,
+    views: Signal<Vec<ExerciseView>>,
     error: Signal<RecordErrors>,
 ) {
+    add_set_with(training_id, view_id, views, error, default_values).await;
+}
+
+/// AI の提案のセットを、提案のセット数だけ追加する。
+pub(super) async fn apply_proposal(
+    training_id: String,
+    view_id: String,
+    proposal: SetProposal,
+    views: Signal<Vec<ExerciseView>>,
+    error: Signal<RecordErrors>,
+) {
+    for _ in 0..proposal.sets {
+        let current = proposal.clone();
+        if !add_set_with(
+            training_id.clone(),
+            view_id.clone(),
+            views,
+            error,
+            move |view| proposal_values(view, &current),
+        )
+        .await
+        {
+            return;
+        }
+    }
+}
+
+async fn add_set_with(
+    training_id: String,
+    view_id: String,
+    mut views: Signal<Vec<ExerciseView>>,
+    error: Signal<RecordErrors>,
+    values_for: impl Fn(&ExerciseView) -> SetValues,
+) -> bool {
     let Some(view) = (views)()
         .iter()
         .find(|view| view.record.id == view_id)
         .cloned()
     else {
-        return;
+        return false;
     };
     let position = view
         .sets
@@ -37,41 +72,12 @@ pub(super) async fn add_set(
         .max()
         .unwrap_or(0)
         .saturating_add(1);
-    let lateral = is_lateral(view.snapshot.laterality, view.snapshot.record_mode);
-    let side = lateral.then_some(SegmentSideValues {
-        weight_kg: match view.snapshot.record_mode {
-            RecordMode::BodyweightAndReps => Some(0.0),
-            RecordMode::WeightAndReps | RecordMode::Time => None,
-        },
-        reps: 0,
-        duration_seconds: None,
-    });
-    let values = SetValues {
-        kind: SetKind::Normal,
-        mode: view.snapshot.record_mode,
-        segments: vec![SetSegmentValues {
-            weight_kg: 0.0,
-            reps: 0,
-            momentum_reps: 0,
-            assisted_reps: 0,
-            duration_seconds: None,
-            left: side,
-            right: side,
-        }],
-        completed: false,
-        body_weight_kg: view.body_weight_kg,
-        rpe: None,
-        grip: default_grip(
-            view.snapshot.grip_mode,
-            &view.snapshot.grip_options,
-            view.sets.last().and_then(SetView::grip),
-        ),
-    };
+    let values = values_for(&view);
     let (rows, operation) = match training_set::create(&training_id, &view_id, position, &values) {
         Ok(rows) => rows,
         Err(_) => {
             set_load_error(error, Key::RecordSetSaveFailed);
-            return;
+            return false;
         }
     };
     let set_view = SetView::from_rows(rows.set.clone(), rows.segments.clone());
@@ -97,12 +103,89 @@ pub(super) async fn add_set(
         }
         views.set(list);
         set_load_error(error, Key::RecordSetSaveFailed);
-        return;
+        return false;
     }
     sync::flush_in_background();
     if let Some(grip) = values.grip {
         super::grip::refresh_after_add(&training_id, &view_id, &rows.set.id, &view, grip, views)
             .await;
+    }
+    true
+}
+
+/// 空のセットの値。
+fn default_values(view: &ExerciseView) -> SetValues {
+    let lateral = is_lateral(view.snapshot.laterality, view.snapshot.record_mode);
+    let side = lateral.then_some(SegmentSideValues {
+        weight_kg: match view.snapshot.record_mode {
+            RecordMode::BodyweightAndReps => Some(0.0),
+            RecordMode::WeightAndReps | RecordMode::Time => None,
+        },
+        reps: 0,
+        duration_seconds: None,
+    });
+    SetValues {
+        kind: SetKind::Normal,
+        mode: view.snapshot.record_mode,
+        segments: vec![SetSegmentValues {
+            weight_kg: 0.0,
+            reps: 0,
+            momentum_reps: 0,
+            assisted_reps: 0,
+            duration_seconds: None,
+            left: side,
+            right: side,
+        }],
+        completed: false,
+        body_weight_kg: view.body_weight_kg,
+        rpe: None,
+        grip: default_grip(
+            view.snapshot.grip_mode,
+            &view.snapshot.grip_options,
+            view.sets.last().and_then(SetView::grip),
+        ),
+    }
+}
+
+/// AI の提案の値を持つセットの値。
+fn proposal_values(view: &ExerciseView, proposal: &SetProposal) -> SetValues {
+    let lateral = is_lateral(view.snapshot.laterality, view.snapshot.record_mode);
+    let weight = proposal.weight_kg.unwrap_or(0.0);
+    let reps = proposal.reps.unwrap_or(0);
+    let side = lateral.then_some(SegmentSideValues {
+        weight_kg: match view.snapshot.record_mode {
+            RecordMode::BodyweightAndReps => Some(0.0),
+            RecordMode::WeightAndReps | RecordMode::Time => None,
+        },
+        reps,
+        duration_seconds: None,
+    });
+    SetValues {
+        kind: SetKind::Normal,
+        mode: view.snapshot.record_mode,
+        segments: vec![SetSegmentValues {
+            weight_kg: weight,
+            reps,
+            momentum_reps: 0,
+            assisted_reps: 0,
+            duration_seconds: proposal.duration_seconds,
+            left: side,
+            right: side,
+        }],
+        completed: false,
+        body_weight_kg: view.body_weight_kg,
+        rpe: None,
+        grip: proposal
+            .grip
+            .as_deref()
+            .and_then(|grip| serde_json::from_str::<GripSelection>(grip).ok())
+            .or_else(|| {
+                default_grip(
+                    view.snapshot.grip_mode,
+                    &view.snapshot.grip_options,
+                    view.sets.last().and_then(SetView::grip),
+                )
+            }),
     }
 }
 

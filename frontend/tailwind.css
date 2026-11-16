@@ -31,3 +31,9 @@
   --font-sans: var(--font-ui);
   --font-condensed: var(--font-numeric);
 }
+
+@layer components {
+  .recovery-ring {
+    border-radius: 9999px;
+  }
+}

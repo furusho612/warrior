@@ -10,9 +10,11 @@ mod context;
 
 use serde::{Deserialize, Serialize};
 use warrior_core::ai_job::{
-    daily_evaluation_key, lease_deadline, set_proposal_key, JobKind, JobStatus,
+    daily_evaluation_key, lease_deadline, monthly_evaluation_key, set_proposal_key,
+    weekly_evaluation_key, JobKind, JobStatus,
 };
 use warrior_core::datetime;
+use warrior_core::jst::JstDate;
 use warrior_core::sql::{SqlStatement, SqlValue};
 use warrior_core::training_session::SessionSet;
 use worker::{console_error, Date, Env, Request, Response, Result, RouteContext};
@@ -45,8 +47,8 @@ pub struct JobMessage {
 }
 
 /// 生成の行の読み取りに使う列。
-const JOB_COLUMNS: &str =
-    "id, user_id, kind, training_id, exercise_id, status, attempts, lease_expires_at, next_attempt_at";
+const JOB_COLUMNS: &str = "id, user_id, kind, training_id, exercise_id, period_start, \
+     period_end, status, attempts, lease_expires_at, next_attempt_at, redo_of";
 
 /// 生成の行。
 #[derive(Debug, Deserialize)]
@@ -56,6 +58,9 @@ struct JobRow {
     kind: String,
     training_id: Option<String>,
     exercise_id: Option<String>,
+    period_start: Option<String>,
+    period_end: Option<String>,
+    redo_of: Option<String>,
     status: String,
     attempts: u32,
     lease_expires_at: Option<String>,
@@ -190,6 +195,113 @@ fn status_statement(job_id: &str, user_id: &str) -> SqlStatement {
             SqlValue::Text(user_id.to_owned()),
         ],
     )
+}
+
+#[derive(Debug, Deserialize)]
+struct RedoRow {
+    kind: String,
+    exercise_id: Option<String>,
+    status: String,
+    output_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RedoResponse {
+    status: &'static str,
+}
+
+/// `POST /api/ai/jobs/:id/redo`
+///
+/// 前回の出力を残したまま、同じ生成の行を `pending` に戻す。
+/// 出力が既に控えめさの最小値に達している場合は、AI を呼ばない。
+pub async fn redo(request: Request, context: RouteContext<()>) -> Result<Response> {
+    let Some(job_id) = context.param("id").cloned() else {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    };
+    let env = context.env;
+    let Some(authenticated) = session::resolve(&request, &env).await? else {
+        return Ok(response(ErrorCode::Unauthorized, "authentication required"));
+    };
+    let db = Db::new(env.d1("DB")?);
+    let Some(row) = db
+        .first::<RedoRow>(&SqlStatement::new(
+            "SELECT g.kind, g.exercise_id, g.status, o.output_key \
+             FROM ai_generation g LEFT JOIN ai_outputs o ON o.id = g.id \
+             WHERE g.id = ? AND g.user_id = ?",
+            vec![
+                SqlValue::Text(job_id.clone()),
+                SqlValue::Text(authenticated.id.clone()),
+            ],
+        ))
+        .await?
+    else {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    };
+    if row.status == "pending" || row.status == "enqueued" {
+        return Ok(response(ErrorCode::Conflict, "the job is not finished"));
+    }
+    let Some(kind) = JobKind::parse(&row.kind) else {
+        return Ok(response(ErrorCode::Internal, "internal error"));
+    };
+    let Some(output_key) = row.output_key.as_deref() else {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    };
+    let Some(previous) = crate::ai_output::load_output(&env, output_key).await else {
+        return Ok(response(ErrorCode::NotFound, "resource not found"));
+    };
+    if !can_redo(kind, &previous, row.exercise_id.as_deref()) {
+        return Response::from_json(&RedoResponse { status: "minimal" });
+    }
+    let now = auth::now_iso();
+    db.run(&SqlStatement::new(
+        "UPDATE ai_generation SET status = 'pending', attempts = 0, lease_expires_at = NULL, \
+         next_attempt_at = NULL, redo_of = ?, last_error_code = NULL, updated_at = ? \
+         WHERE id = ? AND user_id = ?",
+        vec![
+            SqlValue::Text(output_key.to_owned()),
+            SqlValue::Text(now),
+            SqlValue::Text(job_id),
+            SqlValue::Text(authenticated.id),
+        ],
+    ))
+    .await?;
+    Response::from_json(&RedoResponse { status: "pending" })
+}
+
+/// 評価または提案が、これ以上控えめにできる状態か。
+fn can_redo(
+    kind: JobKind,
+    previous: &warrior_core::ai::output::AiOutput,
+    exercise_id: Option<&str>,
+) -> bool {
+    match kind {
+        JobKind::DailyEvaluation | JobKind::WeeklyEvaluation | JobKind::MonthlyEvaluation => {
+            previous
+                .evaluation
+                .as_ref()
+                .is_some_and(|evaluation| assertion_count(evaluation) > 0)
+        }
+        JobKind::SetProposal => previous
+            .proposals
+            .iter()
+            .filter(|proposal| exercise_id.is_none_or(|id| proposal.exercise_id == id))
+            .any(|proposal| {
+                proposal.weight_kg.is_some_and(|weight| weight > 0.0)
+                    || proposal.sets > 1
+                    || proposal.duration_seconds.is_some_and(|seconds| seconds > 1)
+            }),
+        JobKind::MenuOptimization => true,
+    }
+}
+
+fn assertion_count(evaluation: &warrior_core::ai::output::Evaluation) -> usize {
+    evaluation
+        .good
+        .iter()
+        .chain(evaluation.improvements.iter())
+        .chain(evaluation.next_actions.iter())
+        .filter(|item| item.certainty == warrior_core::ai::output::Certainty::Assertion)
+        .count()
 }
 
 /// トレーニングの終了時に、日の評価と記録のある種目ごとの提案の行を作る。
@@ -329,6 +441,107 @@ fn insert_pending_statement(job: &NewJob<'_>) -> SqlStatement {
 
 fn optional_text(value: Option<&str>) -> SqlValue {
     value.map_or(SqlValue::Null, |text| SqlValue::Text(text.to_owned()))
+}
+
+/// 期間の評価の行を、まだ無い場合だけ作る。
+fn insert_once_statement(job: &NewJob<'_>) -> SqlStatement {
+    SqlStatement::new(
+        "INSERT INTO ai_generation \
+         (id, user_id, kind, training_id, exercise_id, period_start, period_end, unique_key, \
+          status, attempts, lease_expires_at, next_attempt_at, output_id, last_error_code, \
+          created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, NULL, NULL, ?, ?) \
+         ON CONFLICT(user_id, unique_key) DO NOTHING",
+        vec![
+            SqlValue::Text(job.id.to_owned()),
+            SqlValue::Text(job.user_id.to_owned()),
+            SqlValue::Text(job.kind.as_str().to_owned()),
+            optional_text(job.training_id),
+            optional_text(job.exercise_id),
+            optional_text(job.period_start),
+            optional_text(job.period_end),
+            SqlValue::Text(job.unique_key.to_owned()),
+            SqlValue::Text(job.now.to_owned()),
+            SqlValue::Text(job.now.to_owned()),
+        ],
+    )
+}
+
+#[derive(Debug, Deserialize)]
+struct UserRow {
+    user_id: String,
+}
+
+/// 直前の週と月の評価の `pending` の行を、記録のある利用者ごとに作る。
+///
+/// 一意キーが同じ行は作らないため、Cron が何度実行しても評価を作り直さない。
+pub async fn create_period_jobs(db: &Db, today: JstDate) -> Result<()> {
+    let Some(yesterday) = today.add_days(-1) else {
+        return Ok(());
+    };
+    let week = yesterday.week();
+    let month = yesterday.month_range();
+    let now = auth::now_iso();
+    let mut statements = Vec::new();
+    for (kind, start, end, key) in [
+        (
+            JobKind::WeeklyEvaluation,
+            week.start().to_string(),
+            week.end().to_string(),
+            weekly_evaluation_key(&week.start().to_string(), &week.end().to_string()),
+        ),
+        (
+            JobKind::MonthlyEvaluation,
+            month.start().to_string(),
+            month.end().to_string(),
+            monthly_evaluation_key(&month.start().to_string(), &month.end().to_string()),
+        ),
+    ] {
+        let users = db
+            .all(&SqlStatement::new(
+                "SELECT DISTINCT user_id FROM training_sessions \
+                 WHERE date >= ? AND date <= ? AND finished_at IS NOT NULL",
+                vec![SqlValue::Text(start.clone()), SqlValue::Text(end.clone())],
+            ))
+            .await?
+            .results::<UserRow>()?;
+        for user in users {
+            statements.push(insert_once_statement(&NewJob {
+                id: &crate::random::random_uuid()?,
+                user_id: &user.user_id,
+                kind,
+                training_id: None,
+                exercise_id: None,
+                period_start: Some(&start),
+                period_end: Some(&end),
+                unique_key: &key,
+                now: &now,
+            }));
+        }
+    }
+    if !statements.is_empty() {
+        db.batch(&statements).await?;
+    }
+    Ok(())
+}
+
+/// 週と月の評価ができた後に、メニューの最適化の行を 1 つ作る。
+pub(crate) async fn create_menu_job(db: &Db, user_id: &str, start: &str, end: &str) -> Result<()> {
+    let now = auth::now_iso();
+    let id = crate::random::random_uuid()?;
+    db.run(&insert_once_statement(&NewJob {
+        id: &id,
+        user_id,
+        kind: JobKind::MenuOptimization,
+        training_id: None,
+        exercise_id: None,
+        period_start: Some(start),
+        period_end: Some(end),
+        unique_key: &warrior_core::ai_job::menu_optimization_key(start, end),
+        now: &now,
+    }))
+    .await?;
+    Ok(())
 }
 
 /// Cron の実行で、lease の期限を過ぎた `enqueued` を `pending` に戻し、

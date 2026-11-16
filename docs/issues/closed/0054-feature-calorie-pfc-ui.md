@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-calorie-pfc-ui
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -77,3 +78,9 @@ PFC の調整は、たんぱく質を体重 1 kg あたり 1.6 g から 2.2 g �
 `frontend/src/text.rs` に注意書きとダイエットの目安の文言を追加する。
 `backend/warrior/tests/e2e_nutrition.rs` に E2E を追加する。
 `backend/pbt/tests/nutrition_ui.rs` に丸めの性質テストを置く。
+
+## 結果
+
+`GET /api/nutrition` と `PUT /api/nutrition` を追加し、身体情報、目的、活動量、週あたりの日数から目標カロリーと PFC を計算する。
+未入力の項目、医療上の注意、ダイエットの減量の目安、PFC の調整と既定値への復帰、体重による範囲の補正を画面に表示する。
+`backend/warrior/tests/nutrition.rs` で計算、保存、範囲外の拒否を確認し、`backend/pbt/tests/nutrition_ui.rs` で丸めの合計を確認した。

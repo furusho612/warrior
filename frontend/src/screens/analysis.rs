@@ -7,12 +7,15 @@
 //! サーバーの応答を表示し、目安であることの注記を添える。
 
 use dioxus::prelude::*;
+use dioxus_router::Link;
 use warrior_core::body_part_analysis::{AnalysisMetric, AnalysisPeriod, BodyPartAnalysis};
 use warrior_core::recovery::RecoveryStatus;
 
+use crate::ai_notice::AiPrivacyNotice;
 use crate::analysis as analysis_api;
 use crate::calendar_view::part_label;
 use crate::graph::BodyPartBarChart;
+use crate::routes::Route;
 use crate::text::{text, Key};
 
 /// 部位別の分析の画面。
@@ -40,6 +43,13 @@ pub fn AnalysisScreen() -> Element {
             h1 { class: "text-lg font-bold", "{text(Key::AnalysisTitle)}" }
             p { class: "text-[13px] leading-5 text-text-sub",
                 "{text(Key::AnalysisDescription)}"
+            }
+            AiPrivacyNotice {}
+            Link {
+                to: Route::Evaluations {},
+                class: "flex min-h-11 items-center justify-center border border-line px-3 text-[13px] text-primary",
+                "data-evaluations-link": "true",
+                "{text(Key::EvaluationsLink)}"
             }
             div { class: "flex flex-wrap gap-2",
                 label {

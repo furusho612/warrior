@@ -46,6 +46,8 @@ pub async fn delete(mut request: Request, context: RouteContext<()>) -> Result<R
                 "DELETE FROM users WHERE id = ?".to_owned()
             } else if *table == "user_exercise_muscles" {
                 "DELETE FROM user_exercise_muscles WHERE exercise_id IN (SELECT id FROM user_exercises WHERE user_id = ?)".to_owned()
+            } else if *table == "custom_program_days" {
+                "DELETE FROM custom_program_days WHERE custom_program_id IN (SELECT id FROM custom_programs WHERE user_id = ?)".to_owned()
             } else {
                 format!("DELETE FROM {table} WHERE user_id = ?")
             };

@@ -16,6 +16,7 @@ use warrior_core::sync::{
 use warrior_core::training_record::TrainingRecord;
 use warrior_core::training_session::{PersonalBestItem, SessionSource, TrainingSessionSummary};
 
+use crate::ai_notice::AiPrivacyNotice;
 use crate::ids::{new_uuid, now_iso};
 use crate::rest_push as rest_push_api;
 use crate::rest_timer::RestTimerState;
@@ -35,6 +36,7 @@ mod memo_save;
 mod one_rep_max;
 mod ownership;
 mod personal_bests;
+mod proposals;
 mod rest_timer;
 mod routine_start;
 mod set_drawer;
@@ -266,6 +268,7 @@ pub fn RecordSessionScreen(training_id: String) -> Element {
             }
             MemoEditor { signals, state_signals }
             RestSettingsPanel {}
+            AiPrivacyNotice {}
             RecordFinish { signals }
             RecordPersonalBests { items: (state_signals.personal_bests)() }
             if profile_prompt() {
@@ -724,7 +727,7 @@ fn apply_state(mut state_signals: StateSignals, mut signals: RecordSignals, stat
 ///
 /// 状態そのものは `read_record_state` が IndexedDB から読む。この待機は画面の読み直しの
 /// 間隔を空けるためのものであり、テストのように条件の成立を時間で待つものではない。
-async fn sleep_ms(milliseconds: i32) {
+pub(crate) async fn sleep_ms(milliseconds: i32) {
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
         if let Some(window) = web_sys::window() {
             let _ = window

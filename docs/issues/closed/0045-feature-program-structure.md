@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-program-structure
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -90,3 +91,10 @@
 `backend/warrior/tests/e2e_program.rs` に E2E を追加する。
 `backend/pbt/tests/program.rs` に性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `user_program_progress` を追加する。
+
+## 結果
+
+`programs`、`program_days`、`user_program_progress` の表と、推奨、取り込み、進行、やめる、切り替えの API を追加した。
+進行の位置は `warrior_core::program::next_position`、推奨は `warrior_core::program::recommend` に置き、`backend/pbt/tests/program.rs` で性質を確認した。
+`backend/warrior/tests/programs.rs` で推奨、選択、開始、終了後の進行、やめる、独自のプログラムとの切り替えを確認した。
+アカウントの削除の対象に `user_program_progress` を追加した。

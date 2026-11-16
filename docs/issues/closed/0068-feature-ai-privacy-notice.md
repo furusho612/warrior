@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-ai-privacy-notice
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -71,3 +72,9 @@ AI の画面ができた後に、リリース前に必ず入れる。
 `frontend/src/text.rs` に通知の文面のキーと日本語の表を追加する。
 `frontend/tests/privacy_notice.rs` にブラウザのテストを追加する。
 `backend/warrior/tests/e2e_privacy_notice.rs` に E2E を追加する。
+
+## 結果
+
+`frontend/src/ai_notice.rs` に、常に表示する要約と、展開して読む詳細を追加した。
+送る情報、送らない情報、Cloudflare の Workers AI、学習に使わないこと、アカウントの削除までの保存を型付きのキーで持つ。
+終了サマリー、記録中、分析、マイページの 4 つの画面に通知を置いた。モーダルではなく、操作を遮らない。

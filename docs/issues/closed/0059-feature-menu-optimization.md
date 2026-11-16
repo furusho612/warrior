@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-menu-optimization
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -72,3 +73,10 @@
 `backend/warrior/tests/e2e_menu_optimization.rs` に E2E を追加する。
 `backend/pbt/tests/menu_optimization.rs` に性質テストを置く。
 実モデルの品質は 0069 で確認する。
+
+## 結果
+
+週と月の評価の生成の後に、メニューの最適化の行を作る。種目の追加、入れ替え、セット数の増減、部位の配分の変更を `MenuChange` で扱う。
+`GET /api/ai/menu` と `POST /api/ai/menu/apply` を追加し、承認した変更だけをルーティンへ反映する。
+`frontend/src/screens/menu_optimization.rs` に変更ごとの承認を置き、`routines` の画面に表示する。
+`backend/warrior/tests/ai_output.rs` でメニューの取得と入れ替えの反映を確認した。

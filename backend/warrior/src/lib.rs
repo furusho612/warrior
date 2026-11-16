@@ -7,11 +7,13 @@ use worker::{console_error, event, Context, Date, Env, MessageBatch, Request, Re
 
 pub mod account;
 pub mod ai_job;
+pub mod ai_output;
 pub mod alternative;
 pub mod analysis;
 pub mod auth;
 pub mod calendar;
 pub mod custom_exercise;
+pub mod custom_program;
 pub mod db;
 pub mod error;
 pub mod exercise;
@@ -21,9 +23,11 @@ pub mod goal;
 pub mod history;
 pub mod library;
 pub mod log;
+pub mod nutrition;
 pub mod ownership;
 pub mod personal_best;
 pub mod profile;
+pub mod program;
 pub mod push;
 pub mod queue;
 pub mod random;

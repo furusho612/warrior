@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-next-set-proposal
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -80,3 +81,10 @@ AI の生成に失敗した場合、または提案がない場合は、候補�
 `backend/warrior/tests/e2e_next_set_proposal.rs` に E2E を追加する。
 `backend/pbt/tests/proposal.rs` に性質テストを置く。
 実モデルの品質は 0069 で確認する。
+
+## 結果
+
+トレーニングの終了時に、記録のある種目ごとに次回セットの提案の行を作る。種目、グリップ、アタッチメントの組で最新の 1 件を保存する。
+`GET /api/ai/proposals` と `PUT /api/ai/proposals/:id`、`/api/proposals/:id` を追加し、提案の理由、値の修正、採用を扱う。
+`frontend/src/screens/record/proposals.rs` に候補の表示、採用、修正、保存、作り直しを置いた。
+`backend/warrior/tests/ai_output.rs` で提案の取得、修正、別の利用者の 404、保存後の再取得を確認した。

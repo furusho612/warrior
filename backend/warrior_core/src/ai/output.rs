@@ -9,6 +9,17 @@ const MAX_ITEMS_PER_SECTION: usize = 3;
 const MAX_TEXT_CHARS: usize = 500;
 const MAX_ITEMS: usize = 50;
 
+/// 評価の項目の断定の強さ。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Certainty {
+    /// 断定。
+    Assertion,
+    /// 推測。
+    #[default]
+    Hedge,
+}
+
 /// 評価の 1 項目。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationItem {
@@ -16,6 +27,9 @@ pub struct EvaluationItem {
     pub text: String,
     /// 根拠。記録の数値を含む。
     pub evidence: String,
+    /// 断定か推測か。
+    #[serde(default)]
+    pub certainty: Certainty,
     /// 補助筋の参考値と画面のセット数が食い違う理由。
     #[serde(default)]
     pub reference_reason: Option<String>,
@@ -87,6 +101,9 @@ pub struct MenuChange {
     pub kind: MenuChangeKind,
     /// 種目 ID。
     pub exercise_id: String,
+    /// 入れ替え先の種目 ID。
+    #[serde(default)]
+    pub target_exercise_id: Option<String>,
     /// 変更後のセット数。
     #[serde(default)]
     pub sets: Option<u32>,
@@ -344,6 +361,10 @@ fn has_reference_explanation(output: &AiOutput) -> bool {
 fn valid_menu_change(change: &MenuChange) -> bool {
     !change.exercise_id.trim().is_empty()
         && valid_text(&change.reason)
+        && change
+            .target_exercise_id
+            .as_deref()
+            .is_none_or(|target| !target.trim().is_empty() && target != change.exercise_id)
         && change.sets.is_none_or(|sets| (1..=20).contains(&sets))
 }
 
@@ -515,6 +536,7 @@ mod tests {
         EvaluationItem {
             text: text.to_owned(),
             evidence: evidence.to_owned(),
+            certainty: super::Certainty::Assertion,
             reference_reason: None,
         }
     }
@@ -704,6 +726,7 @@ mod tests {
             menu_changes: vec![MenuChange {
                 kind: MenuChangeKind::SetIncrease,
                 exercise_id: "bench-press".to_owned(),
+                target_exercise_id: None,
                 sets: Some(4),
                 reason: "胸が週 10 セット".to_owned(),
             }],

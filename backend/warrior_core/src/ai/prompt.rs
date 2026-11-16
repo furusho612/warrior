@@ -1,6 +1,7 @@
 //! AI のプロンプトの組み立てとメモの無害化。
 
 use crate::ai::context::AiContext;
+use crate::ai_job::JobKind;
 use crate::nutrition::Goal;
 
 /// プロンプトの版。
@@ -73,10 +74,41 @@ pub struct AiPrompt {
 
 /// コンテキストからプロンプトを組み立てる。
 pub fn build_prompt(context: &AiContext) -> AiPrompt {
+    build_prompt_for(JobKind::DailyEvaluation, context)
+}
+
+/// 生成の種別に合う依頼を system メッセージへ加え、プロンプトを組み立てる。
+pub fn build_prompt_for(kind: JobKind, context: &AiContext) -> AiPrompt {
+    let system = format!(
+        "{}\n\n{}",
+        system_message(context),
+        request_instruction(kind)
+    );
     AiPrompt {
         version: PROMPT_VERSION,
-        system: system_message(context),
+        system,
         user: user_message(context),
+    }
+}
+
+/// 生成の種別ごとの依頼と JSON の形。
+fn request_instruction(kind: JobKind) -> &'static str {
+    match kind {
+        JobKind::DailyEvaluation | JobKind::WeeklyEvaluation | JobKind::MonthlyEvaluation => {
+            "今回の依頼: 評価を 1 つ返してください。良かった点、改善点、次に取る行動をそれぞれ 1 から 3 項目にし、evidence には記録の数値を含めてください。\n\
+             次の形の JSON だけを返してください: \
+             {\"evaluation\":{\"good\":[{\"text\":\"...\",\"evidence\":\"70 kg を 8 回\",\"certainty\":\"assertion\"}],\"improvements\":[{\"text\":\"...\",\"evidence\":\"胸は週 10 セット\"}],\"next_actions\":[{\"text\":\"...\",\"evidence\":\"前回 70 kg\"}]}}"
+        }
+        JobKind::SetProposal => {
+            "今回の依頼: 記録のある種目ごとに次回セットの提案を返してください。重量、回数または時間、セット数、理由を 1 文で含めてください。\n\
+             次の形の JSON だけを返してください: \
+             {\"proposals\":[{\"exercise_id\":\"種目 ID\",\"weight_kg\":70.0,\"reps\":8,\"duration_seconds\":null,\"sets\":3,\"reason\":\"前回は全セットで目標回数に達したため 2.5 kg 増やす\"}]}"
+        }
+        JobKind::MenuOptimization => {
+            "今回の依頼: 現在のルーティンとの差分としてメニューの変更案を返してください。種目は種目の一覧にある ID だけを使い、理由には記録の数値を含めてください。\n\
+             次の形の JSON だけを返してください: \
+             {\"menu_changes\":[{\"kind\":\"set_increase\",\"exercise_id\":\"種目 ID\",\"sets\":4,\"reason\":\"胸のセット数が週 8 セットのため\"}]}"
+        }
     }
 }
 

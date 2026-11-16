@@ -245,7 +245,7 @@ fn wait_for_sent(server: &DevServer, id: &str) -> Value {
 
 fn rows(server: &DevServer, sql: &str) -> Vec<Value> {
     server
-        .execute_d1_json(&sql)
+        .execute_d1_json(sql)
         .expect("the query must succeed")
         .get(0)
         .and_then(|entry| entry.get("results"))

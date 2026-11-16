@@ -85,7 +85,7 @@ pub async fn update(mut request: Request, context: RouteContext<()>) -> Result<R
     Response::from_json(&input)
 }
 
-async fn load(db: &Db, user_id: &str) -> Result<Option<Profile>> {
+pub(crate) async fn load(db: &Db, user_id: &str) -> Result<Option<Profile>> {
     let row = db
         .first::<ProfileRow>(&SqlStatement::new(
             format!("SELECT {PROFILE_COLUMNS} FROM profiles WHERE user_id = ?"),
@@ -150,7 +150,7 @@ fn optional_text(value: Option<String>) -> SqlValue {
     value.map_or(SqlValue::Null, SqlValue::Text)
 }
 
-fn today() -> Option<JstDate> {
+pub(crate) fn today() -> Option<JstDate> {
     JstDate::parse(&datetime::japan_date(auth::now_seconds()))
 }
 

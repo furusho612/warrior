@@ -5,9 +5,9 @@ use dioxus_router::Routable;
 
 use crate::layout::AppShell;
 use crate::screens::{
-    AccountScreen, AnalysisScreen, CalendarScreen, ExerciseHistoryScreen, ExerciseScreen,
-    ExerciseSelectScreen, HistoryScreen, HomeScreen, LibraryScreen, LoginScreen, MyPageScreen,
-    NotFoundScreen, RecordScreen, RecordSessionScreen, RoutinesScreen, SummaryScreen,
+    AccountScreen, AnalysisScreen, CalendarScreen, EvaluationsScreen, ExerciseHistoryScreen,
+    ExerciseScreen, ExerciseSelectScreen, HistoryScreen, HomeScreen, LibraryScreen, LoginScreen,
+    MyPageScreen, NotFoundScreen, RecordScreen, RecordSessionScreen, RoutinesScreen, SummaryScreen,
 };
 use crate::text::Key;
 
@@ -28,7 +28,7 @@ const fn route(pattern: &'static str) -> AppRoute {
 }
 
 /// 画面の経路の台帳。
-pub const APP_ROUTES: [AppRoute; 16] = [
+pub const APP_ROUTES: [AppRoute; 17] = [
     route("/login"),
     route("/login/error"),
     route("/"),
@@ -41,6 +41,7 @@ pub const APP_ROUTES: [AppRoute; 16] = [
     route("/exercises/:exercise_id"),
     route("/exercises/:id/history"),
     route("/analysis"),
+    route("/evaluations"),
     route("/routines"),
     route("/summary/:training_id"),
     route("/mypage"),
@@ -87,6 +88,9 @@ pub enum Route {
     /// 分析。
     #[route("/analysis", AnalysisScreen)]
     Analysis {},
+    /// AI の評価の一覧。
+    #[route("/evaluations", EvaluationsScreen)]
+    Evaluations {},
     /// ルーティンとプログラム。
     #[route("/routines", RoutinesScreen)]
     Routines {},
@@ -118,6 +122,7 @@ pub fn screen_key(route: &Route) -> Key {
         Route::Exercise { .. } => Key::ExerciseTitle,
         Route::ExerciseHistory { .. } => Key::ExerciseHistoryTitle,
         Route::Analysis {} => Key::AnalysisTitle,
+        Route::Evaluations {} => Key::EvaluationsTitle,
         Route::Routines {} => Key::RoutinesTitle,
         Route::Summary { .. } => Key::SummaryTitle,
         Route::MyPage {} => Key::MyPageTitle,
@@ -141,6 +146,7 @@ pub fn route_name(route: &Route) -> &'static str {
         Route::Exercise { .. } => "/exercises/:exercise_id",
         Route::ExerciseHistory { .. } => "/exercises/:id/history",
         Route::Analysis {} => "/analysis",
+        Route::Evaluations {} => "/evaluations",
         Route::Routines {} => "/routines",
         Route::Summary { .. } => "/summary/:training_id",
         Route::MyPage {} => "/mypage",
@@ -204,7 +210,7 @@ pub fn tab_is_active(current: &Route, tab: Tab) -> bool {
             current,
             Route::Library {} | Route::Exercise { .. } | Route::ExerciseHistory { .. }
         ),
-        Tab::Analysis => matches!(current, Route::Analysis {}),
+        Tab::Analysis => matches!(current, Route::Analysis {} | Route::Evaluations {}),
         Tab::MyPage => matches!(current, Route::MyPage {} | Route::Account {}),
     }
 }
@@ -233,7 +239,7 @@ mod tests {
     use crate::text::{text, Key};
 
     #[test]
-    fn the_ledger_has_the_fourteen_routes() {
+    fn the_ledger_has_every_route() {
         let patterns = [
             "/login",
             "/login/error",
@@ -247,6 +253,7 @@ mod tests {
             "/exercises/:exercise_id",
             "/exercises/:id/history",
             "/analysis",
+            "/evaluations",
             "/routines",
             "/summary/:training_id",
             "/mypage",

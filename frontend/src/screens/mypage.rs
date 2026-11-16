@@ -5,12 +5,14 @@ use warrior_core::nutrition::MacroTarget;
 use warrior_core::profile::Profile;
 use warrior_core::settings::{DisplayMode, Settings};
 
+use crate::ai_notice::AiPrivacyNotice;
 use crate::export::{self as export_api, ExportJob};
+use crate::nutrition as nutrition_api;
 use crate::profile::{self as profile_api, choice_class, pressed, ProfileForm};
 use crate::push::PushSubscriptionSetting;
 use crate::screens::profile_form::{ProfileFields, ProfileSummary, SafetyNoticePanel};
 use crate::screens::record::{RestNotificationSetting, WakeLockSetting};
-use crate::screens::AccountSection;
+use crate::screens::{AccountSection, NutritionPanel};
 use crate::settings as settings_api;
 use crate::text::{text, Key};
 use crate::theme::{self, ThemePreference};
@@ -62,6 +64,7 @@ pub fn MyPageScreen() -> Element {
             RecordSettings { state }
             DisplaySettings { state }
             DataSection {}
+            AiPrivacyNotice {}
             AccountSection {}
         }
     }
@@ -208,6 +211,7 @@ fn NutritionSettings(state: SettingsState) -> Element {
             "data-nutrition-settings": "true",
             h2 { class: "text-sm font-bold", "{text(Key::NutritionSectionTitle)}" }
             p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::NutritionSectionDescription)}" }
+            NutritionPanel {}
             label { class: "flex min-h-11 items-center justify-between gap-2 text-[13px]",
                 span { "{text(Key::MacroProteinLabel)}" }
                 input {
@@ -285,11 +289,25 @@ fn save_macro_texts(state: SettingsState, protein_text: String, fat_text: String
 }
 
 async fn save_macro(state: SettingsState, target: MacroTarget) {
-    save_macro_result(state, settings_api::set_macro_target(target).await);
+    match nutrition_api::save(target).await {
+        Ok(_) => {
+            let _ = settings_api::set_macro_target(target).await;
+            let mut current = state.settings;
+            let mut settings = current();
+            settings.macro_target = target;
+            current.set(settings);
+            let mut saved = state.saved;
+            saved += 1;
+            let mut error = state.macro_error;
+            error.set(None);
+        }
+        Err(crate::http::HttpError::Rejected) => set_macro_error(state, Key::MacroCaloriesExceeded),
+        Err(_) => set_macro_error(state, Key::SettingsSaveFailed),
+    }
 }
 
 async fn reset_macro(state: SettingsState) {
-    save_macro_result(state, settings_api::reset_macro_target().await);
+    save_macro(state, MacroTarget::default()).await;
 }
 
 #[component]
@@ -423,17 +441,6 @@ fn display_mode_key(mode: DisplayMode) -> Key {
         DisplayMode::System => Key::DisplayModeSystem,
         DisplayMode::Light => Key::DisplayModeLight,
         DisplayMode::Dark => Key::DisplayModeDark,
-    }
-}
-
-fn save_macro_result(state: SettingsState, result: Result<Settings, settings_api::UpdateError>) {
-    match result {
-        Ok(settings) => {
-            apply_saved(state, settings);
-            let mut error = state.macro_error;
-            error.set(None);
-        }
-        Err(error) => set_macro_error(state, settings_api::update_error_key(error)),
     }
 }
 

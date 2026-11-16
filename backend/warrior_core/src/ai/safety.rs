@@ -107,6 +107,7 @@ mod tests {
             menu_changes: vec![MenuChange {
                 kind: MenuChangeKind::SetIncrease,
                 exercise_id: "bench-press".to_owned(),
+                target_exercise_id: None,
                 sets: Some(4),
                 reason: "量を増やす".to_owned(),
             }],

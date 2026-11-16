@@ -573,6 +573,15 @@ pub(in crate::screens::record) fn dispatch(
         SetAction::Add { view_id } => {
             spawn(set_io::add_set(training_id, view_id, views, error));
         }
+        SetAction::ApplyProposal { view_id, proposal } => {
+            spawn(set_io::apply_proposal(
+                training_id,
+                view_id,
+                proposal,
+                views,
+                error,
+            ));
+        }
         SetAction::Copy { view_id } => {
             spawn(set_io::copy_sets(training_id, view_id, views, error));
         }

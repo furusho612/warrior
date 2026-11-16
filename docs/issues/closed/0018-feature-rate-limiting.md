@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-rate-limiting
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -85,3 +86,10 @@ IP は `CF-Connecting-IP` ヘッダから取る。
 `backend/pbt/tests/rate_limit.rs` に窓の性質テストを置く。
 `wrangler.toml` の vars に上限と窓の秒数を追加する。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `user_rate_limits` を追加する。`ip_rate_limits` は利用者に紐づかないため、アカウントの削除の対象にしない。
+
+## 結果
+
+認証とパスキーの IP ごとの制限に加え、プッシュ購読の登録と解除に利用者ごとの制限を追加した。
+`Kind::PushUser` を `backend/warrior/src/push.rs` の作成と解除の入口で確認する。
+結合テスト `the_push_subscription_requests_are_rate_limited_per_user` で 429 と `Retry-After` を確認した。
+既存の `rate_limit` の結合テストと PBT も通過している。

@@ -4,6 +4,7 @@
 //! 開始はサーバーで種目とセットを写して記録を返す。操作の ID と順序は保存のときに
 //! `frontend/src/storage` が決める。
 
+use serde::Deserialize;
 use warrior_core::routine::{Routine, RoutineExercise, RoutineList};
 use warrior_core::sync::{
     Operation, OperationKind, RoutineCopyPayload, RoutineCreatePayload, RoutineDeletePayload,
@@ -19,6 +20,18 @@ use crate::sync;
 /// ルーティンの一覧をサーバーから取る。
 pub async fn list() -> Result<RoutineList, HttpError> {
     http::request_json("GET", "/api/routines").await
+}
+
+/// ルーティンを使っている独自のプログラムの名前。
+#[derive(Debug, Deserialize)]
+pub struct RoutineUsage {
+    /// 使っている独自のプログラムの名前。
+    pub programs: Vec<String>,
+}
+
+/// ルーティンを使っている独自のプログラムを取る。
+pub async fn usage(routine_id: &str) -> Result<RoutineUsage, HttpError> {
+    http::request_json("GET", &format!("/api/routines/{routine_id}/usage")).await
 }
 
 /// ルーティンからトレーニングを開始し、サーバーに保存された記録を返す。

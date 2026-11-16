@@ -29,6 +29,8 @@ struct SessionSummaryRow {
     started_at: Option<String>,
     finished_at: Option<String>,
     owner_terminal_id: Option<String>,
+    program_day_id: Option<String>,
+    custom_program_day_id: Option<String>,
     duration_seconds: Option<i64>,
     total_weight_kg: Option<f64>,
     exercise_count: Option<i64>,
@@ -36,7 +38,8 @@ struct SessionSummaryRow {
 }
 
 const SESSION_SUMMARY_COLUMNS: &str = "date, started_at, finished_at, owner_terminal_id, \
-     duration_seconds, total_weight_kg, exercise_count, set_count";
+     program_day_id, custom_program_day_id, duration_seconds, total_weight_kg, \
+     exercise_count, set_count";
 
 /// `POST /api/trainings/:id/finish`
 pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Response> {
@@ -140,6 +143,18 @@ pub async fn finish(request: Request, context: RouteContext<()>) -> Result<Respo
         crate::rest_push::cancel_training_reservations(&db, &authenticated.id, &training_id).await
     {
         console_error!("failed to cancel the rest push reservations: {error}");
+    }
+    if let Some(program_day_id) = saved.program_day_id.as_deref() {
+        if let Err(error) = crate::program::advance_progress(
+            &db,
+            &authenticated.id,
+            program_day_id,
+            saved.custom_program_day_id.as_deref(),
+        )
+        .await
+        {
+            console_error!("failed to advance the program progress: {error}");
+        }
     }
     summary_response(&saved, personal_bests)
 }
@@ -354,6 +369,7 @@ fn stored_summary(
     personal_bests: Vec<PersonalBestItem>,
 ) -> Option<TrainingSessionSummary> {
     Some(TrainingSessionSummary {
+        date: JstDate::parse(&row.date)?,
         duration_seconds: row.duration_seconds?,
         total_weight_kg: row.total_weight_kg?,
         exercise_count: u32::try_from(row.exercise_count?).ok()?,
@@ -365,6 +381,7 @@ fn stored_summary(
 #[cfg(test)]
 mod tests {
     use warrior_core::exercise::Laterality;
+    use warrior_core::jst::JstDate;
     use warrior_core::set_calc::RecordMode;
     use warrior_core::training_session::{BestKind, PersonalBestItem, TrainingSessionSummary};
 
@@ -379,6 +396,8 @@ mod tests {
             started_at: Some("2026-11-12T03:00:00Z".to_owned()),
             finished_at: None,
             owner_terminal_id: Some("another-terminal".to_owned()),
+            program_day_id: None,
+            custom_program_day_id: None,
             duration_seconds: None,
             total_weight_kg: None,
             exercise_count: None,
@@ -398,6 +417,7 @@ mod tests {
             "3f2504e0-4f89-41d3-9a0c-0305e82c6603",
             "2026-11-12T04:00:00Z",
             &TrainingSessionSummary {
+                date: JstDate::parse("2026-11-12").expect("a valid date"),
                 duration_seconds: 3_600,
                 total_weight_kg: 1_640.0,
                 exercise_count: 2,
@@ -431,6 +451,8 @@ mod tests {
             started_at: Some("2026-11-12T03:00:00Z".to_owned()),
             finished_at: Some("2026-11-12T04:00:00Z".to_owned()),
             owner_terminal_id: None,
+            program_day_id: None,
+            custom_program_day_id: None,
             duration_seconds: Some(3_600),
             total_weight_kg: Some(1_640.0),
             exercise_count: Some(2),
@@ -462,6 +484,8 @@ mod tests {
             started_at: Some("2026-11-12T03:00:00Z".to_owned()),
             finished_at: None,
             owner_terminal_id: None,
+            program_day_id: None,
+            custom_program_day_id: None,
             duration_seconds: None,
             total_weight_kg: None,
             exercise_count: None,

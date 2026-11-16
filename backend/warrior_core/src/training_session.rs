@@ -115,6 +115,7 @@ pub struct PersonalBestItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrainingSessionSummary {
     /// 開始時刻から終了時刻までの秒数。
+    pub date: JstDate,
     pub duration_seconds: i64,
     /// 総重量 (kg)。
     pub total_weight_kg: f64,
@@ -145,6 +146,7 @@ pub fn summary_from_sets(
     sets: &[SessionSet],
 ) -> TrainingSessionSummary {
     TrainingSessionSummary {
+        date: achieved_on,
         duration_seconds,
         total_weight_kg: sets.iter().map(|set| set.record.total_weight_kg()).sum(),
         exercise_count: exercise_count(sets),
@@ -249,6 +251,7 @@ mod tests {
         assert_eq!(
             summary_from_sets(date(), 0, &[]),
             TrainingSessionSummary {
+                date: date(),
                 duration_seconds: 0,
                 total_weight_kg: 0.0,
                 exercise_count: 0,

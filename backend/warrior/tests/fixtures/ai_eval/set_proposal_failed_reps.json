@@ -1,0 +1,21 @@
+{
+  "case": "set_proposal_after_failed_reps",
+  "kind": "set_proposal",
+  "profile": {
+    "goal": "hypertrophy",
+    "training_experience": "intermediate",
+    "training_days_per_week": 4
+  },
+  "records": [
+    {
+      "date": "2026-11-12",
+      "exercise": "ベンチプレス",
+      "target": {"sets": 3, "reps": 8, "weight_kg": 70.0},
+      "sets": [
+        {"weight_kg": 70.0, "reps": 8, "rpe": 9},
+        {"weight_kg": 70.0, "reps": 6, "rpe": 10},
+        {"weight_kg": 70.0, "reps": 5, "rpe": 10}
+      ]
+    }
+  ]
+}

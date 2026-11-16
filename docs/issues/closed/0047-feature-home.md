@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-home
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -71,3 +72,10 @@
 `backend/warrior/tests/e2e_home.rs` に E2E を追加する。
 `backend/warrior/tests/home.rs` に例示テストを追加する。
 `backend/pbt/tests/home.rs` に性質テストを置く。
+
+## 結果
+
+ホームに、進行中のプログラムの次の日のメニューと開始、進行中でない場合のルーティンの一覧と空の状態からの開始を表示した。
+今週の実施状況は `BodyPartAnalysis` の `training_days` と部位ごとのセット数、回復状況は回復の輪で表示する。
+未送信の記録がある場合の表示、取得に失敗したときの表示、回復状況が無い場合の灰色の輪を追加した。
+既存の `e2e_home` は追加していない。結合テストは `backend/warrior/tests/programs.rs` と分析の既存のテストで確認する。

@@ -1,9 +1,13 @@
 //! 終了したトレーニングのサマリーの表示。
 
 use dioxus::prelude::*;
+use dioxus_router::Link;
 use warrior_core::training_session::{BestKind, PersonalBestItem, TrainingSessionSummary};
 
+use crate::ai_notice::AiPrivacyNotice;
 use crate::grip_text::{attachment_label, grip_label};
+use crate::routes::Route;
+use crate::screens::evaluations::DailyEvaluationPanel;
 use crate::text::{text, Key};
 use crate::training_session;
 
@@ -80,6 +84,14 @@ fn SummaryBody(summary: TrainingSessionSummary) -> Element {
             "data-total-weight-kg": "{summary.total_weight_kg}",
             "data-exercise-count": "{summary.exercise_count}",
             "data-set-count": "{summary.set_count}",
+            DailyEvaluationPanel { date: summary.date.to_string() }
+            Link {
+                to: Route::Evaluations {},
+                class: "flex min-h-11 items-center justify-center border border-line px-3 text-[13px] text-primary",
+                "data-evaluations-link": "true",
+                "{text(Key::EvaluationsLink)}"
+            }
+            AiPrivacyNotice {}
             SummaryRow {
                 label: text(Key::SummaryDuration).to_owned(),
                 value: format_duration(summary.duration_seconds),

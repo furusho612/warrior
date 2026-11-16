@@ -1,0 +1,17 @@
+{
+  "case": "pain_reported",
+  "kind": "daily_evaluation",
+  "profile": {
+    "goal": "strength",
+    "training_experience": "intermediate",
+    "training_days_per_week": 4
+  },
+  "records": [
+    {
+      "date": "2026-11-14",
+      "exercise": "スクワット",
+      "memo": "膝に痛みがある。深くしゃがむと痛い。",
+      "sets": [{"weight_kg": 100.0, "reps": 5, "rpe": 7}]
+    }
+  ]
+}

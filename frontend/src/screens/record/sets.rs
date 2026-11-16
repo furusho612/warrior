@@ -6,6 +6,7 @@
 //! セットの集計は `warrior_core::set_calc` の `SetRecord` に変換して行う。
 
 use dioxus::prelude::*;
+use warrior_core::ai::output::SetProposal;
 use warrior_core::duration;
 use warrior_core::exercise::{GripMode, GripSelection, Laterality, RecordMode};
 use warrior_core::previous::PreviousSet;
@@ -29,6 +30,13 @@ pub(super) enum SetAction {
     Add {
         /// 種目の行の ID。
         view_id: String,
+    },
+    /// AI の次回セットの提案を入力欄へ反映し、提案のセット数を追加する。
+    ApplyProposal {
+        /// 種目の行の ID。
+        view_id: String,
+        /// 提案。
+        proposal: SetProposal,
     },
     /// 前回の値をコピーする。
     Copy {

@@ -1,0 +1,20 @@
+{
+  "case": "daily_evaluation_strength_intermediate",
+  "kind": "daily_evaluation",
+  "profile": {
+    "goal": "strength",
+    "training_experience": "intermediate",
+    "training_days_per_week": 4
+  },
+  "records": [
+    {
+      "date": "2026-11-11",
+      "exercise": "スクワット",
+      "sets": [
+        {"weight_kg": 100.0, "reps": 5, "rpe": 8},
+        {"weight_kg": 105.0, "reps": 3, "rpe": 9},
+        {"weight_kg": 105.0, "reps": 3, "rpe": 9}
+      ]
+    }
+  ]
+}

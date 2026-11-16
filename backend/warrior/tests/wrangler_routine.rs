@@ -157,7 +157,7 @@ fn routines_are_saved_edited_copied_deleted_and_started_for_their_owner() {
                 "SELECT owner_terminal_id FROM training_sessions WHERE id = '{first_training_id}'"
             )
         )["owner_terminal_id"],
-        json!(terminal_a)
+        json!("3f2504e0-4f89-41d3-9a0c-0305e82c6150")
     );
 
     let second = start(&server, &cookie_a, ROUTINE_ID);

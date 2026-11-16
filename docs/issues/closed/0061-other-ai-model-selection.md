@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-ai-model-selection
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -72,3 +73,10 @@ staging を追加したときは、production と同じ値を staging の `AI_MO
 `backend/warrior/tests/ai_model_config.rs` に `AI_MODEL` の設定を確かめるテストを置く。
 `backend/warrior/tests/fixtures/ai_eval/` に、目的 5 つ、レベル 3 つ、評価の日、週、月、次回セットの提案、メニューの最適化、目標重量の達成が難しい場合、痛みの記述がある場合の記録を置く。
 ADR-018 に、暫定既定値と候補、無料枠の条件を追記する。
+
+## 結果
+
+production と staging の `AI_MODEL` を `@cf/meta/llama-4-scout-17b-16e-instruct` に揃えた。
+`backend/warrior/tests/fixtures/ai_eval/` に目的、レベル、評価の期間、提案、メニュー、目標重量、痛みの 8 件の記録を置いた。
+`mise run ai-eval` で fixture と評価用の入力を出力する。`backend/warrior/tests/ai_model_config.rs` で設定と fixture の JSON を確認した。
+外部の AI は呼ばない。

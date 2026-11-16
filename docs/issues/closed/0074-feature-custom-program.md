@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-custom-program
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -76,3 +77,11 @@ PRD の `REQ-PRG-021` から `REQ-PRG-024` が、この機能の要求を定め�
 `backend/pbt/tests/custom_program.rs` に、2 日以上 7 日以下の検証、同じルーティンを複数の日に指定する場合、日の並びの保存と再読み込み、進行の位置の更新の性質テストを置く。
 `frontend/tests/custom_program.rs` に、一覧、編集、検証のエラー表示、削除、やめる、切り替え、ホームの次に行う日のメニューのブラウザのテストを置く。
 `backend/warrior/tests/e2e_custom_program.rs` に、独自のプログラムの作成から開始、進行、やめる、終了、開始と終了後のホームの次に行う日のメニューの更新の E2E を置く。
+
+## 結果
+
+`custom_programs`、`custom_program_days`、`user_program_progress` の独自のプログラムの参照を追加した。
+`backend/warrior/src/custom_program.rs` に作成、取得、更新、削除、選択の API を置き、`warrior_core::custom_program` で名前と 2 日以上 7 日以下の検証を共有する。
+`frontend/src/screens/custom_program.rs` に一覧、作成、編集、削除、選択を置き、`routines` の画面に表示する。
+使用中のルーティンの削除は、`GET /api/routines/:id/usage` でプログラム名を返して画面で拒否し、同期の適用でも 409 にする。
+`backend/warrior/tests/programs.rs` で作成、更新、選択、削除、使用中のルーティンの削除の拒否を確認した。`backend/pbt/tests/custom_program.rs` で入力と進行の性質を確認した。

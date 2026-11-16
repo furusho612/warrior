@@ -194,6 +194,8 @@ pub struct BodyPartAnalysis {
     pub previous_start: JstDate,
     /// 直前の期間の最後の日。
     pub previous_end: JstDate,
+    /// 期間内のトレーニングの日数。
+    pub training_days: u32,
     /// 部位区分ごとの集計。`BodyPart::ALL` と同じ並びで、記録の無い部位も含む。
     pub parts: Vec<BodyPartAnalysisEntry>,
 }
@@ -225,9 +227,16 @@ pub fn body_part_analysis(
         };
         total.add(set, range, previous);
     }
+    let mut training_days = Vec::new();
+    for set in sets {
+        if range.contains(set.date) && !training_days.contains(&set.date) {
+            training_days.push(set.date);
+        }
+    }
     BodyPartAnalysis {
         period,
         metric,
+        training_days: u32::try_from(training_days.len()).unwrap_or(u32::MAX),
         start: range.start,
         end: range.end,
         previous_start: previous.start,

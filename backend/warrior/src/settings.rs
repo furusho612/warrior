@@ -4,7 +4,7 @@
 //! 値の検証は `warrior_core::settings` が持ち、このモジュールは保存と応答だけを行う。
 
 use serde::Deserialize;
-use warrior_core::nutrition::MacroTarget;
+use warrior_core::nutrition::{calculate, MacroTarget, NutritionError};
 use warrior_core::settings::{DisplayMode, Settings};
 use warrior_core::sql::{SqlStatement, SqlValue};
 use worker::{Request, Response, Result, RouteContext};
@@ -12,11 +12,12 @@ use worker::{Request, Response, Result, RouteContext};
 use crate::auth::session;
 use crate::db::Db;
 use crate::error::{response, ErrorCode};
+use crate::{nutrition, profile};
 
 const SETTINGS_COLUMNS: &str = "rest_default_seconds, display_mode, protein_g_per_kg, fat_ratio";
 
 #[derive(Debug, Deserialize)]
-struct SettingsRow {
+pub(crate) struct SettingsRow {
     rest_default_seconds: u32,
     display_mode: DisplayMode,
     protein_g_per_kg: f64,
@@ -24,7 +25,7 @@ struct SettingsRow {
 }
 
 impl SettingsRow {
-    fn into_settings(self) -> Settings {
+    pub(crate) fn into_settings(self) -> Settings {
         Settings {
             rest_default_seconds: self.rest_default_seconds,
             display_mode: self.display_mode,
@@ -68,11 +69,25 @@ pub async fn update(mut request: Request, context: RouteContext<()>) -> Result<R
         return Ok(response(ErrorCode::BadRequest, "the settings are invalid"));
     }
     let db = Db::new(env.d1("DB")?);
+    if let Some(profile) = profile::load(&db, &authenticated.id).await? {
+        if let Some(today) = profile::today() {
+            let nutrition_input = nutrition::nutrition_input(Some(&profile), input.macro_target);
+            if matches!(
+                calculate(&nutrition_input, today),
+                Err(NutritionError::MacroCaloriesExceedTarget)
+            ) {
+                return Ok(response(
+                    ErrorCode::BadRequest,
+                    "the macro target exceeds the calorie target",
+                ));
+            }
+        }
+    }
     save(&db, &authenticated.id, input).await?;
     Response::from_json(&input)
 }
 
-async fn load(db: &Db, user_id: &str) -> Result<Option<SettingsRow>> {
+pub(crate) async fn load(db: &Db, user_id: &str) -> Result<Option<SettingsRow>> {
     db.first::<SettingsRow>(&SqlStatement::new(
         format!("SELECT {SETTINGS_COLUMNS} FROM user_settings WHERE user_id = ?"),
         vec![SqlValue::Text(user_id.to_owned())],
@@ -80,7 +95,7 @@ async fn load(db: &Db, user_id: &str) -> Result<Option<SettingsRow>> {
     .await
 }
 
-async fn save(db: &Db, user_id: &str, settings: Settings) -> Result<()> {
+pub(crate) async fn save(db: &Db, user_id: &str, settings: Settings) -> Result<()> {
     let now = crate::auth::now_iso();
     db.run(&upsert_statement(user_id, settings, &now)).await?;
     Ok(())

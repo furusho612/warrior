@@ -2,11 +2,14 @@
 //!
 //! テーマの属性の切り替えは `theme` が持つ。
 
+pub mod ai;
+pub mod ai_notice;
 pub mod analysis;
 pub mod app;
 pub mod body_figure;
 pub mod calendar;
 pub mod calendar_view;
+pub mod custom_program;
 pub mod export;
 pub mod generated;
 pub mod goal;
@@ -19,9 +22,11 @@ pub mod ids;
 pub mod layout;
 pub mod library;
 pub mod notification;
+pub mod nutrition;
 pub mod passkey;
 pub mod previous;
 pub mod profile;
+pub mod program;
 pub mod push;
 pub mod pwa;
 pub mod record_rail;

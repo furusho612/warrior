@@ -28,15 +28,18 @@ pub enum JobKind {
     WeeklyEvaluation,
     /// 月の評価。
     MonthlyEvaluation,
+    /// メニューの最適化。
+    MenuOptimization,
 }
 
 impl JobKind {
-    /// 4 種類。
-    pub const ALL: [Self; 4] = [
+    /// 5 種類。
+    pub const ALL: [Self; 5] = [
         Self::DailyEvaluation,
         Self::SetProposal,
         Self::WeeklyEvaluation,
         Self::MonthlyEvaluation,
+        Self::MenuOptimization,
     ];
 
     /// D1 と API に載せる値。
@@ -46,6 +49,7 @@ impl JobKind {
             Self::SetProposal => "set_proposal",
             Self::WeeklyEvaluation => "weekly_evaluation",
             Self::MonthlyEvaluation => "monthly_evaluation",
+            Self::MenuOptimization => "menu_optimization",
         }
     }
 
@@ -302,6 +306,11 @@ pub fn weekly_evaluation_key(start: &str, end: &str) -> String {
 /// 月の評価の一意キー。
 pub fn monthly_evaluation_key(start: &str, end: &str) -> String {
     format!("month:{start}:{end}")
+}
+
+/// メニューの最適化の一意キー。
+pub fn menu_optimization_key(start: &str, end: &str) -> String {
+    format!("menu:{start}:{end}")
 }
 
 #[cfg(test)]

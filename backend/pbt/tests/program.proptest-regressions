@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2527b77f4c669f96e03fd918709085557293e040ef24e4b4c51d951fede0dce9 # shrinks to position = 4, total = 1
+cc 704288350983bb7f491d4962b5b67bccdc88619b231fe043383e7a99f7cb6ccd # shrinks to days = 0, choices = [("a", "hypertrophy", "intermediate", 0, 0), ("a", "hypertrophy", "beginner", 0, 0)]

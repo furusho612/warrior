@@ -169,7 +169,8 @@ impl MacroTarget {
 }
 
 /// 入力の項目。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MissingField {
     /// 身長。
     Height,
@@ -248,7 +249,7 @@ impl NutritionInput {
 }
 
 /// ダイエットの減量の速さの目安。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DietLossRange {
     /// 週あたりの最小の減量 (kg)。
     pub min_kg_per_week: f64,
@@ -257,7 +258,7 @@ pub struct DietLossRange {
 }
 
 /// 栄養の計算の結果。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NutritionResult {
     /// 満年齢。
     pub age: u32,
@@ -279,6 +280,59 @@ pub struct NutritionResult {
     pub macro_clamped: bool,
     /// ダイエットのときだけの減量の速さの目安。
     pub diet_loss_per_week: Option<DietLossRange>,
+}
+
+/// 画面に表示する PFC のグラム数。四捨五入した整数を持つ。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayMacros {
+    /// 目標カロリー (kcal)。
+    pub target_kcal: u32,
+    /// たんぱく質 (g)。
+    pub protein_g: u32,
+    /// 脂質 (g)。
+    pub fat_g: u32,
+    /// 炭水化物 (g)。
+    pub carbohydrate_g: u32,
+}
+
+impl DisplayMacros {
+    /// 3 つのグラム数をカロリーに換算した合計。
+    pub fn calorie_total(self) -> i64 {
+        i64::from(self.protein_g) * 4
+            + i64::from(self.fat_g) * 9
+            + i64::from(self.carbohydrate_g) * 4
+    }
+
+    /// 目標カロリーと換算した合計の差。
+    pub fn calorie_difference(self) -> i64 {
+        self.calorie_total() - i64::from(self.target_kcal)
+    }
+}
+
+/// 計算の結果から、画面に表示する整数の PFC を作る。
+///
+/// たんぱく質と脂質を四捨五入し、炭水化物は丸めた目標カロリーから
+/// たんぱく質と脂質のカロリーを引いた残りを四捨五入する。
+pub fn display_macros(result: &NutritionResult) -> DisplayMacros {
+    let target_kcal = round_non_negative(result.target_kcal);
+    let protein_g = round_non_negative(result.protein_g);
+    let fat_g = round_non_negative(result.fat_g);
+    let remaining_kcal = i64::from(target_kcal) - i64::from(protein_g) * 4 - i64::from(fat_g) * 9;
+    let carbohydrate_g = round_non_negative(remaining_kcal as f64 / 4.0);
+    DisplayMacros {
+        target_kcal,
+        protein_g,
+        fat_g,
+        carbohydrate_g,
+    }
+}
+
+fn round_non_negative(value: f64) -> u32 {
+    if !value.is_finite() || value <= 0.0 {
+        0
+    } else {
+        value.round().min(f64::from(u32::MAX)) as u32
+    }
 }
 
 /// 栄養の計算の誤り。

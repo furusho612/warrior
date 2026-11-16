@@ -11,8 +11,8 @@ pub use context::{
     RoutineItem, TrainingExperience,
 };
 pub use output::{
-    AiOutput, Evaluation, EvaluationItem, GoalResponse, MenuChange, MenuChangeKind,
+    AiOutput, Certainty, Evaluation, EvaluationItem, GoalResponse, MenuChange, MenuChangeKind,
     NutritionAdvice, OutputError, SetProposal,
 };
-pub use prompt::{build_prompt, sanitize_memo, AiPrompt, PROMPT_VERSION};
+pub use prompt::{build_prompt, build_prompt_for, sanitize_memo, AiPrompt, PROMPT_VERSION};
 pub use safety::{apply_safety, memo_has_safety_term, SAFETY_ADVICE, SAFETY_TERMS};

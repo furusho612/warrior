@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-period-evaluation
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -77,3 +78,10 @@ Cron は 1 分間隔で実行し、実行のたびに、直前の週と月の期
 `backend/warrior/tests/e2e_period_evaluation.rs` に E2E を追加する。
 `backend/pbt/tests/period_evaluation.rs` に性質テストを置く。
 実モデルの品質は 0069 で確認する。
+
+## 結果
+
+Cron の `create_period_jobs` で、前日を含む週と月の評価の行を利用者ごとに作る。一意キーは週と月の期間で、同じ期間は 1 行にまとめる。
+期間の入力は `ai_job/context.rs` の `build_period` で作り、目的、回復、ルーティン、種目を含む補助の入力を渡す。
+評価の後にメニューの最適化の行を作る。評価の一覧は週と月を含み、`certainty` で断定と推測を区別する。
+`backend/warrior/tests/ai_output.rs` で週と月の出力の取得を確認した。

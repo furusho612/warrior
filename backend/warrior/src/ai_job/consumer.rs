@@ -4,8 +4,8 @@
 //! 一致する 1 つの処理だけを進める。AI の出力は検証してから R2 と D1 に保存する。
 
 use serde::{Deserialize, Serialize};
-use warrior_core::ai::output::AiOutput;
-use warrior_core::ai::prompt::{build_prompt, AiPrompt};
+use warrior_core::ai::output::{AiOutput, Certainty};
+use warrior_core::ai::prompt::{build_prompt_for, AiPrompt};
 use warrior_core::ai_job::{
     advance, classify_failure, is_due, is_free_tier_exceeded, lease_deadline, next_attempt_at,
     AttemptOutcome, FailureKind, JobKind, JobState, JobStatus, JobTransition,
@@ -113,14 +113,36 @@ pub(super) async fn process_message(
         started,
         correlation_id,
     };
-    let Some(training_id) = row.training_id.as_deref() else {
-        return record_job_failure(&failure, JobFailure::InvalidJob).await;
+    let valid_target = match kind {
+        JobKind::DailyEvaluation | JobKind::SetProposal => row.training_id.is_some(),
+        JobKind::WeeklyEvaluation | JobKind::MonthlyEvaluation | JobKind::MenuOptimization => {
+            row.period_start.is_some() && row.period_end.is_some()
+        }
     };
-    generate(&failure, training_id).await
+    if !valid_target {
+        return record_job_failure(&failure, JobFailure::InvalidJob).await;
+    }
+    generate(&failure).await
 }
 
-async fn generate(failure: &FailureContext<'_>, training_id: &str) -> Result<()> {
-    let context = match super::context::build(failure.db, &failure.row.user_id, training_id).await {
+async fn generate(failure: &FailureContext<'_>) -> Result<()> {
+    let context = match match failure.kind {
+        JobKind::DailyEvaluation | JobKind::SetProposal => {
+            let Some(training_id) = failure.row.training_id.as_deref() else {
+                return record_job_failure(failure, JobFailure::InvalidJob).await;
+            };
+            super::context::build(failure.db, &failure.row.user_id, training_id).await
+        }
+        JobKind::WeeklyEvaluation | JobKind::MonthlyEvaluation | JobKind::MenuOptimization => {
+            let (Some(start), Some(end)) = (
+                failure.row.period_start.as_deref(),
+                failure.row.period_end.as_deref(),
+            ) else {
+                return record_job_failure(failure, JobFailure::InvalidJob).await;
+            };
+            super::context::build_period(failure.db, &failure.row.user_id, start, end).await
+        }
+    } {
         Ok(Some(context)) => context,
         Ok(None) => return record_job_failure(failure, JobFailure::Input).await,
         Err(error) => {
@@ -135,7 +157,23 @@ async fn generate(failure: &FailureContext<'_>, training_id: &str) -> Result<()>
         Ok(model) if !model.trim().is_empty() => model,
         _ => return record_job_failure(failure, JobFailure::Config).await,
     };
-    let prompt = build_prompt(&context);
+    let mut prompt = build_prompt_for(failure.kind, &context);
+    let previous = match failure.row.redo_of.as_deref() {
+        Some(key) => crate::ai_output::load_output(failure.env, key).await,
+        None => None,
+    };
+    if let Some(previous) = &previous {
+        prompt.system.push_str(
+            "\n\n今回の依頼: 前回の出力を踏まえ、より控えめな内容で作り直してください。\n\
+             前回から何を変えたかを最初に 1 文で書いてください。\n\
+             評価は certainty を必ず付け、断定を減らすか削除してください。\n\
+             提案は重量、セット数、時間の少なくとも 1 つを前回より小さくしてください。",
+        );
+        if let Ok(previous_json) = serde_json::to_string(previous) {
+            prompt.user.push_str("\n\n前回の出力: ");
+            prompt.user.push_str(&previous_json);
+        }
+    }
     let ai = match failure.env.ai(AI_BINDING) {
         Ok(ai) => ai,
         Err(error) => {
@@ -153,13 +191,35 @@ async fn generate(failure: &FailureContext<'_>, training_id: &str) -> Result<()>
             return record_failure(failure, failure_kind, error_code).await;
         }
     };
-    let output = match AiOutput::from_json(extract_json(&response.response), &context) {
+    let parsed = match AiOutput::from_json(extract_json(&response.response), &context) {
         Ok(output) => output,
         Err(_error) => {
             console_error!("the AI output for {} was invalid", failure.row.id);
             return record_job_failure(failure, JobFailure::Output).await;
         }
     };
+    let Some(output) = filter_output(failure.kind, failure.row.exercise_id.as_deref(), parsed)
+    else {
+        console_error!(
+            "the AI output for {} has no content for the kind",
+            failure.row.id
+        );
+        return record_job_failure(failure, JobFailure::Output).await;
+    };
+    if let Some(previous) = &previous {
+        if !more_conservative(
+            failure.kind,
+            previous,
+            &output,
+            failure.row.exercise_id.as_deref(),
+        ) {
+            console_error!(
+                "the redone AI output for {} is not more conservative",
+                failure.row.id
+            );
+            return record_job_failure(failure, JobFailure::Output).await;
+        }
+    }
     let input_snapshot = InputSnapshot {
         model: &model,
         prompt: PromptSnapshot::from(&prompt),
@@ -203,6 +263,21 @@ async fn generate(failure: &FailureContext<'_>, training_id: &str) -> Result<()>
             None,
             failure.correlation_id,
         );
+        if matches!(
+            failure.kind,
+            JobKind::WeeklyEvaluation | JobKind::MonthlyEvaluation
+        ) {
+            if let (Some(start), Some(end)) = (
+                failure.row.period_start.as_deref(),
+                failure.row.period_end.as_deref(),
+            ) {
+                if let Err(error) =
+                    super::create_menu_job(failure.db, &failure.row.user_id, start, end).await
+                {
+                    console_error!("failed to create the menu optimization job: {error}");
+                }
+            }
+        }
     } else {
         log_skipped(
             failure.kind.as_str(),
@@ -215,6 +290,112 @@ async fn generate(failure: &FailureContext<'_>, training_id: &str) -> Result<()>
         );
     }
     Ok(())
+}
+
+/// 生成の種別に合う内容だけを残す。
+fn filter_output(
+    kind: JobKind,
+    exercise_id: Option<&str>,
+    mut output: AiOutput,
+) -> Option<AiOutput> {
+    let safety_advice = output.safety_advice.take();
+    match kind {
+        JobKind::DailyEvaluation | JobKind::WeeklyEvaluation | JobKind::MonthlyEvaluation => {
+            let evaluation = output.evaluation.take()?;
+            Some(AiOutput {
+                evaluation: Some(evaluation),
+                safety_advice,
+                ..AiOutput::default()
+            })
+        }
+        JobKind::SetProposal => {
+            output
+                .proposals
+                .retain(|proposal| exercise_id.is_none_or(|id| proposal.exercise_id == id));
+            if output.proposals.is_empty() {
+                return None;
+            }
+            Some(AiOutput {
+                proposals: output.proposals,
+                safety_advice,
+                ..AiOutput::default()
+            })
+        }
+        JobKind::MenuOptimization => {
+            if output.menu_changes.is_empty() {
+                return None;
+            }
+            Some(AiOutput {
+                menu_changes: output.menu_changes,
+                safety_advice,
+                ..AiOutput::default()
+            })
+        }
+    }
+}
+
+/// 作り直した出力が、前回より控えめであるか。
+fn more_conservative(
+    kind: JobKind,
+    previous: &AiOutput,
+    current: &AiOutput,
+    exercise_id: Option<&str>,
+) -> bool {
+    match kind {
+        JobKind::DailyEvaluation | JobKind::WeeklyEvaluation | JobKind::MonthlyEvaluation => {
+            let previous = previous
+                .evaluation
+                .as_ref()
+                .map(assertion_count)
+                .unwrap_or(0);
+            let current = current
+                .evaluation
+                .as_ref()
+                .map(assertion_count)
+                .unwrap_or(0);
+            current < previous
+        }
+        JobKind::SetProposal => {
+            let Some(previous) = previous
+                .proposals
+                .iter()
+                .find(|proposal| exercise_id.is_none_or(|id| proposal.exercise_id == id))
+            else {
+                return true;
+            };
+            let Some(current) = current
+                .proposals
+                .iter()
+                .find(|proposal| proposal.exercise_id == previous.exercise_id)
+            else {
+                return false;
+            };
+            number_smaller(previous.weight_kg, current.weight_kg)
+                || current.sets < previous.sets
+                || number_smaller(
+                    previous.duration_seconds.map(f64::from),
+                    current.duration_seconds.map(f64::from),
+                )
+        }
+        JobKind::MenuOptimization => true,
+    }
+}
+
+fn number_smaller(previous: Option<f64>, current: Option<f64>) -> bool {
+    match (previous, current) {
+        (Some(previous), Some(current)) => current < previous,
+        _ => false,
+    }
+}
+
+fn assertion_count(evaluation: &warrior_core::ai::output::Evaluation) -> usize {
+    evaluation
+        .good
+        .iter()
+        .chain(evaluation.improvements.iter())
+        .chain(evaluation.next_actions.iter())
+        .filter(|item| item.certainty == Certainty::Assertion)
+        .count()
 }
 
 /// 失敗の種類ごとの分類とログのコード。
@@ -741,6 +922,9 @@ mod tests {
             kind: "daily_evaluation".to_owned(),
             training_id: Some("training-1".to_owned()),
             exercise_id: None,
+            period_start: None,
+            period_end: None,
+            redo_of: None,
             status: "enqueued".to_owned(),
             attempts: 1,
             lease_expires_at: Some("2026-11-12T00:01:00Z".to_owned()),

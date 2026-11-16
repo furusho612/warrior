@@ -53,6 +53,10 @@ pub fn RoutinesScreen() -> Element {
             "data-routines": "true",
             h1 { class: "text-lg font-bold", "{text(Key::RoutinesTitle)}" }
             p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::RoutinesDescription)}" }
+            super::ProgramSection {}
+            super::CustomProgramSection {}
+            super::NutritionPanel {}
+            super::MenuOptimizationPanel {}
             RoutineSyncStatus {
                 status: status_value,
                 on_retry: move |_| {
@@ -838,6 +842,18 @@ async fn delete_routine(
         return;
     }
     busy.set(true);
+    match routine_api::usage(&routine_id).await {
+        Ok(usage) if !usage.programs.is_empty() => {
+            error.set(Some(format!(
+                "{}: {}",
+                text(Key::RoutineUsedByPrograms),
+                usage.programs.join(", ")
+            )));
+            busy.set(false);
+            return;
+        }
+        _ => {}
+    }
     let result = delete_routine_inner(&routine_id).await;
     busy.set(false);
     match result {

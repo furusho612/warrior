@@ -93,6 +93,31 @@ pub const TABLES: &[Table] = &[
         reason: "利用者の種目のお気に入り。",
     },
     Table {
+        name: "custom_program_days",
+        class: TableClass::Owned,
+        reason: "独自のプログラムの日。親の custom_programs から所有される。",
+    },
+    Table {
+        name: "custom_programs",
+        class: TableClass::Owned,
+        reason: "利用者が作った独自のプログラム。",
+    },
+    Table {
+        name: "user_program_progress",
+        class: TableClass::Owned,
+        reason: "利用者のプログラムの進行の位置。",
+    },
+    Table {
+        name: "programs",
+        class: TableClass::Master,
+        reason: "用意したプログラム。利用者に紐づかない。",
+    },
+    Table {
+        name: "program_days",
+        class: TableClass::Master,
+        reason: "用意したプログラムの日。利用者に紐づかない。",
+    },
+    Table {
         name: "routines",
         class: TableClass::Owned,
         reason: "利用者のルーティン。",
@@ -227,6 +252,9 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "push_subscriptions",
     "rest_push_reservations",
     "export_jobs",
+    "custom_program_days",
+    "custom_programs",
+    "user_program_progress",
     "terminal_tokens",
     "ai_outputs",
     "ai_generation",
@@ -302,6 +330,11 @@ mod tests {
             "export_jobs",
             "ai_generation",
             "ai_outputs",
+            "custom_program_days",
+            "custom_programs",
+            "user_program_progress",
+            "programs",
+            "program_days",
         ] {
             assert!(classify(name).is_some(), "{name} must be classified");
         }

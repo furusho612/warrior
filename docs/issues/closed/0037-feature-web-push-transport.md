@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-web-push-transport
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -59,3 +60,9 @@ REQ-TMR-009 の「緊急度を最高にして送る」「有効期限を短く�
 `backend/pbt/tests/web_push.rs` に性質テストを置く。
 `backend/warrior_core/src/web_push.rs` の `#[cfg(test)]` に RFC 8291 のテストベクタと境界の例示テストを置く。
 0066 は、このモジュールの送信の関数を呼ぶ。
+
+## 結果
+
+`backend/warrior_core/src/web_push.rs` に VAPID の ES256 JWT、RFC 8291 の aes128gcm の暗号化、送信のヘッダの組み立てを置いた。
+RFC 8291 のテストベクタを両方向で確認し、`backend/pbt/tests/web_push.rs` の性質テストと `backend/fuzz/fuzz_targets/web_push.rs` の fuzz の対象を追加した。
+送信は 0066 の Queue の消費から呼び出し、`backend/warrior/tests/e2e_push.rs` で通知の受信まで確認する。

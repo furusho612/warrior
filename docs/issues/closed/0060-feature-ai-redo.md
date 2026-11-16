@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-ai-redo
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -78,3 +79,10 @@ AI の出力は記録の事実ではなく、利用者が採用を決める提�
 `backend/warrior/tests/e2e_ai_redo.rs` に E2E を追加する。
 `backend/pbt/tests/ai_redo.rs` に性質テストを置く。
 実モデルの品質は 0069 で確認する。
+
+## 結果
+
+`POST /api/ai/jobs/:id/redo` を追加し、生成済みの評価、提案、メニューの状態を `pending` に戻して再生成する。
+`redo_of` に入力の出力のキーを保存し、前回の出力をプロンプトに含める。断定を減らせない場合は `minimal` を返し、再生成しない。
+`frontend/src/screens/evaluations.rs`、`record/proposals.rs`、`menu_optimization.rs` に作り直しの操作を置いた。
+`backend/warrior/tests/ai_output.rs` で `pending` への遷移を確認した。
