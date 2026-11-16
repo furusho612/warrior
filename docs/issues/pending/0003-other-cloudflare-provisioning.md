@@ -62,6 +62,12 @@ Relying Party ID と Origin は production のホスト名に固定する。
 利用者が R2 のライフサイクルルールを `wrangler r2 bucket lifecycle add <BUCKET> <NAME> exports/ --expire-days 7` で設定する。
 作業の結果は issue に追記し、Secret の値は書かない。
 
+## 進捗
+
+`wrangler.toml` の `[env.production]` に D1、R2、Queues、Workers AI、Cron Triggers、vars を置き、レート制限の上限と窓も含めた。
+`wrangler deploy --dry-run --env production` が成功することを確認した。
+残りは Cloudflare の資源作成、`database_id` と Secret の設定、D1 のマイグレーションの適用、Google OAuth と VAPID の実値の設定であり、利用者の資格情報が必要である。
+
 ## 止める理由
 
 Cloudflare のアカウント、サブドメイン、Google OAuth のクライアント、VAPID の鍵が利用者に依存する。
