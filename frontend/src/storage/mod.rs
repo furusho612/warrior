@@ -25,6 +25,7 @@ pub mod indexeddb;
 pub mod outbox;
 
 mod account;
+mod alternative;
 mod body_weight;
 mod discard;
 mod exercise;
@@ -47,7 +48,7 @@ pub use stopwatch::StopwatchSide;
 /// 既定のデータベースの名前。
 pub const DATABASE_NAME: &str = "warrior";
 /// スキーマの版。
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// 端末内の保存の誤り。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +154,10 @@ pub enum Store {
     BodyWeight,
     /// ルーティン。
     Routines,
+    /// 種目ライブラリの候補選択用のキャッシュ。
+    LibraryExercises,
+    /// 過去に記録した種目の ID のキャッシュ。
+    RecordedExercises,
 }
 
 impl Store {
@@ -170,6 +175,8 @@ impl Store {
             Self::Meta => "meta",
             Self::BodyWeight => "body_weight",
             Self::Routines => "routines",
+            Self::LibraryExercises => "library_exercises",
+            Self::RecordedExercises => "recorded_exercises",
         }
     }
 }

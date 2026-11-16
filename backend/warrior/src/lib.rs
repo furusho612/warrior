@@ -7,6 +7,7 @@ use worker::{console_error, event, Context, Date, Env, MessageBatch, Request, Re
 
 pub mod account;
 pub mod ai_job;
+pub mod alternative;
 pub mod analysis;
 pub mod auth;
 pub mod calendar;

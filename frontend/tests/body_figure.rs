@@ -6,12 +6,12 @@
 //! グリップの選択を変えると、色の付く要素が変わることも確かめる。
 
 use warrior_core::exercise::{Attachment, MuscleUnit};
+use warrior_core::library::ExerciseSource;
 use warrior_frontend::body_figure::{
     figure_muscles, figure_svg, unit_attribute, FigureMuscles, FigureSide,
 };
 use warrior_frontend::generated::tokens;
 use warrior_frontend::grip_options::{attachment_with, initial_grip};
-use warrior_core::library::ExerciseSource;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen_test::wasm_bindgen_test_configure;

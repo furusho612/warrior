@@ -3,6 +3,7 @@
 pub mod account_deletion;
 pub mod ai;
 pub mod ai_job;
+pub mod alternative;
 pub mod auth;
 pub mod base64url;
 pub mod body_part_analysis;

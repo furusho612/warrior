@@ -155,6 +155,18 @@ const STORES: &[StoreSpec] = &[
         }],
         since: 4,
     },
+    StoreSpec {
+        name: "library_exercises",
+        key_path: KeyPath::Single("id"),
+        indexes: &[],
+        since: 5,
+    },
+    StoreSpec {
+        name: "recorded_exercises",
+        key_path: KeyPath::Single("exercise_id"),
+        indexes: &[],
+        since: 5,
+    },
 ];
 
 /// データベースを開く。

@@ -35,9 +35,10 @@ thread_local! {
     static LISTENING: Cell<bool> = const { Cell::new(false) };
 }
 
-/// 起動時の永続ストレージの要求、online の購読、最初の送信を行う。
+/// 起動時の永続ストレージの要求、候補のキャッシュ、online の購読、最初の送信を行う。
 pub async fn start() {
     let _ = storage::request_persistence().await;
+    crate::library::refresh_cache().await;
     listen_online();
     crate::settings::flush().await;
     flush().await;

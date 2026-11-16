@@ -24,6 +24,7 @@ use crate::text::{text, Key};
 use crate::training_session as training_api;
 use crate::training_session::TrainingApiError;
 
+mod alternatives;
 mod errors;
 mod exercise_view;
 mod exercises;

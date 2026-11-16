@@ -4,7 +4,8 @@
 //! 絞り込みの条件とカーソルをクエリに載せる。種目の追加、編集、削除、初期化は
 //! 端末内の送信待ちの列へ積んでから送る。
 
-use warrior_core::exercise::{BodyPart, Equipment, ExerciseInput};
+use warrior_core::alternative::RecordedExercises;
+use warrior_core::exercise::{BodyPart, Equipment, Exercise, ExerciseInput};
 use warrior_core::library::{ExerciseList, FavoriteState, LibraryExercise};
 
 use crate::http::{self, HttpError};
@@ -58,6 +59,34 @@ pub async fn page(query: &ExercisesQuery, cursor: Option<&str>) -> Result<Exerci
 /// 種目の詳細を取る。
 pub async fn exercise(exercise_id: &str) -> Result<LibraryExercise, HttpError> {
     http::request_json("GET", &format!("/api/exercises/{exercise_id}")).await
+}
+
+/// 過去に記録した種目の ID を取る。
+pub async fn recorded_exercises() -> Result<RecordedExercises, HttpError> {
+    http::request_json("GET", "/api/exercises/recorded").await
+}
+
+/// 代わりの種目の候補に使う種目ライブラリと、過去に記録した種目の ID を端末内へ保存する。
+///
+/// ログインの後の起動で呼ぶ。通信できないときは保存せず、次の起動で取り直す。
+pub async fn refresh_cache() {
+    let Ok(list) = all().await else {
+        return;
+    };
+    let Ok(recorded) = recorded_exercises().await else {
+        return;
+    };
+    let Ok(storage) = storage::current().await else {
+        return;
+    };
+    let exercises = list
+        .exercises
+        .into_iter()
+        .map(|item| item.exercise)
+        .collect::<Vec<Exercise>>();
+    let _ = storage
+        .save_alternative_source(&exercises, &recorded.exercise_ids)
+        .await;
 }
 
 /// 種目のお気に入りを登録または解除する。
