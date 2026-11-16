@@ -73,6 +73,12 @@ staging を追加したときは、production と同じモデルを staging の 
 staging を追加したときは、`[env.staging]` の `AI_MODEL` も同じ値にする。
 モデルの変更は ADR-018 に記録する。
 
+## 進捗
+
+0061 の fixture と `mise run ai-eval` で、評価に渡す入力とプロンプトを出力できる。
+`[env.production]` と `[env.staging]` の `AI_MODEL` は暫定既定値で揃え、`backend/warrior/tests/ai_model_config.rs` で設定を確認している。
+残りは 5 つの候補を Workers AI の Playground または staging で実行し、観点ごとの結果と選定の理由を記録する作業である。
+
 ## 止める理由
 
 評価には Workers AI の Playground または staging が必要であり、実環境への接続は利用者に依存する。
