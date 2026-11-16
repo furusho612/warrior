@@ -3,6 +3,7 @@
 - Requirements: REQ-ALT-001, REQ-ALT-002, REQ-ALT-003, REQ-ALT-004, REQ-ALT-005, REQ-ALT-006
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-16
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-alternative-exercise
 
@@ -75,3 +76,11 @@
 `frontend/src/storage/library.rs` に種目ライブラリと過去に記録した種目の ID の保存を置く。
 `backend/warrior/tests/e2e_alternative.rs` に E2E を追加する。
 `backend/pbt/tests/alternative.rs` に性質テストを置く。
+
+## 結果
+
+候補の選択と並び順を `warrior_core::alternative` に置き、`GET /api/exercises/:id/alternatives` と `GET /api/exercises/recorded` を追加した。
+入れ替えと後に回す操作は、記録の送信待ちの列に積む操作として実装し、通信できない状態でも操作できるようにした。
+端末内の候補の保存は、種目の変更の送信待ちを持つ `frontend/src/storage/library.rs` と名前が衝突するため、`frontend/src/storage/alternative.rs` に置いた。
+候補の保存に使う IndexedDB の版を 5 に上げた。
+E2E と PBT を追加し、完了条件のうちローカルで確かめられるものを満たした。

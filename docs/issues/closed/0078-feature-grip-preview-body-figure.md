@@ -3,6 +3,7 @@
 - Requirements: REQ-LIB-003
 - Priority: Medium
 - Created: 2026-11-15
+- Completed: 2026-11-16
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-grip-preview
 
@@ -38,4 +39,11 @@ REQ-LIB-003 は、グリップとアタッチメントに応じて人体図の�
 `frontend/src/screens/exercise.rs` にグリップの選択を置く。
 `frontend/src/body_figure.rs` の `figure_muscles` に選んだグリップを渡す。
 選択肢の組み立ては、記録画面のものと共有できる形に寄せる。
+
+## 結果
+
+種目の詳細にグリップの選択を置き、選んだグリップを `figure_muscles` に渡すようにした。
+選択肢の組み立ては `frontend/src/grip_options.rs` に寄せ、記録画面と共有した。
+`figure_muscles` は種目の出典も受け取り、マスターの種目だけにグリップの表を適用する。
+例示テスト、ブラウザのテスト、E2E を追加した。
 `backend/warrior/tests/e2e_body_figure.rs` に E2E を追加する。

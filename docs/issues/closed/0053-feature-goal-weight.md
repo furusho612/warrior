@@ -3,6 +3,7 @@
 - Requirements: REQ-GOAL-001, REQ-GOAL-002, REQ-GOAL-003, REQ-GOAL-004, REQ-GOAL-005, REQ-NFR-019
 - Priority: Medium
 - Created: 2026-11-12
+- Completed: 2026-11-16
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/feature-goal-weight
 
@@ -86,3 +87,11 @@ AI の出力の型に、目標への対応の結果を含める。
 `backend/warrior/tests/e2e_goal.rs` に E2E を追加する。
 `backend/pbt/tests/goal.rs` に性質テストを置く。
 `backend/warrior_core/src/account_deletion.rs` の表の一覧に `exercise_goals` を追加する。
+
+## 結果
+
+`exercise_goals` の表、目標の検証、直近 7 日間の平均と自己ベストによる現在の記録、履歴とグラフの差、途中の目標の検証を実装した。
+目標は `PUT /api/exercises/:id/goal` と `DELETE /api/exercises/:id/goal` で設定、変更、取り消す。
+AI のコンテキストと出力に目標を含め、目標に一気に届かない場合の途中の目標を検証する。
+目標の画面は種目の詳細ではなく、履歴とグラフの画面に置いた。種目の詳細から履歴へ移動して設定する。
+完了条件のうち、AI の提案が目標を踏まえることの確認は 0058 と 0059 に引き継ぐ。
