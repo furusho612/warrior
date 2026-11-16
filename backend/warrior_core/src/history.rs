@@ -1,6 +1,7 @@
 //! 種目別の履歴の並び、推移のグラフの期間と指標、同じ日の点のまとめ (PRD の「分析」)。
 //!
-//! 対応する要求: `REQ-ANL-001`、`REQ-ANL-002`、`REQ-ANL-003`、`REQ-ANL-004`。
+//! 対応する要求: `REQ-ANL-001`、`REQ-ANL-002`、`REQ-ANL-003`、`REQ-ANL-004`、
+//! `REQ-GOAL-002`。
 //! グラフの値は `set_calc` の `SetRecord` の計算だけを使い、この module で再実装しない。
 //! 最大重量と推定 1RM はドロップセットの最初の段、総重量は全段という規則も
 //! `SetRecord` が持つ。この module は期間の選択と、同じ日の記録のまとめだけを担う。
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::calendar::CalendarSet;
 use crate::exercise::{GripMode, GripSelection, Laterality};
+use crate::goal::GoalProgress;
 use crate::jst::{JstDate, UtcInstant};
 use crate::set_calc::{RecordMode, SetKind, SetRecord};
 use crate::training_session::BestKind;
@@ -187,6 +189,8 @@ pub struct ExerciseGraph {
     pub end: JstDate,
     /// 日付の古い順の点。記録が無い日は含まない。
     pub points: Vec<GraphPoint>,
+    /// 目標重量と現在の記録との差。絞り込みに一致する組だけを持つ。
+    pub goals: Vec<GoalProgress>,
 }
 
 /// 種目別の履歴の 1 トレーニング。
@@ -234,6 +238,8 @@ pub struct ExerciseHistory {
     pub grip_options: Vec<GripSelection>,
     /// 自己ベスト。指定したグリップとアタッチメントで絞り込む。
     pub bests: Vec<ExerciseBest>,
+    /// 目標重量と現在の記録との差。指定したグリップとアタッチメントで絞り込む。
+    pub goals: Vec<GoalProgress>,
     /// トレーニング。日付の新しい順で、同じ日は終了の時刻の新しい順である。
     pub trainings: Vec<HistoryTraining>,
 }
@@ -893,6 +899,7 @@ mod tests {
                 width: crate::exercise::GripWidth::Medium,
             }],
             bests: Vec::new(),
+            goals: Vec::new(),
             trainings: vec![training(
                 EXERCISE_ID,
                 date(2026, 11, 12),

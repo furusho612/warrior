@@ -17,6 +17,7 @@ pub mod error;
 pub mod exercise;
 pub mod exercise_override;
 pub mod export;
+pub mod goal;
 pub mod history;
 pub mod library;
 pub mod log;

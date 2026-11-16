@@ -354,6 +354,7 @@ mod tests {
             grip_mode: GripMode::Grip,
             grip_options: options,
             bests: Vec::new(),
+            goals: Vec::new(),
             trainings: Vec::new(),
         }
     }

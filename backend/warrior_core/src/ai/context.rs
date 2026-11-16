@@ -11,6 +11,8 @@ use crate::jst::JstDate;
 use crate::nutrition::{Goal, Sex};
 use crate::set_calc::{RecordMode, SetKind};
 
+pub use crate::goal::ExerciseGoal;
+
 /// 部位区分。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,21 +115,6 @@ pub struct ContextTraining {
     pub memo: Option<String>,
     /// 種目。
     pub exercises: Vec<ContextExercise>,
-}
-
-/// 種目ごとの目標重量。
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ExerciseGoal {
-    /// 種目 ID。
-    pub exercise_id: String,
-    /// グリップ。
-    pub grip: Option<String>,
-    /// アタッチメント。
-    pub attachment: Option<String>,
-    /// 目標重量 (kg)。
-    pub target_weight_kg: f64,
-    /// 達成したい時期。
-    pub target_date: Option<JstDate>,
 }
 
 /// 部位別の分析。画面に出すセット数を持つ。

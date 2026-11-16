@@ -108,6 +108,11 @@ pub const TABLES: &[Table] = &[
         reason: "ルーティンの種目ごとの目標。親の routine_exercises から所有される。",
     },
     Table {
+        name: "exercise_goals",
+        class: TableClass::Owned,
+        reason: "利用者の種目とグリップとアタッチメントの組ごとの目標重量。",
+    },
+    Table {
         name: "training_sessions",
         class: TableClass::Owned,
         reason: "利用者のトレーニング。",
@@ -209,6 +214,7 @@ pub const USER_OWNED_TABLES: &[&str] = &[
     "master_exercise_overrides",
     "exercise_operations",
     "exercise_favorites",
+    "exercise_goals",
     "user_rate_limits",
     "elevation_tokens",
     "passkeys",
@@ -273,6 +279,7 @@ mod tests {
             "routines",
             "routine_exercises",
             "routine_exercise_targets",
+            "exercise_goals",
             "training_sessions",
             "training_exercises",
             "sets",

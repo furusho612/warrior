@@ -9,6 +9,7 @@ pub mod calendar;
 pub mod calendar_view;
 pub mod export;
 pub mod generated;
+pub mod goal;
 pub mod graph;
 pub mod grip_options;
 pub mod grip_text;
