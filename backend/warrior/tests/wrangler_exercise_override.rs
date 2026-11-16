@@ -34,7 +34,7 @@ fn custom_exercises_and_master_overrides_are_saved_per_user() {
 
     check_required_fields(&server, &cookie);
     let custom_id = check_custom_exercise(&server, &cookie);
-    check_other_user_cannot_change_custom(&server, &other_cookie, &custom_id);
+    check_other_user_cannot_change_custom(&server, &cookie, &other_cookie, &custom_id);
     check_custom_delete(&server, &cookie, &custom_id);
     check_master_override(&server, &cookie, &other_cookie);
     check_master_delete_and_reset(&server, &cookie);
@@ -140,8 +140,13 @@ fn check_custom_delete(server: &DevServer, cookie: &str, id: &str) {
     );
 }
 
-fn check_other_user_cannot_change_custom(server: &DevServer, cookie: &str, id: &str) {
-    let detail = fetch_detail(server, cookie, id);
+fn check_other_user_cannot_change_custom(
+    server: &DevServer,
+    owner_cookie: &str,
+    cookie: &str,
+    id: &str,
+) {
+    let detail = fetch_detail(server, owner_cookie, id);
     let input = ExerciseInput::from_exercise(&detail.exercise);
     let update = mutate(
         server,
@@ -188,7 +193,7 @@ fn check_master_override(server: &DevServer, cookie: &str, other_cookie: &str) {
     let other = fetch_detail(server, other_cookie, BENCH);
     assert_eq!(other.source, ExerciseSource::Master);
     assert_eq!(other.exercise.name, "ベンチプレス");
-    assert_eq!(other.exercise.tips, "");
+    assert_eq!(other.exercise.tips, master.exercise.tips);
 
     let reset = mutate(
         server,
