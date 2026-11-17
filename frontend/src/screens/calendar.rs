@@ -568,6 +568,7 @@ fn CalendarAddForm(state: CalendarSignals, today: Option<JstDate>) -> Element {
     let mut minutes = use_signal(String::new);
     let error = use_signal(|| Option::<String>::None);
     let busy = use_signal(|| false);
+    let added = use_signal(|| Option::<String>::None);
     let busy_now = busy();
     let error_now = error();
     let date_value = date();
@@ -610,9 +611,24 @@ fn CalendarAddForm(state: CalendarSignals, today: Option<JstDate>) -> Element {
                 onclick: move |_| {
                     let date_text = date();
                     let minutes_text = minutes();
-                    spawn(add_record(date_text, minutes_text, state, error, busy));
+                    spawn(add_record(
+                        date_text,
+                        minutes_text,
+                        state,
+                        error,
+                        busy,
+                        added,
+                    ));
                 },
                 "{text(Key::CalendarAddSubmit)}"
+            }
+            if let Some(training_id) = (added)() {
+                Link {
+                    to: Route::RecordSession { training_id },
+                    class: "flex min-h-11 items-center justify-center border border-primary px-3 text-[13px] text-primary",
+                    "data-calendar-add-open-record": "true",
+                    "{text(Key::CalendarAddOpenRecord)}"
+                }
             }
         }
     }
@@ -625,6 +641,7 @@ async fn add_record(
     mut state: CalendarSignals,
     mut error: Signal<Option<String>>,
     mut busy: Signal<bool>,
+    mut added: Signal<Option<String>>,
 ) {
     busy.set(true);
     let result = save_backfill(&date_text, &minutes_text).await;
@@ -632,6 +649,7 @@ async fn add_record(
     match result {
         Ok(session) => {
             error.set(None);
+            added.set(Some(session.id.clone()));
             if let Some(date) = JstDate::parse(&session.date) {
                 state.month.set(Some(date.month_range()));
                 state.selected.set(Some(date));

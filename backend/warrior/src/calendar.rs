@@ -38,6 +38,12 @@ struct SessionRow {
     memo: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct PlannedRow {
+    training_id: String,
+    snapshot: String,
+}
+
 /// 保存した行をカレンダーの表示に変換できない理由。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StoredCalendarError {
@@ -118,7 +124,11 @@ pub async fn day(request: Request, context: RouteContext<()>) -> Result<Response
             return Ok(response(ErrorCode::Internal, "internal error"));
         }
     };
-    Response::from_json(&build_day(date, sessions, exercises))
+    let planned = db
+        .all(&day_planned_statement(&authenticated.id, date))
+        .await?
+        .results::<PlannedRow>()?;
+    Response::from_json(&build_day(date, sessions, exercises, planned))
 }
 
 fn month_dates_statement(user_id: &str, month: JstMonth) -> SqlStatement {
@@ -160,6 +170,18 @@ fn day_sessions_statement(user_id: &str, date: JstDate) -> SqlStatement {
     )
 }
 
+fn day_planned_statement(user_id: &str, date: JstDate) -> SqlStatement {
+    SqlStatement::new(
+        "SELECT te.training_id, te.snapshot FROM training_sessions ts \
+         JOIN training_exercises te ON te.training_id = ts.id AND te.user_id = ts.user_id \
+         WHERE ts.user_id = ? AND ts.date = ? ORDER BY te.position, te.id",
+        vec![
+            SqlValue::Text(user_id.to_owned()),
+            SqlValue::Text(date.to_string()),
+        ],
+    )
+}
+
 fn build_month(
     month: JstMonth,
     dates: Vec<DateRow>,
@@ -192,10 +214,19 @@ fn build_day(
     date: JstDate,
     sessions: Vec<SessionRow>,
     exercises: Vec<StoredExercise>,
+    planned: Vec<PlannedRow>,
 ) -> CalendarDayDetail {
+    let planned = planned
+        .into_iter()
+        .filter_map(|row| {
+            serde_json::from_str::<ExerciseSnapshot>(&row.snapshot)
+                .ok()
+                .map(|snapshot| (row.training_id, snapshot))
+        })
+        .collect::<Vec<_>>();
     let trainings = sessions
         .into_iter()
-        .map(|session| calendar_training(&session, &exercises))
+        .map(|session| calendar_training(&session, &exercises, &planned))
         .collect::<Vec<_>>();
     let total_weight_kg = trainings
         .iter()
@@ -208,13 +239,37 @@ fn build_day(
     }
 }
 
-fn calendar_training(session: &SessionRow, exercises: &[StoredExercise]) -> CalendarTraining {
-    let exercises = exercises
+fn calendar_training(
+    session: &SessionRow,
+    exercises: &[StoredExercise],
+    planned: &[(String, ExerciseSnapshot)],
+) -> CalendarTraining {
+    let recorded = exercises
         .iter()
         .filter(|exercise| exercise.training_id == session.id)
-        .map(calendar_exercise)
         .collect::<Vec<_>>();
-    let total_weight_kg = exercises
+    let mut visible = Vec::new();
+    let mut used = vec![false; recorded.len()];
+    for (_, snapshot) in planned
+        .iter()
+        .filter(|(training_id, _)| training_id == &session.id)
+    {
+        if let Some(index) = recorded
+            .iter()
+            .position(|exercise| exercise.snapshot.exercise_id == snapshot.exercise_id)
+        {
+            used[index] = true;
+            visible.push(calendar_exercise(recorded[index]));
+        } else {
+            visible.push(planned_exercise(snapshot));
+        }
+    }
+    for (index, exercise) in recorded.into_iter().enumerate() {
+        if !used[index] {
+            visible.push(calendar_exercise(exercise));
+        }
+    }
+    let total_weight_kg = visible
         .iter()
         .map(|exercise| exercise.total_weight_kg)
         .sum();
@@ -223,7 +278,7 @@ fn calendar_training(session: &SessionRow, exercises: &[StoredExercise]) -> Cale
         started_at: session.started_at.clone(),
         memo: session.memo.clone(),
         total_weight_kg,
-        exercises,
+        exercises: visible,
     }
 }
 
@@ -245,6 +300,18 @@ fn calendar_exercise(exercise: &StoredExercise) -> CalendarExercise {
     }
 }
 
+fn planned_exercise(snapshot: &ExerciseSnapshot) -> CalendarExercise {
+    CalendarExercise {
+        exercise_id: snapshot.exercise_id.clone(),
+        name: snapshot.name.clone(),
+        body_part: snapshot.body_part,
+        record_mode: snapshot.record_mode,
+        laterality: snapshot.laterality,
+        total_weight_kg: 0.0,
+        sets: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! サーバーの月の組み立てと日の詳細の例示テスト。
@@ -258,7 +325,8 @@ mod tests {
 
     use super::{
         build_day, build_month, day_sessions_statement, month_dates_statement,
-        month_snapshots_statement, DateRow, SessionRow, SnapshotRow, StoredCalendarError,
+        month_snapshots_statement, DateRow, PlannedRow, SessionRow, SnapshotRow,
+        StoredCalendarError,
     };
     use crate::stored_sets::StoredExercise;
 
@@ -396,7 +464,7 @@ mod tests {
                 set_body_weights: vec![None, None],
             },
         ];
-        let detail = build_day(date, sessions, exercises);
+        let detail = build_day(date, sessions, exercises, Vec::new());
         assert_eq!(detail.date, date);
         assert_eq!(
             detail
@@ -421,9 +489,37 @@ mod tests {
     }
 
     #[test]
+    fn a_planned_exercise_without_sets_is_shown_with_an_empty_set_list() {
+        let date = JstDate::new(2026, 11, 12).unwrap();
+        let plan = PlannedRow {
+            training_id: "training-a".to_owned(),
+            snapshot: serde_json::to_string(&snapshot_of(
+                "bench",
+                "ベンチプレス",
+                BodyPart::Chest,
+                RecordMode::WeightAndReps,
+            ))
+            .expect("the snapshot is JSON"),
+        };
+        let detail = build_day(
+            date,
+            vec![SessionRow {
+                id: "training-a".to_owned(),
+                started_at: None,
+                memo: String::new(),
+            }],
+            Vec::new(),
+            vec![plan],
+        );
+        assert_eq!(detail.trainings[0].exercises.len(), 1);
+        assert_eq!(detail.trainings[0].exercises[0].name, "ベンチプレス");
+        assert!(detail.trainings[0].exercises[0].sets.is_empty());
+    }
+
+    #[test]
     fn a_day_without_sessions_has_no_trainings() {
         let date = JstDate::new(2026, 11, 12).unwrap();
-        let detail = build_day(date, Vec::new(), Vec::new());
+        let detail = build_day(date, Vec::new(), Vec::new(), Vec::new());
         assert_eq!(detail.total_weight_kg, 0.0);
         assert!(detail.trainings.is_empty());
     }

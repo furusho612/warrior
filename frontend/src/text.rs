@@ -345,6 +345,7 @@ text_keys! {
     CalendarAddDateLabel => "日付",
     CalendarAddDurationLabel => "所要時間 (分)",
     CalendarAddSubmit => "追加する",
+    CalendarAddOpenRecord => "この日の種目と実績を追加",
     CalendarAddFailed => "記録を追加できませんでした。日付と所要時間を確認してください。",
     CalendarAddInvalidDate => "存在する日付を YYYY-MM-DD で入力してください。",
     CalendarAddInvalidDuration => "所要時間は 1 分以上 1440 分以下で入力してください。",

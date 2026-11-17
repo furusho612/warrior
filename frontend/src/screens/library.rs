@@ -410,10 +410,12 @@ fn favorite_filter_class(active: bool) -> &'static str {
 /// 記録に追加する種目を選ぶ画面。
 #[component]
 pub fn ExerciseSelectScreen(training_id: String) -> Element {
-    let exercises = use_signal(|| Option::<Vec<Exercise>>::None);
+    let exercises = use_signal(|| Option::<Vec<LibraryExercise>>::None);
     let error = use_signal(|| Option::<String>::None);
     let view_only = use_signal(|| false);
     let adding = use_signal(|| Option::<String>::None);
+    let mut part_tab = use_signal(|| Option::<BodyPart>::None);
+    let mut favorite_tab = use_signal(|| false);
     let route_id = training_id.clone();
     let retry_id = training_id.clone();
     use_effect(move || {
@@ -425,6 +427,8 @@ pub fn ExerciseSelectScreen(training_id: String) -> Element {
     let busy = (adding)().is_some();
     let read_only = (view_only)();
     let back_id = training_id.clone();
+    let active_part = (part_tab)();
+    let active_favorite = (favorite_tab)();
 
     rsx! {
         section {
@@ -440,6 +444,46 @@ pub fn ExerciseSelectScreen(training_id: String) -> Element {
                 }
             }
             p { class: "text-[13px] text-text-sub", "{text(Key::RecordExerciseSelectDescription)}" }
+            div {
+                class: "flex flex-wrap gap-1",
+                role: "tablist",
+                "data-exercise-tabs": "true",
+                button {
+                    class: part_tab_class(!active_favorite && active_part.is_none()),
+                    role: "tab",
+                    "aria-selected": if !active_favorite && active_part.is_none() { "true" } else { "false" },
+                    "data-exercise-part-tab": "all",
+                    onclick: move |_| {
+                        part_tab.set(None);
+                        favorite_tab.set(false);
+                    },
+                    "{text(Key::LibraryFilterAll)}"
+                }
+                for part in BodyPart::ALL {
+                    button {
+                        class: part_tab_class(!active_favorite && active_part == Some(part)),
+                        role: "tab",
+                        "aria-selected": if !active_favorite && active_part == Some(part) { "true" } else { "false" },
+                        "data-exercise-part-tab": part.as_str(),
+                        onclick: move |_| {
+                            part_tab.set(Some(part));
+                            favorite_tab.set(false);
+                        },
+                        "{part_label(part)}"
+                    }
+                }
+                button {
+                    class: part_tab_class(active_favorite),
+                    role: "tab",
+                    "aria-selected": if active_favorite { "true" } else { "false" },
+                    "data-exercise-favorite-tab": "true",
+                    onclick: move |_| {
+                        favorite_tab.set(true);
+                        part_tab.set(None);
+                    },
+                    "{text(Key::LibraryFavoriteFilter)}"
+                }
+            }
             if read_only {
                 p { class: "text-[13px] text-primary", "{text(Key::RecordViewOnly)}" }
             }
@@ -454,32 +498,54 @@ pub fn ExerciseSelectScreen(training_id: String) -> Element {
                     "{text(Key::RecordRetry)}"
                 }
             } else if let Some(list) = list {
-                if list.is_empty() {
-                    p { class: "text-[13px] text-text-sub", "{text(Key::LibraryEmpty)}" }
-                }
-                div { class: "flex flex-col gap-1", "data-exercise-choices": "true",
-                    for exercise in list {
-                        button {
-                            class: "flex min-h-11 items-center justify-between gap-2 border border-line bg-surface px-3 text-left",
-                            "data-exercise-choose": "true",
-                            "data-exercise-id": "{exercise.id}",
-                            disabled: busy || read_only,
-                            onclick: {
-                                let training_id = training_id.clone();
-                                let exercise = exercise.clone();
-                                move |_| {
-                                    let training_id = training_id.clone();
-                                    let exercise = exercise.clone();
-                                    spawn(add(
-                                        training_id,
-                                        exercise,
-                                        adding,
-                                        error,
-                                    ));
+                {
+                    let visible = list
+                        .into_iter()
+                        .filter(|item| {
+                            if active_favorite {
+                                item.favorite
+                            } else {
+                                active_part.is_none_or(|part| item.exercise.body_part == part)
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    if visible.is_empty() {
+                        rsx! { p { class: "text-[13px] text-text-sub", "data-exercise-choices-empty": "true", "{text(Key::LibraryEmpty)}" } }
+                    } else {
+                        rsx! {
+                            div { class: "flex flex-col gap-1", "data-exercise-choices": "true",
+                                for item in visible {
+                                    {
+                                        let exercise = item.exercise.clone();
+                                        let training_id = training_id.clone();
+                                        rsx! {
+                                            button {
+                                                class: "flex min-h-11 items-center justify-between gap-2 border border-line bg-surface px-3 text-left",
+                                                "data-exercise-choose": "true",
+                                                "data-exercise-id": "{exercise.id}",
+                                                disabled: busy || read_only,
+                                                onclick: {
+                                                    let training_id = training_id.clone();
+                                                    let exercise = exercise.clone();
+                                                    move |_| {
+                                                        spawn(add(
+                                                            training_id.clone(),
+                                                            exercise.clone(),
+                                                            adding,
+                                                            error,
+                                                        ));
+                                                    }
+                                                },
+                                                span { class: "flex min-w-0 items-center gap-2",
+                                                    if item.favorite { FavoriteIcon { filled: true } }
+                                                    span { class: "truncate text-[13px] font-bold", "{exercise.name}" }
+                                                }
+                                                span { class: "text-[11px] text-text-sub", "{part_label(exercise.body_part)}" }
+                                            }
+                                        }
+                                    }
                                 }
-                            },
-                            span { class: "text-[13px] font-bold", "{exercise.name}" }
-                            span { class: "text-[11px] text-text-sub", "{part_label(exercise.body_part)}" }
+                            }
                         }
                     }
                 }
@@ -490,9 +556,17 @@ pub fn ExerciseSelectScreen(training_id: String) -> Element {
     }
 }
 
+fn part_tab_class(active: bool) -> &'static str {
+    if active {
+        "min-h-11 border border-primary bg-primary px-3 text-[12px] font-bold text-on-primary"
+    } else {
+        "min-h-11 border border-line px-3 text-[12px]"
+    }
+}
+
 async fn load(
     training_id: String,
-    mut exercises: Signal<Option<Vec<Exercise>>>,
+    mut exercises: Signal<Option<Vec<LibraryExercise>>>,
     mut error: Signal<Option<String>>,
     mut view_only: Signal<bool>,
 ) {
@@ -507,13 +581,7 @@ async fn load(
     let forbidden = storage.forbidden_trainings().await.unwrap_or_default();
     view_only.set(forbidden.iter().any(|id| id == &training_id));
     match library_api::all().await {
-        Ok(response) => exercises.set(Some(
-            response
-                .exercises
-                .into_iter()
-                .map(|item| item.exercise)
-                .collect(),
-        )),
+        Ok(response) => exercises.set(Some(response.exercises)),
         Err(_) => error.set(Some(text(Key::RecordExerciseSelectFailed).to_owned())),
     }
 }
