@@ -48,7 +48,6 @@
 外部の AI サービスは使わない。
 
 評価の結果と選定の理由を issue に記録し、モデルを変えた場合は ADR-018 を更新する。
-staging を追加したときは、production と同じモデルを staging の `AI_MODEL` に置く。
 
 ## 完了条件
 
@@ -67,25 +66,24 @@ staging を追加したときは、production と同じモデルを staging の 
 
 ## 解決方法
 
-`mise run ai-eval` で評価のプロンプトを出力し、Workers AI の Playground または staging で利用者がモデルを実行する。
+`mise run ai-eval` で評価のプロンプトを出力し、Workers AI の Playground または production で利用者がモデルを実行する。
 評価の結果を issue に記録する。
 モデルを変える場合は、`wrangler.toml` の `[env.production]` の `AI_MODEL` を更新する。
-staging を追加したときは、`[env.staging]` の `AI_MODEL` も同じ値にする。
 モデルの変更は ADR-018 に記録する。
 
 ## 進捗
 
 0061 の fixture と `mise run ai-eval` で、評価に渡す入力とプロンプトを出力できる。
-`[env.production]` と `[env.staging]` の `AI_MODEL` は暫定既定値で揃え、`backend/warrior/tests/ai_model_config.rs` で設定を確認している。
-残りは 5 つの候補を Workers AI の Playground または staging で実行し、観点ごとの結果と選定の理由を記録する作業である。
+`[env.production]` の `AI_MODEL` は暫定既定値とし、`backend/warrior/tests/ai_model_config.rs` で設定を確認している。
+残りは 5 つの候補を Workers AI の Playground または production で実行し、観点ごとの結果と選定の理由を記録する作業である。
 
 ## 止める理由
 
-評価には Workers AI の Playground または staging が必要であり、実環境への接続は利用者に依存する。
+評価には Workers AI の Playground または production が必要であり、実環境への接続は利用者に依存する。
 代表的な記録の準備と、品質の判断も利用者に依存する。
 エージェントは実環境へ接続しない。
 
 ## 再開条件
 
-利用者が Workers AI の Playground または staging で評価できる状態を用意する。
+利用者が Workers AI の Playground または production で評価できる状態を用意する。
 利用者が代表的な記録と、評価の観点の重みを用意する。

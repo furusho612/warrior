@@ -120,11 +120,11 @@ D1 のマイグレーションとスキーマの制約は、`wrangler dev` の�
 Chrome は ChromeDriver、Safari は macOS に付属する safaridriver を使う。
 `thirtyfour` 以外の追加のクレートは要らない。
 パスキーは ChromeDriver の WebAuthn の拡張コマンドで仮想認証器を付ける。
-IndexedDB、Service Worker、通知などのブラウザの API に依存する部品は、`wasm-bindgen-test` を Chrome と Safari の実ブラウザで実行して確かめる。Push と WebAuthn は Chrome の E2E と staging の実機で確かめる。
+IndexedDB、Service Worker、通知などのブラウザの API に依存する部品は、`wasm-bindgen-test` を Chrome と Safari の実ブラウザで実行して確かめる。Push と WebAuthn は Chrome の E2E と production の実機で確かめる。
 
 ブラウザごとの対象は次のとおりである。
 
-| 対象 | Chrome の E2E | Safari の E2E | staging の実機 |
+| 対象 | Chrome の E2E | Safari の E2E | production の実機 |
 | --- | --- | --- | --- |
 | 画面、API、IndexedDB、Service Worker のキャッシュ | 実行する | 実行する | iOS Safari と Android Chrome でも確認する |
 | パスキーの登録とログイン | 仮想認証器で実行する | 対象外 | iOS と PC の Safari、Android Chrome |
@@ -132,7 +132,7 @@ IndexedDB、Service Worker、通知などのブラウザの API に依存する�
 | オフラインの記録 | CDP で実行する | 対象外 | iOS と PC の Safari、Android Chrome |
 
 Safari の WebDriver は WebAuthn の仮想認証器と CDP を持たない。
-そのため、パスキー、プッシュ通知、オフラインのエミュレーションは Chrome の E2E と staging の実機で確かめる。
+そのため、パスキー、プッシュ通知、オフラインのエミュレーションは Chrome の E2E と production の実機で確かめる。
 Safari の E2E は、画面、API、IndexedDB、Service Worker のキャッシュを対象にする。
 
 Google のログインは、テスト専用の OIDC の提供者を別のプロセスで起動して確かめる。
@@ -142,7 +142,7 @@ Google のログインは、テスト専用の OIDC の提供者を別のプロ�
 テスト専用の提供者とテスト用の分岐は、本番のビルドに含めない。
 
 Workers AI の正常系は CI で実行できない。
-CI では `wrangler dev --local` で AI の失敗の経路を確かめ、正常系は利用者が staging へデプロイした後に `mise run verify-staging` で確かめる。
+CI では `wrangler dev --local` で AI の失敗の経路を確かめ、正常系は利用者が production へデプロイした後に `mise run verify-production` で確かめる。
 AI のプロンプトの組み立てと出力の検証は、PBT と単体テストで確かめる。
 
 プッシュ通知は、ChromeDriver の Chrome DevTools Protocol (CDP) の `ServiceWorker.deliverPushMessage` で、実際の Service Worker に push のイベントを届けて確かめる。
@@ -208,8 +208,8 @@ issue の `Requirements` に挙げた受入基準ごとに、少なくとも 1 �
 
 `mise run check` で、整形、lint、フロントエンドのビルドと lint、形式手法、単体テスト、PBT、結合テスト、ブラウザのテスト、E2E、Fuzzing の型検査を実行する。Safari のブラウザのテストと E2E は macOS のジョブで `mise run test-browser-safari` と `mise run e2e-safari` を実行する。
 Fuzzing の実行は nightly の CI で行い、`mise run fuzz` に時間の上限を置く。
-`mise run verify-staging` は、利用者が staging にデプロイした後に、Workers AI の正常系と実機のプッシュ通知を確かめる。
-`verify-staging` は、レスト終了時刻と Service Worker の受信時刻の差を 10 回集計し、5 秒以内が 9 回以上かを判定する。通知が届かなかった試行も失敗として数える。
+`mise run verify-production` は、利用者が production にデプロイした後に、Workers AI の正常系と実機のプッシュ通知を確かめる。
+`verify-production` は、レスト終了時刻と Service Worker の受信時刻の差を 10 回集計し、5 秒以内が 9 回以上かを判定する。通知が届かなかった試行も失敗として数える。
 
 カバレッジ率を目標にしない。
 未カバーの行を、正常系は PBT の strategy の不足、エラーパスは単体テストか Fuzzing の不足、到達不能なコードはデッドコードとして分類する。
@@ -229,7 +229,7 @@ CI の並列化で吸収し、変更に対応するスコープのテストだ�
 Google の応答が変わった場合は、提供者とテストを同時に更新する。
 
 Workers AI の正常系は CI で実行しないため、モデルの変更や品質の低下を CI では検出できない。
-staging の確認と、PRD のプロンプトを使った品質の評価を、モデルを変えるたびに利用者が行う。
+production の確認と、PRD のプロンプトを使った品質の評価を、モデルを変えるたびに利用者が行う。
 
 Service Worker 自身の wasm は `wasm-bindgen-test` で直接テストしにくい。
 プッシュの payload の解析とキャッシュのキーの決定を純粋な関数に分け、E2E の CDP の push でイベントの処理を確かめる。

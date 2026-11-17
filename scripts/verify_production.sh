@@ -1,9 +1,9 @@
 #!/bin/sh
-# staging の D1 から、レスト終了から通知の受信までの遅れを集計する。
-# 実行には staging の Cloudflare の資格情報と、実機で計測した予約の行が必要である。
+# production の D1 から、レスト終了から通知の受信までの遅れを集計する。
+# 実行には production の Cloudflare の資格情報と、実機で計測した予約の行が必要である。
 set -eu
 
-env=${1:-staging}
+env=${1:-production}
 json=$(wrangler d1 execute DB --remote --env "$env" --json --command \
     "SELECT end_at, sent_at, received_at FROM rest_push_reservations WHERE sent_at IS NOT NULL ORDER BY created_at DESC LIMIT 500")
 

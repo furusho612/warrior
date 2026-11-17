@@ -43,7 +43,7 @@ Safari は `web.push.apple.com`、Chrome は `fcm.googleapis.com` を許可す�
 それを過ぎたメッセージは送らない。
 
 TMR-012 の合格基準を確かめるときは、サーバーが送信時刻を記録し、Service Worker が受信時刻を API に送る。
-`mise run verify-staging` は 10 回の遅れを集計し、5 秒以内が 9 回以上かを判定する。
+`mise run verify-production` は 10 回の遅れを集計し、5 秒以内が 9 回以上かを判定する。
 
 レストの延長、短縮、スキップ、トレーニングの終了では、予約を取り消すか、終了予定時刻を変更する。
 

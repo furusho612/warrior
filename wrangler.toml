@@ -91,14 +91,14 @@ database_id = "2b764b0f-85ea-4582-932a-479d9c83d14f"
 
 [[env.production.r2_buckets]]
 binding = "BUCKET"
-bucket_name = "warrior"
+bucket_name = "warrior-ai-and-exports"
 
 [[env.production.queues.producers]]
 binding = "JOBS_QUEUE"
-queue = "warrior-jobs"
+queue = "warrior-ai-and-rest-push"
 
 [[env.production.queues.consumers]]
-queue = "warrior-jobs"
+queue = "warrior-ai-and-rest-push"
 max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 3
@@ -120,7 +120,7 @@ GOOGLE_CLIENT_ID = "913960898555-oev8vaaq3nn3iier1p96nqjva320ulq2.apps.googleuse
 GOOGLE_OAUTH_REDIRECT_URI = "https://warrior.phack.workers.dev/api/auth/google/callback"
 AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 VAPID_PUBLIC_KEY = "BOS4nbnimcP5hnUa4q99lPKx9icOcK7seWhAXOy72gabAcl3yCYxRF8RLuonOsORPsJAwWonC5wfB6Qhc5j98c0"
-VAPID_SUBJECT = "mailto:owner@example.com"
+VAPID_SUBJECT = "mailto:shoichi.furuya.0612@gmail.com"
 RATE_LIMIT_AUTH_IP = "10"
 RATE_LIMIT_PASSKEY_IP = "20"
 RATE_LIMIT_AUTH_WINDOW = "60"
@@ -131,64 +131,3 @@ RATE_LIMIT_PUSH_USER = "30"
 RATE_LIMIT_PUSH_WINDOW = "60"
 LIBRARY_PAGE_SIZE = "20"
 
-# staging の資源は 0067 で作る。値は実物に置き換える。
-[env.staging]
-name = "warrior-staging"
-
-[env.staging.observability]
-enabled = true
-
-[env.staging.observability.logs]
-enabled = true
-invocation_logs = true
-
-[env.staging.observability.traces]
-enabled = true
-
-[[env.staging.d1_databases]]
-binding = "DB"
-database_name = "warrior-staging"
-migrations_dir = "migrations"
-database_id = "00000000-0000-0000-0000-000000000000"
-
-[[env.staging.r2_buckets]]
-binding = "BUCKET"
-bucket_name = "warrior-staging"
-
-[[env.staging.queues.producers]]
-binding = "JOBS_QUEUE"
-queue = "warrior-jobs-staging"
-
-[[env.staging.queues.consumers]]
-queue = "warrior-jobs-staging"
-max_batch_size = 1
-max_batch_timeout = 5
-max_retries = 3
-
-[env.staging.ai]
-binding = "AI"
-
-[env.staging.triggers]
-crons = ["* * * * *"]
-
-[env.staging.vars]
-RP_ID = "warrior-staging.example.workers.dev"
-ORIGIN = "https://warrior-staging.example.workers.dev"
-GOOGLE_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_OAUTH_ISSUER = "https://accounts.google.com"
-GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_OAUTH_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
-GOOGLE_CLIENT_ID = "REPLACE_WITH_STAGING_GOOGLE_CLIENT_ID"
-GOOGLE_OAUTH_REDIRECT_URI = "https://warrior-staging.example.workers.dev/api/auth/google/callback"
-AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
-VAPID_PUBLIC_KEY = "REPLACE_WITH_STAGING_VAPID_PUBLIC_KEY"
-VAPID_SUBJECT = "mailto:owner@example.com"
-RATE_LIMIT_AUTH_IP = "10"
-RATE_LIMIT_PASSKEY_IP = "20"
-RATE_LIMIT_AUTH_WINDOW = "60"
-RATE_LIMIT_PASSKEY_WINDOW = "60"
-RATE_LIMIT_AI_USER = "20"
-RATE_LIMIT_AI_WINDOW = "86400"
-RATE_LIMIT_PUSH_USER = "30"
-RATE_LIMIT_PUSH_WINDOW = "60"
-LIBRARY_PAGE_SIZE = "20"

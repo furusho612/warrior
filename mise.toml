@@ -174,19 +174,14 @@ description = "ローカル開発の画面と API を同じオリジンから配
 depends = ["backend:build", "frontend:build"]
 run = "wrangler dev --local"
 
-[tasks.deploy-staging]
-description = "staging の Worker をデプロイする"
-depends = ["backend:build", "frontend:build"]
-run = "wrangler deploy --env staging"
-
 [tasks.deploy-production]
 description = "production の Worker をデプロイする"
 depends = ["backend:build", "frontend:build"]
 run = "wrangler deploy --env production"
 
-[tasks."verify-staging"]
-description = "staging のプッシュ通知の遅延を D1 から集計する"
-run = "sh scripts/verify_staging.sh staging"
+[tasks."verify-production"]
+description = "production のプッシュ通知の遅延を D1 から集計する"
+run = "sh scripts/verify_production.sh production"
 
 [tasks.db-migrate-local]
 description = "ローカルの D1 にマイグレーションを適用する"

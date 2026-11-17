@@ -11,24 +11,24 @@
 production の D1、R2、Queues を作成し、Workers AI のバインディングと Cron Triggers を設定し、`wrangler.toml` の値を確定する。
 レート制限の上限値と時間窓も production の vars に置く。
 Google OAuth とパスキーのホスト名を固定し、デプロイできる状態にする。
-staging は必要になった時点で追加する。
+staging は作らない。
 
 ## 優先度根拠
 
 ローカルの開発は 0002 で始められる。
 production へのデプロイと実機の確認は、この issue の完了を待つ。
-staging は今は作らない。
+staging は作らない。
 
 ## 現状
 
 `wrangler.toml` はローカルの設定と production のキーを持つが、D1 の `database_id`、R2 のバケット、Queues の名前、Secret の値は未設定である。
 Cloudflare のアカウントのサブドメインも決まっていない。
-staging の設定は必要になった時点で追加する。
+staging の設定は持たない。
 
 ## 設計方針
 
-ADR-023 はローカル、staging、production の 3 環境を定めるが、この issue では production を先に用意する。
-staging は必要になった時点で、ADR-023 の手順に従って 0067 で追加する。
+ADR-023 はローカルと production の 2 環境を定める。
+
 
 production の D1 のデータベース、R2 のバケット、Queues を作る。
 R2 のバケットは production 用に 1 つ用意し、`exports/` の接頭辞には CSV の書き出しを 7 日で削除するライフサイクルルールを設定する。
@@ -64,18 +64,18 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 ## 進捗
 
-`wrangler.toml` の `[env.production]` に D1、R2、Queues、Workers AI、Cron Triggers、vars を置き、レート制限の上限と窓も含めた。D1 の `database_id` は `2b764b0f-85ea-4582-932a-479d9c83d14f` とし、RP_ID と Origin は `warrior.phack.workers.dev`、Google のクライアント ID とリダイレクト URI は production のホスト名に合わせた。
+`wrangler.toml` の `[env.production]` に D1、R2、Queues、Workers AI、Cron Triggers、vars を置き、レート制限の上限と窓も含めた。D1 の `database_id` は `2b764b0f-85ea-4582-932a-479d9c83d14f` とし、RP_ID と Origin は `warrior.phack.workers.dev`、Google のクライアント ID とリダイレクト URI は production のホスト名に合わせた。R2 は `warrior-ai-and-exports`、Queue は `warrior-ai-and-rest-push` とした。VAPID の公開鍵と `mailto:shoichi.furuya.0612@gmail.com` の subject も設定した。
 `wrangler deploy --dry-run --env production` が成功することを確認した。
-残りは R2 と Queues の作成確認、R2 のライフサイクルルール、Google OAuth のリダイレクト URI の登録、VAPID の実値と Secret、D1 のマイグレーションの適用である。
+残りは R2 と Queues の作成確認、R2 のライフサイクルルール、Google OAuth のリダイレクト URI の登録、VAPID の秘密鍵と Google のクライアントシークレットの Secret、D1 のマイグレーションの適用である。
 
 ## 止める理由
 
 Cloudflare のアカウント、サブドメイン、Google OAuth のクライアント、VAPID の鍵が利用者に依存する。
 エージェントは実環境へ接続しない。
-staging はこの issue の対象外である。
+staging は作らない。
 
 ## 再開条件
 
 利用者が Cloudflare のアカウントとサブドメインを用意し、production の資源を作る権限を渡す。
 Google OAuth のクライアントと VAPID の鍵を用意する。
-staging が必要になった時点で、0067 を着手する。
+

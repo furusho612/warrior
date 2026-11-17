@@ -30,6 +30,6 @@ Status が Accepted になった ADR を実装の前提にする。
 | [ADR-020](020-pwa-offline-recording-and-service-worker.md) | PWA のオフライン記録と Service Worker を Rust で実装する | Accepted |
 | [ADR-021](021-queues-and-cron-for-jobs.md) | Cloudflare Queues と Cron Triggers で AI 生成とレスト通知を実行する | Accepted |
 | [ADR-022](022-mise-toolchain.md) | ツールチェーンを mise で固定する | Accepted |
-| [ADR-023](023-environment-separation.md) | 環境をローカル、staging、production に分ける | Accepted |
+| [ADR-023](023-environment-separation.md) | 環境をローカルと production に分ける | Accepted |
 | [ADR-024](024-test-strategy.md) | テストを E2E、PBT、Fuzzing、形式手法、単体の 5 層で整備する | Accepted |
 | [ADR-025](025-minimal-dependencies.md) | 依存を最小限にし、汎用クレートの一部だけを使う場合は自前で実装する | Accepted |

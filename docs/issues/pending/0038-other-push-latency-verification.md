@@ -13,20 +13,20 @@
 
 ## 優先度根拠
 
-PRD はプッシュ通知の試作を段階 1 のうちに行い、staging の実機で計測できる時点で採用を決めると定める。
+PRD はプッシュ通知の試作を段階 1 のうちに行い、production の実機で計測できる時点で採用を決めると定める。
 合格しなければ、主な手段を画面の消灯防止と音に変える必要がある。
 
 ## 現状
 
-0036 でプッシュ購読と Service Worker の通知表示、0066 でサーバーの予約、終了予定時刻と送信時刻と受信時刻の記録、`mise run verify-staging` の集計を実装する。
-しかし、0067 で staging を追加してデプロイした実機での計測と、採用の判断がまだない。
+0036 でプッシュ購読と Service Worker の通知表示、0066 でサーバーの予約、終了予定時刻と送信時刻と受信時刻の記録、`mise run verify-production` の集計を実装する。
+しかし、0003 の production をデプロイした実機での計測と、採用の判断がまだない。
 
 ## 設計方針
 
-0067 で staging を追加してデプロイしたアプリを、iPhone の Safari、Android の Chrome、PC の Safari の実機で動かす。
+0003 の production をデプロイしたアプリを、iPhone の Safari、Android の Chrome、PC の Safari の実機で動かす。
 iPhone ではホーム画面に追加し、通知を許可する。
 各端末でレストを 10 回終了させ、レストの終了から通知が届くまでの時間を測る。
-計測は `mise run verify-staging` を使い、レスト終了時刻と Service Worker の受信時刻の差を集計する。通知が届かなかった試行も失敗として数える。
+計測は `mise run verify-production` を使い、レスト終了時刻と Service Worker の受信時刻の差を集計する。通知が届かなかった試行も失敗として数える。
 
 合格の基準は、レスト終了から 5 秒以内に届く割合が 10 回中 9 回以上とする。
 合格した場合は、プッシュ通知を主な手段の 1 つとして残す。
@@ -38,7 +38,7 @@ iPhone ではホーム画面に追加し、通知を許可する。
 
 ## 完了条件
 
-- [ ] iPhone、Android、PC の Safari の実機で、0067 で staging を追加した後のアプリのプッシュ通知を 10 回ずつ動かし、レスト終了から通知までの時間を記録する。これは REQ-TMR-012 の受入基準に対応する。PC の Safari は ADR-024 の「E2E」節の表にもある。この計測は段階 1 の完了条件ではなく、プッシュ通知の作り込みの前に完了する。
+- [ ] iPhone、Android、PC の Safari の実機で、0003 の production をデプロイした後のアプリのプッシュ通知を 10 回ずつ動かし、レスト終了から通知までの時間を記録する。これは REQ-TMR-012 の受入基準に対応する。PC の Safari は ADR-024 の「E2E」節の表にもある。この計測は段階 1 の完了条件ではなく、プッシュ通知の作り込みの前に完了する。
 - [ ] 各端末で、5 秒以内に届いた回数が 10 回中何回かを記録する。通知が届かなかった試行も失敗として数える。
 - [ ] 10 回中 9 回以上の場合、プッシュ通知を主な手段の 1 つとして残す決定を ADR に記録する。
 - [ ] 10 回中 9 回未満の場合、プッシュ通知を補助の位置づけに変え、主な手段を画面の消灯防止と音にする決定を ADR に記録する。
@@ -47,7 +47,7 @@ iPhone ではホーム画面に追加し、通知を許可する。
 
 ## 解決方法
 
-`mise run verify-staging` を、0067 で追加した staging の URL に対して実行する。
+`mise run verify-production` を、0003 で用意した production の URL に対して実行する。
 iPhone の Safari でホーム画面に追加し、通知を許可する。
 Android の Chrome で通知を許可する。
 PC の Safari で通知を許可する。
@@ -56,16 +56,16 @@ PC の Safari で通知を許可する。
 
 ## 進捗
 
-`mise run verify-staging` を追加した。staging の D1 から `end_at`、`sent_at`、`received_at` を読み、試行数、受信数、欠落数、5 秒以内の件数、遅れの中央値と最大値を出力する。
-`scripts/verify_staging.sh` は Cloudflare の資格情報と実機で作られた予約の行を必要とする。
+`mise run verify-production` を追加した。production の D1 から `end_at`、`sent_at`、`received_at` を読み、試行数、受信数、欠落数、5 秒以内の件数、遅れの中央値と最大値を出力する。
+`scripts/verify_production.sh` は Cloudflare の資格情報と実機で作られた予約の行を必要とする。
 残りは iPhone の Safari、Android の Chrome、PC の Safari の実機で 10 回ずつ計測し、結果を記録する作業である。
 
 ## 止める理由
 
-0067 の staging へのデプロイ、iPhone、Android、PC の Safari の実機、通知の許可が利用者に依存する。
+0003 の production へのデプロイ、iPhone、Android、PC の Safari の実機、通知の許可が利用者に依存する。
 エージェントは実環境と実機に接続しない。
 
 ## 再開条件
 
-利用者が 0003 の production を用意し、0067 で staging を追加してデプロイする。
+利用者が 0003 の production を用意してデプロイする。
 iPhone、Android、PC の Safari の実機で通知を許可し、10 回の計測を行う。

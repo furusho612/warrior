@@ -130,14 +130,11 @@
   - プッシュ購読の登録と解除に利用者ごとのレート制限を追加する
   - @Shoichi
 - [ADD] AI のモデルの暫定既定値と、品質評価の fixture を追加する
-  - production と staging の `AI_MODEL` を `@cf/meta/llama-4-scout-17b-16e-instruct` に揃え、`mise run ai-eval` で評価用の入力を出力する
+  - production の `AI_MODEL` を `@cf/meta/llama-4-scout-17b-16e-instruct` にし、`mise run ai-eval` で評価用の入力を出力する
   - @Shoichi
 - [FIX] 画面を開いたときにアプリが停止する不具合を修正する
   - テーマの信号をフックの外で作り、起動時のフックの一覧の二重借用をなくす
   - @Shoichi
 - [FIX] 独自のプログラムのトレーニングを終了した後に、次の日へ進むようにする
   - 独自のプログラムの日 ID を持つトレーニングの終了で進行を更新する
-  - @Shoichi
-- [ADD] staging の設定とデプロイのタスクを追加する
-  - `[env.staging]` の D1、R2、Queues、Workers AI、Cron Triggers、vars と `mise run deploy-staging` を追加する。資源の作成と実機の確認は利用者が行う
   - @Shoichi

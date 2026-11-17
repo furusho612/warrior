@@ -11,11 +11,7 @@ fn the_ai_model_is_the_provisional_default_in_every_environment() {
         .lines()
         .filter_map(|line| line.trim().strip_prefix("AI_MODEL = "))
         .collect();
-    assert_eq!(
-        values.len(),
-        3,
-        "ローカル、production、staging の 3 つが必要"
-    );
+    assert_eq!(values.len(), 2, "ローカルと production の 2 つが必要");
     for value in values {
         assert_eq!(value, format!("\"{EXPECTED}\""));
     }

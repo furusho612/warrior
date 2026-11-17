@@ -5,6 +5,7 @@
 - Created: 2026-11-12
 - Model: deepseek-v4.1-flash:1017
 - Branch: feature/other-staging-provisioning
+- Completed: 2026-11-17
 
 ## 目的
 
@@ -94,3 +95,9 @@ iPhone の Safari のパスキーとすべての画面、Android の Chrome の�
 利用者が staging を必要とする作業 (iPhone の Safari のパスキーとすべての画面、Android の Chrome のパスキー、iOS の PWA の Service Worker 自身の wasm と起動と表示の継続、Android の Chrome のすべての画面、iOS Safari と PC Safari と Android Chrome のオフライン記録と復帰後の同期、未保存の表示、HTTPS の確認、プッシュ通知の実機計測 (0038)、AI の品質評価 (0069) を含む) を始める。
 0003 の production の資源ができている。
 利用者が staging の資源を作る権限と、Google OAuth と VAPID の staging 用の資格情報を用意する。
+
+## 結果
+
+利用者が staging を作らないと決めたため、この issue は staging の資源を作らない判断として閉じる。
+ADR-023 をローカルと production の 2 環境に改訂し、staging の設定、`deploy-staging`、`verify-staging` を削除した。
+実機の確認とプッシュ通知の計測は production のテスト用アカウントで行い、結果は 0038 に記録する。
