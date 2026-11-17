@@ -422,6 +422,10 @@ async fn wait_for_save(driver: &WebDriver, expected: &str) {
         expected,
     )
     .await;
+    browser::wait_for_present(driver, "[data-profile-saved-dialog]").await;
+    browser::wait_for_text(driver, "保存しました").await;
+    browser::click(driver, "[data-profile-saved-close]").await;
+    browser::wait_for_absent(driver, "[data-profile-saved-dialog]").await;
 }
 
 async fn wait_for_attribute_absent(driver: &WebDriver, selector: &str, attribute: &str) {

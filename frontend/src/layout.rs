@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 use dioxus_router::{router, Link, Outlet};
+use warrior_core::jst::Weekday;
 
 use crate::record_rail::RecordRailState;
 use crate::routes::{navigate, tab_is_active, tab_key, tab_route, Route, Tab, TABS};
@@ -47,12 +48,30 @@ pub fn AppShell() -> Element {
             class: "mx-auto flex h-dvh w-full max-w-[390px] flex-col overflow-hidden bg-bg text-text",
             "data-route": route_name,
             div { class: "shrink-0 pt-[54px]" }
-            header { class: "flex h-11 shrink-0 items-center border-b border-line px-5",
+            header { class: "flex h-11 shrink-0 items-center justify-between border-b border-line px-5",
                 Link {
                     to: Route::Home {},
-                    class: "flex min-h-11 min-w-11 items-center",
+                    class: "flex items-center gap-[10px]",
+                    svg {
+                        class: "h-[23px] w-[30px]",
+                        view_box: "40 70 440 340",
+                        "aria-hidden": "true",
+                        polygon {
+                            points: "58,116 134,116 184,290 218,212 294,212 328,290 378,116 454,116 374,396 298,396 256,299 214,396 138,396",
+                            fill: "currentColor",
+                        }
+                        polygon {
+                            points: "298,396 374,396 463,84 387,84",
+                            class: "text-primary",
+                            fill: "currentColor",
+                            stroke: "var(--bg)",
+                            stroke_width: "10",
+                            stroke_linejoin: "miter",
+                        }
+                    }
                     span { class: "font-condensed text-[22px] font-bold leading-none tracking-[0.16em]", "{text(Key::AppName)}" }
                 }
+                span { class: "text-[13px] text-text-sub", "{today_label()}" }
             }
             if record {
                 div { class: "flex min-h-0 flex-1",
@@ -124,9 +143,9 @@ fn TabBar(current: Route) -> Element {
                 {
                     let active = tab_is_active(&current, tab);
                     let class = if active {
-                        "flex min-h-11 flex-1 flex-col items-center justify-center gap-[3px] text-[11px] font-bold text-primary"
+                        "flex h-14 flex-1 flex-col items-center justify-center gap-[3px] text-[11px] font-bold text-primary"
                     } else {
-                        "flex min-h-11 flex-1 flex-col items-center justify-center gap-[3px] text-[11px] font-medium text-text-sub"
+                        "flex h-14 flex-1 flex-col items-center justify-center gap-[3px] text-[11px] font-medium text-text-sub"
                     };
                     rsx! {
                         Link { to: tab_route(tab), class,
@@ -157,4 +176,20 @@ fn tab_icon(tab: Tab) -> &'static str {
         Tab::Analysis => "M5 20V11M12 20V4M19 20v-6M2 20h20",
         Tab::MyPage => "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 3.6-7 8-7s8 3 8 7",
     }
+}
+
+fn today_label() -> String {
+    let Some(today) = crate::profile::today() else {
+        return String::new();
+    };
+    let weekday = match today.weekday() {
+        Weekday::Monday => "月",
+        Weekday::Tuesday => "火",
+        Weekday::Wednesday => "水",
+        Weekday::Thursday => "木",
+        Weekday::Friday => "金",
+        Weekday::Saturday => "土",
+        Weekday::Sunday => "日",
+    };
+    format!("{}月{}日({weekday})", today.month(), today.day())
 }

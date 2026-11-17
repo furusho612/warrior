@@ -137,6 +137,7 @@ fn ProfileSettings() -> Element {
     let save_error = use_signal(|| Option::<String>::None);
     let saving = use_signal(|| false);
     let save_count = use_signal(|| 0u32);
+    let mut show_saved = use_signal(|| false);
 
     use_effect(move || {
         let _ = reload();
@@ -182,12 +183,39 @@ fn ProfileSettings() -> Element {
                 "data-profile-save": "true",
                 disabled: saving() || !editable,
                 onclick: move |_| {
-                    spawn(save_profile(form, saving, save_error, saved, save_count));
+                    spawn(save_profile(
+                        form,
+                        saving,
+                        save_error,
+                        saved,
+                        save_count,
+                        show_saved,
+                    ));
                 },
                 if saving() {
                     "{text(Key::ProfileSaving)}"
                 } else {
                     "{text(Key::ProfileSave)}"
+                }
+            }
+            if show_saved() {
+                div {
+                    class: "fixed inset-0 z-50 flex items-center justify-center bg-bg/90 p-5",
+                    role: "dialog",
+                    "aria-modal": "true",
+                    "data-profile-saved-dialog": "true",
+                    div {
+                        class: "flex w-full max-w-[320px] flex-col gap-3 border border-line bg-surface p-4",
+                        h2 { class: "text-sm font-bold", "{text(Key::ProfileSavedTitle)}" }
+                        p { class: "text-[13px] leading-5 text-text-sub", "{text(Key::ProfileSavedDescription)}" }
+                        button {
+                            r#type: "button",
+                            class: "min-h-11 border border-primary bg-primary px-3 text-[13px] font-bold text-on-primary",
+                            "data-profile-saved-close": "true",
+                            onclick: move |_| show_saved.set(false),
+                            "{text(Key::ProfileSavedClose)}"
+                        }
+                    }
                 }
             }
         }
@@ -525,6 +553,7 @@ async fn save_profile(
     mut error: Signal<Option<String>>,
     mut saved: Signal<Option<Profile>>,
     mut save_count: Signal<u32>,
+    mut show_saved: Signal<bool>,
 ) {
     let profile = match form()
         .to_profile()
@@ -543,6 +572,7 @@ async fn save_profile(
             form.set(ProfileForm::from_profile(&saved_profile));
             saved.set(Some(saved_profile));
             save_count += 1;
+            show_saved.set(true);
         }
         Err(_) => error.set(Some(text(Key::ProfileSaveFailed).to_owned())),
     }
