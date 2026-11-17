@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Headers, Request, RequestInit, Response};
+use web_sys::{Headers, Request, RequestCache, RequestCredentials, RequestInit, Response};
 
 /// API の要求の失敗。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +131,8 @@ async fn send(
     }
     let init = RequestInit::new();
     init.set_method(method);
+    init.set_cache(RequestCache::NoStore);
+    init.set_credentials(RequestCredentials::Include);
     init.set_headers(&headers);
     if let Some(body) = body {
         init.set_body(&JsValue::from_str(&body));

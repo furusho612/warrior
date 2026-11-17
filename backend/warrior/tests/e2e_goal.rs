@@ -122,7 +122,29 @@ async fn open_history(driver: &WebDriver, server: &DevServer) {
 
 async fn set_goal(driver: &WebDriver, weight: f64, target_date: &JstDate) {
     browser::set_input(driver, "[data-goal-weight]", &weight.to_string()).await;
-    browser::set_input(driver, "[data-goal-date]", &target_date.to_string()).await;
+    let value = target_date.to_string();
+    let mut parts = value.split('-');
+    let year = parts.next().expect("the year");
+    let month = parts.next().expect("the month");
+    let day = parts.next().expect("the day");
+    browser::select_value(
+        driver,
+        "[data-date-input=\"goal-date\"] [data-date-year]",
+        year,
+    )
+    .await;
+    browser::select_value(
+        driver,
+        "[data-date-input=\"goal-date\"] [data-date-month]",
+        month,
+    )
+    .await;
+    browser::select_value(
+        driver,
+        "[data-date-input=\"goal-date\"] [data-date-day]",
+        day,
+    )
+    .await;
     browser::click(driver, "[data-goal-save]").await;
 }
 

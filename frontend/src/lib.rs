@@ -10,6 +10,7 @@ pub mod body_figure;
 pub mod calendar;
 pub mod calendar_view;
 pub mod custom_program;
+pub mod date_select;
 pub mod export;
 pub mod generated;
 pub mod goal;

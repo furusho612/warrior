@@ -14,6 +14,7 @@ use crate::calendar_view::{
     format_weight, part_button_class, part_color_class, part_counts, part_label, set_notes,
     set_text, weekdays, CalendarCell,
 };
+use crate::date_select::DateSelect;
 use crate::ids::{new_uuid, now_iso};
 use crate::routes::Route;
 use crate::screens::history::{backfill_operation, backfill_session};
@@ -579,12 +580,12 @@ fn CalendarAddForm(state: CalendarSignals, today: Option<JstDate>) -> Element {
             h2 { class: "text-sm font-bold", "{text(Key::CalendarAddTitle)}" }
             label { class: "flex flex-col gap-1 text-[11px]",
                 "{text(Key::CalendarAddDateLabel)}"
-                input {
-                    class: "min-h-11 border border-line bg-surface px-2 text-[13px]",
-                    r#type: "date",
-                    "data-calendar-add-date": "true",
-                    value: "{date_value}",
-                    oninput: move |event| date.set(event.value()),
+                DateSelect {
+                    value: date_value.clone(),
+                    min_year: 2000,
+                    max_year: 2100,
+                    name: "calendar-add-date",
+                    on_change: move |value| date.set(value),
                 }
             }
             label { class: "flex flex-col gap-1 text-[11px]",

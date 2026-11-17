@@ -69,12 +69,7 @@ async fn register_from_onboarding(driver: &WebDriver, server: &DevServer, provid
     let birth_date = birth_date_years_ago(10);
     set_input(driver, "[data-profile-field=\"height\"] input", "170").await;
     set_input(driver, "[data-profile-field=\"weight\"] input", "60").await;
-    set_input(
-        driver,
-        "[data-profile-field=\"birth-date\"] input",
-        &birth_date,
-    )
-    .await;
+    set_birth_date(driver, &birth_date).await;
     click(driver, "[data-profile-sex] [data-choice-value=\"female\"]").await;
     click(
         driver,
@@ -99,12 +94,7 @@ async fn register_from_onboarding(driver: &WebDriver, server: &DevServer, provid
     open_mypage(driver, server).await;
     browser::wait_for_value(driver, "[data-profile-field=\"height\"] input", "170").await;
     browser::wait_for_value(driver, "[data-profile-field=\"weight\"] input", "60").await;
-    browser::wait_for_value(
-        driver,
-        "[data-profile-field=\"birth-date\"] input",
-        &birth_date,
-    )
-    .await;
+    wait_birth_date(driver, &birth_date).await;
     browser::wait_for_attribute(
         driver,
         "[data-profile-sex] [data-choice-value=\"female\"]",
@@ -175,12 +165,7 @@ async fn update_and_check_the_limits(driver: &WebDriver, server: &DevServer) {
     let adult_birth_date = birth_date_years_ago(30);
     set_input(driver, "[data-profile-field=\"height\"] input", "175").await;
     set_input(driver, "[data-profile-field=\"weight\"] input", "70").await;
-    set_input(
-        driver,
-        "[data-profile-field=\"birth-date\"] input",
-        &adult_birth_date,
-    )
-    .await;
+    set_birth_date(driver, &adult_birth_date).await;
     click(
         driver,
         "[data-profile-experience] [data-choice-value=\"intermediate\"]",
@@ -203,12 +188,7 @@ async fn update_and_check_the_limits(driver: &WebDriver, server: &DevServer) {
     open_mypage(driver, server).await;
     browser::wait_for_value(driver, "[data-profile-field=\"height\"] input", "175").await;
     browser::wait_for_value(driver, "[data-profile-field=\"weight\"] input", "70").await;
-    browser::wait_for_value(
-        driver,
-        "[data-profile-field=\"birth-date\"] input",
-        &adult_birth_date,
-    )
-    .await;
+    wait_birth_date(driver, &adult_birth_date).await;
     browser::wait_for_attribute(
         driver,
         "[data-profile-goal] [data-choice-value=\"diet\"]",
@@ -282,12 +262,7 @@ async fn skip_and_register_from_mypage(
     let birth_date = birth_date_years_ago(28);
     set_input(driver, "[data-profile-field=\"height\"] input", "165").await;
     set_input(driver, "[data-profile-field=\"weight\"] input", "58").await;
-    set_input(
-        driver,
-        "[data-profile-field=\"birth-date\"] input",
-        &birth_date,
-    )
-    .await;
+    set_birth_date(driver, &birth_date).await;
     click(driver, "[data-profile-sex] [data-choice-value=\"other\"]").await;
     click(
         driver,
@@ -482,6 +457,56 @@ where
         );
         std::thread::sleep(POLL);
     }
+}
+
+async fn set_birth_date(driver: &WebDriver, value: &str) {
+    let mut parts = value.split('-');
+    let year = parts.next().expect("the year");
+    let month = parts.next().expect("the month");
+    let day = parts.next().expect("the day");
+    browser::select_value(
+        driver,
+        "[data-date-input=\"profile-birth-date\"] [data-date-year]",
+        year,
+    )
+    .await;
+    browser::select_value(
+        driver,
+        "[data-date-input=\"profile-birth-date\"] [data-date-month]",
+        month,
+    )
+    .await;
+    browser::select_value(
+        driver,
+        "[data-date-input=\"profile-birth-date\"] [data-date-day]",
+        day,
+    )
+    .await;
+}
+
+async fn wait_birth_date(driver: &WebDriver, value: &str) {
+    let mut parts = value.split('-');
+    let year = parts.next().expect("the year");
+    let month = parts.next().expect("the month");
+    let day = parts.next().expect("the day");
+    browser::wait_for_value(
+        driver,
+        "[data-date-input=\"profile-birth-date\"] [data-date-year]",
+        year,
+    )
+    .await;
+    browser::wait_for_value(
+        driver,
+        "[data-date-input=\"profile-birth-date\"] [data-date-month]",
+        month,
+    )
+    .await;
+    browser::wait_for_value(
+        driver,
+        "[data-date-input=\"profile-birth-date\"] [data-date-day]",
+        day,
+    )
+    .await;
 }
 
 fn birth_date_years_ago(years: i64) -> String {

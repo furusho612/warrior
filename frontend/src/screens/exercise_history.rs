@@ -18,6 +18,7 @@ use warrior_core::jst::JstDate;
 use warrior_core::training_session::BestKind;
 
 use crate::calendar_view::{day_title, format_seconds, set_notes, set_text};
+use crate::date_select::DateSelect;
 use crate::goal as goal_api;
 use crate::graph::GraphChart;
 use crate::grip_text::{attachment_label, grip_label};
@@ -555,12 +556,12 @@ fn GoalEditor(
             }
             label { class: "flex flex-col gap-1 text-[11px] font-bold text-text-sub",
                 "{text(Key::ExerciseHistoryGoalDateLabel)}"
-                input {
-                    class: "min-h-11 border border-line bg-bg px-2 text-[13px] text-text",
-                    "data-goal-date": "true",
-                    r#type: "date",
-                    value: "{date}",
-                    oninput: move |event| date.set(event.value()),
+                DateSelect {
+                    value: (date)(),
+                    min_year: 2000,
+                    max_year: 2100,
+                    name: "goal-date",
+                    on_change: move |value| date.set(value),
                 }
             }
             if let Some(message) = (error)() {

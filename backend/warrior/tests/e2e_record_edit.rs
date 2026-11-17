@@ -116,7 +116,28 @@ async fn edits_and_deletes_a_past_record_and_adds_one_with_a_date() {
         .await
         .expect("the calendar must open");
     browser::wait_for_present(&driver, "[data-calendar-add]").await;
-    browser::set_input(&driver, "[data-calendar-add-date]", &date).await;
+    let mut parts = date.split('-');
+    let year = parts.next().expect("the year");
+    let month = parts.next().expect("the month");
+    let day = parts.next().expect("the day");
+    browser::select_value(
+        &driver,
+        "[data-date-input=\"calendar-add-date\"] [data-date-year]",
+        year,
+    )
+    .await;
+    browser::select_value(
+        &driver,
+        "[data-date-input=\"calendar-add-date\"] [data-date-month]",
+        month,
+    )
+    .await;
+    browser::select_value(
+        &driver,
+        "[data-date-input=\"calendar-add-date\"] [data-date-day]",
+        day,
+    )
+    .await;
     browser::set_input(&driver, "[data-calendar-add-duration]", "30").await;
     browser::click(&driver, "[data-calendar-add-submit]").await;
     browser::wait_for_attribute(

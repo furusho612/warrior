@@ -39,13 +39,13 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 ## 完了条件
 
-- [ ] production の D1、R2、Queues が作成され、Workers AI のバインディングと Cron Triggers の設定が `[env.production]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision と Consequences に対応する。
-- [ ] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list DB --remote --env production` に未適用がない。これは ADR-023 の Decision に対応する。
+- [x] production の D1、R2、Queues が作成され、Workers AI のバインディングと Cron Triggers の設定が `[env.production]` にあり、`wrangler.toml` の値が実物と一致する。これは ADR-023 の Decision と Consequences に対応する。
+- [x] production の D1 に `migrations/` のすべてのマイグレーションが適用され、`wrangler d1 migrations list DB --remote --env production` に未適用がない。これは ADR-023 の Decision に対応する。
 - [x] production の vars にある Relying Party ID と Origin が production のホスト名である。これは ADR-023 の Decision に対応する。
 - [x] production のレート制限の上限値と時間窓が production の vars にある。これは `REQ-NFR-017` の受入基準「上限と時間窓は環境ごとの設定で変えられる」に対応する。
-- [ ] production の R2 バケットは 1 つで、`exports/` の接頭辞に、書き出しを 7 日で削除するライフサイクルルールが設定され、`wrangler r2 bucket lifecycle list <BUCKET>` が `exports/` の接頭辞の規則だけを返し、`users/` の接頭辞に規則がない。これは ADR-017 の Decision と ADR-023 の Decision と Consequences に対応する。
+- [x] production の R2 バケットは 1 つで、`exports/` の接頭辞に、書き出しを 7 日で削除するライフサイクルルールが設定され、`wrangler r2 bucket lifecycle list <BUCKET>` が `exports/` の接頭辞の規則だけを返し、`users/` の接頭辞に規則がない。これは ADR-017 の Decision と ADR-023 の Decision と Consequences に対応する。
 - [ ] Google OAuth のクライアントとリダイレクト URI が production のホスト名に登録され、production の vars にある Google のクライアント ID とリダイレクト URI が production のホスト名に対応する。これは ADR-023 の Decision と Consequences に対応する。
-- [ ] VAPID の公開鍵と subject が production の vars に、Google のクライアントシークレットと VAPID の秘密鍵が production の Secret に設定されている。これは ADR-023 の Decision に対応する。
+- [x] VAPID の公開鍵と subject が production の vars に、Google のクライアントシークレットと VAPID の秘密鍵が production の Secret に設定されている。これは ADR-023 の Decision に対応する。
 - [x] `wrangler deploy --dry-run --env production` が成功する。これはデプロイ設定の検証の内部条件である。
 - [ ] ローカルの `.dev.vars` に production の資格情報がない。これは ADR-023 の Decision に対応する。
 - [x] staging の資源を作っていない。これはこの issue の対象範囲に対応する。
@@ -66,7 +66,7 @@ Relying Party ID と Origin は production のホスト名に固定する。
 
 `wrangler.toml` の `[env.production]` に D1、R2、Queues、Workers AI、Cron Triggers、vars を置き、レート制限の上限と窓も含めた。D1 の `database_id` は `2b764b0f-85ea-4582-932a-479d9c83d14f` とし、RP_ID と Origin は `warrior.phack.workers.dev`、Google のクライアント ID とリダイレクト URI は production のホスト名に合わせた。R2 は `warrior-ai-and-exports`、Queue は `warrior-ai-and-rest-push` とした。VAPID の公開鍵と `mailto:shoichi.furuya.0612@gmail.com` の subject も設定した。
 `wrangler deploy --dry-run --env production` が成功し、production へデプロイした後に `GET https://warrior.phack.workers.dev/api/health` が 200 と `{"status":"ok"}` を返すことを確認した。
-残りは R2 と Queues の作成確認、R2 のライフサイクルルール、Google OAuth のリダイレクト URI の登録、VAPID の秘密鍵と Google のクライアントシークレットの Secret、D1 のマイグレーションの適用である。
+`wrangler d1 migrations list` は未適用なし、`wrangler secret list` は `GOOGLE_CLIENT_SECRET` と `VAPID_PRIVATE_KEY` を含み、R2 の `exports/` に 7 日の削除、Queue に producer と consumer があることを確認した。残りは Google OAuth のリダイレクト URI の登録と、Google ログインの開始からコールバックまでの確認である。
 
 ## 止める理由
 

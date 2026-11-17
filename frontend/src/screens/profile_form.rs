@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 use warrior_core::nutrition::{ActivityLevel, Goal, Sex};
 use warrior_core::profile::{Profile, SafetyNotice, TrainingExperience};
 
+use crate::date_select::DateSelect;
 use crate::profile::{
     activity_options, choice_class, experience_options, goal_options, pressed, sex_options, today,
     ProfileForm,
@@ -39,13 +40,20 @@ pub fn ProfileFields(form: Signal<ProfileForm>, show_settings: bool) -> Element 
                     form.write().weight_kg = value;
                 },
             }
-            BodyFieldInput {
-                field: BodyField::BirthDate,
-                value: current.birth_date.clone(),
-                on_input: move |value| {
-                    let mut form = form;
-                    form.write().birth_date = value;
-                },
+            div {
+                class: "flex flex-col gap-1",
+                "data-profile-field": "birth-date",
+                label { class: "text-[13px] font-bold", r#for: "profile-birth-date", "{text(Key::ProfileBirthDateLabel)}" }
+                DateSelect {
+                    value: current.birth_date.clone(),
+                    min_year: 1900,
+                    max_year: today().map_or(2026, |date| date.year()),
+                    name: "profile-birth-date",
+                    on_change: move |value| {
+                        let mut form = form;
+                        form.write().birth_date = value;
+                    },
+                }
             }
             ChoiceGroup { label: text(Key::ProfileSexLabel) }
             div { "data-profile-sex": "true",

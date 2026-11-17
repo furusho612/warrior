@@ -4,13 +4,36 @@ use dioxus::prelude::*;
 use dioxus_router::{router, Link, Outlet};
 
 use crate::record_rail::RecordRailState;
-use crate::routes::{tab_is_active, tab_key, tab_route, Route, Tab, TABS};
+use crate::routes::{navigate, tab_is_active, tab_key, tab_route, Route, Tab, TABS};
 use crate::screens::record::{RecordWakeLock, RestTimerBar};
 use crate::text::{text, Key};
 
 /// 全ての画面を包む共通の枠。
 #[component]
 pub fn AppShell() -> Element {
+    let authenticated = use_signal(|| false);
+    let auth_checked = authenticated;
+    use_effect(move || {
+        let mut authenticated = auth_checked;
+        spawn(async move {
+            if crate::http::request_json::<serde_json::Value>("GET", "/api/me")
+                .await
+                .is_err()
+            {
+                navigate("/login");
+                return;
+            }
+            authenticated.set(true);
+        });
+    });
+    if !authenticated() {
+        return rsx! {
+            div {
+                class: "flex h-dvh w-full items-center justify-center bg-bg text-text",
+                "data-auth-check": "true",
+            }
+        };
+    }
     let current = router().current::<Route>();
     let route_name = crate::routes::route_name(&current);
     let record = matches!(current, Route::Record {} | Route::RecordSession { .. });
@@ -21,7 +44,7 @@ pub fn AppShell() -> Element {
 
     rsx! {
         div {
-            class: "mx-auto flex min-h-dvh w-full max-w-[390px] flex-col overflow-x-hidden bg-bg text-text",
+            class: "mx-auto flex h-dvh w-full max-w-[390px] flex-col overflow-hidden bg-bg text-text",
             "data-route": route_name,
             div { class: "shrink-0 pt-[54px]" }
             header { class: "flex h-11 shrink-0 items-center border-b border-line px-5",
