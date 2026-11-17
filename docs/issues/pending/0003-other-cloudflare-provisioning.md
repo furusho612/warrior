@@ -65,7 +65,7 @@ Relying Party ID と Origin は production のホスト名に固定する。
 ## 進捗
 
 `wrangler.toml` の `[env.production]` に D1、R2、Queues、Workers AI、Cron Triggers、vars を置き、レート制限の上限と窓も含めた。D1 の `database_id` は `2b764b0f-85ea-4582-932a-479d9c83d14f` とし、RP_ID と Origin は `warrior.phack.workers.dev`、Google のクライアント ID とリダイレクト URI は production のホスト名に合わせた。R2 は `warrior-ai-and-exports`、Queue は `warrior-ai-and-rest-push` とした。VAPID の公開鍵と `mailto:shoichi.furuya.0612@gmail.com` の subject も設定した。
-`wrangler deploy --dry-run --env production` が成功することを確認した。
+`wrangler deploy --dry-run --env production` が成功し、production へデプロイした後に `GET https://warrior.phack.workers.dev/api/health` が 200 と `{"status":"ok"}` を返すことを確認した。
 残りは R2 と Queues の作成確認、R2 のライフサイクルルール、Google OAuth のリダイレクト URI の登録、VAPID の秘密鍵と Google のクライアントシークレットの Secret、D1 のマイグレーションの適用である。
 
 ## 止める理由
