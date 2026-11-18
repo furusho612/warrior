@@ -343,6 +343,23 @@ pub async fn select_exercise(driver: &WebDriver, exercise_id: &str) {
     wait_for_attribute(driver, &row, "data-selected", "true").await;
 }
 
+/// 同じオリジンの JSON を fetch で読み、UTF-8 の本文を返す。
+pub async fn get_json_text(driver: &WebDriver, url: &str) -> String {
+    driver
+        .execute_async(
+            "const done = arguments[arguments.length - 1]; \
+             fetch(arguments[0]).then((response) => response.text()).then(done) \
+               .catch((error) => done(String(error)));",
+            vec![serde_json::json!(url)],
+        )
+        .await
+        .expect("the JSON response must be readable")
+        .json()
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// ページを開き、本文が現れるまで待って返す。
 pub async fn get_text(driver: &WebDriver, url: &str) -> String {
     driver.goto(url).await.expect("the page must open");

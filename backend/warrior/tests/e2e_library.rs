@@ -83,6 +83,13 @@ async fn login(driver: &WebDriver, server: &DevServer, provider: &TestOidc) {
         .expect("the test user must be selected");
     browser::login_with_google(driver, server).await;
     browser::wait_for_route(driver, "/").await;
+    browser::wait_for_attribute(
+        driver,
+        "[data-start]",
+        "data-active-session-checked",
+        "true",
+    )
+    .await;
 }
 
 async fn check_initial_page(driver: &WebDriver) {
