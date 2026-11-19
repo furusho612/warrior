@@ -376,7 +376,8 @@ fn the_push_subscription_requests_are_rate_limited_per_user() {
         RATE_LIMIT_PORT,
         &[
             ("RATE_LIMIT_PUSH_USER", "1"),
-            ("RATE_LIMIT_PUSH_WINDOW", "60"),
+            // テストの途中で窓が切り替わらないよう、長い窓を使う。
+            ("RATE_LIMIT_PUSH_WINDOW", "3600"),
         ],
     );
     server
