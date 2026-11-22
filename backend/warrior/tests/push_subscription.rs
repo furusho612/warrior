@@ -27,6 +27,8 @@ const TERMINAL_SEED: u8 = 51;
 const SECOND_TERMINAL_SEED: u8 = 52;
 const OTHER_TERMINAL_SEED: u8 = 53;
 const NOW: &str = "2026-11-12T00:00:00Z";
+/// レート制限のテストで使う窓。テスト中に切り替わらない長さにする。
+const RATE_LIMIT_WINDOW: &str = "3600";
 
 #[test]
 fn the_push_endpoint_allowlist_and_the_upsert_are_enforced() {
@@ -376,8 +378,7 @@ fn the_push_subscription_requests_are_rate_limited_per_user() {
         RATE_LIMIT_PORT,
         &[
             ("RATE_LIMIT_PUSH_USER", "1"),
-            // テストの途中で窓が切り替わらないよう、長い窓を使う。
-            ("RATE_LIMIT_PUSH_WINDOW", "3600"),
+            ("RATE_LIMIT_PUSH_WINDOW", RATE_LIMIT_WINDOW),
         ],
     );
     server
@@ -412,7 +413,7 @@ fn the_push_subscription_requests_are_rate_limited_per_user() {
         .header("retry-after")
         .and_then(|value| value.parse::<u64>().ok())
         .expect("Retry-After");
-    assert!((1..=60).contains(&retry));
+    assert!((1..=RATE_LIMIT_WINDOW.parse::<u64>().expect("the window")).contains(&retry));
     assert_eq!(
         subscription_count(&server, USER_ID),
         1,

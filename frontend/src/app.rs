@@ -42,6 +42,14 @@ pub fn App() -> Element {
             sync::start().await;
         });
     });
+    use_effect(move || {
+        if let Some(root) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.document_element())
+        {
+            let _ = root.set_attribute("data-app-ready", "true");
+        }
+    });
 
     rsx! {
         PwaBanner {}

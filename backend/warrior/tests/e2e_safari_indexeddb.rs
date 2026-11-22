@@ -41,6 +41,7 @@ async fn safari_restores_the_record_screen_memo_and_sets_after_reload() {
         .await
         .expect("the record page must open");
     browser::wait_for_route(&driver, "/record").await;
+    browser::wait_for_attribute(&driver, "html", "data-app-ready", "true").await;
     browser::click_text(&driver, "記録を開始").await;
     browser::wait_for_route(&driver, "/record/:training_id").await;
     let training_id = browser::attribute(&driver, "[data-session-id]", "data-session-id").await;
