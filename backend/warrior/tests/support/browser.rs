@@ -291,7 +291,10 @@ pub async fn click(driver: &WebDriver, selector: &str) {
     }
 }
 
-/// 数値の入力要素を空にして、値を入れる。
+/// 入力要素を空にして、値を入れる。
+///
+/// WebDriver の `clear` はブラウザによって input イベントを発火しない。
+/// 空にするときは空白を入れてから消し、画面の状態を空へ更新させる。
 pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
     let input = driver
         .find(By::Css(selector))
@@ -301,6 +304,7 @@ pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
         .clear()
         .await
         .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
+    let value = if value.is_empty() { " \u{e003}" } else { value };
     input
         .send_keys(value)
         .await
@@ -444,13 +448,14 @@ pub async fn wait_for_attribute_within(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        if attribute(driver, selector, attribute_name).await == expected {
+        let current = attribute(driver, selector, attribute_name).await;
+        if current == expected {
             return;
         }
         if Instant::now() >= deadline {
             let logs = driver.get_log("browser").await.unwrap_or_default();
             panic!(
-                "the attribute {attribute_name} of {selector} did not become {expected} within {timeout:?}: URL {:?}; logs: {logs:?}",
+                "the attribute {attribute_name} of {selector} did not become {expected} within {timeout:?} (current {current:?}): URL {:?}; logs: {logs:?}",
                 driver.current_url().await
             );
         }
