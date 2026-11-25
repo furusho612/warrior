@@ -68,7 +68,7 @@ async fn keeps_the_settings_and_display_mode_across_reloads_and_users() {
     browser::wait_for_value(&driver, "[data-settings-rest-default]", "90").await;
     browser::wait_for_attribute(
         &driver,
-        "[data-display-mode=\"system\"]",
+        "button[data-display-mode=\"system\"]",
         "aria-pressed",
         "true",
     )
@@ -87,7 +87,7 @@ async fn keeps_the_settings_and_display_mode_across_reloads_and_users() {
     )
     .await;
 
-    browser::click(&driver, "[data-display-mode=\"dark\"]").await;
+    browser::click(&driver, "button[data-display-mode=\"dark\"]").await;
     browser::wait_for_attribute(&driver, "html", "data-theme", "dark").await;
     wait_for_setting(&server, &user_a, "display_mode", "dark").await;
     browser::click(&driver, "[data-pfc-protein]").await;
@@ -116,13 +116,18 @@ async fn keeps_the_settings_and_display_mode_across_reloads_and_users() {
         "the saved display mode must be applied before the settings are fetched"
     );
     assert_eq!(
-        browser::attribute(&driver, "[data-display-mode=\"dark\"]", "aria-pressed").await,
+        browser::attribute(
+            &driver,
+            "button[data-display-mode=\"dark\"]",
+            "aria-pressed"
+        )
+        .await,
         "true"
     );
     browser::wait_for_value(&driver, "[data-pfc-protein]", "1.8").await;
     browser::wait_for_value(&driver, "[data-pfc-fat]", "25").await;
 
-    browser::click(&driver, "[data-display-mode=\"system\"]").await;
+    browser::click(&driver, "button[data-display-mode=\"system\"]").await;
     browser::wait_for_attribute(&driver, "html", "data-display-mode", "system").await;
     wait_for_setting(&server, &user_a, "display_mode", "system").await;
     emulate_device_mode(&driver, "dark").await;
@@ -130,7 +135,7 @@ async fn keeps_the_settings_and_display_mode_across_reloads_and_users() {
     emulate_device_mode(&driver, "light").await;
     browser::wait_for_attribute(&driver, "html", "data-theme", "light").await;
 
-    browser::click(&driver, "[data-display-mode=\"dark\"]").await;
+    browser::click(&driver, "button[data-display-mode=\"dark\"]").await;
     browser::wait_for_attribute(&driver, "html", "data-theme", "dark").await;
     wait_for_setting(&server, &user_a, "display_mode", "dark").await;
 
@@ -141,7 +146,7 @@ async fn keeps_the_settings_and_display_mode_across_reloads_and_users() {
     browser::wait_for_value(&driver, "[data-settings-rest-default]", "90").await;
     browser::wait_for_attribute(
         &driver,
-        "[data-display-mode=\"system\"]",
+        "button[data-display-mode=\"system\"]",
         "aria-pressed",
         "true",
     )
@@ -173,7 +178,7 @@ async fn open_mypage(driver: &WebDriver, server: &DevServer) {
     browser::wait_for_route(driver, "/mypage").await;
     browser::wait_for_attribute(
         driver,
-        "[data-route=\"/mypage\"]",
+        "section[data-route=\"/mypage\"]",
         "data-settings-loaded",
         "true",
     )
@@ -185,7 +190,7 @@ async fn open_after_reload(driver: &WebDriver, server: &DevServer) {
     browser::wait_for_route(driver, "/mypage").await;
     browser::wait_for_attribute(
         driver,
-        "[data-route=\"/mypage\"]",
+        "section[data-route=\"/mypage\"]",
         "data-settings-loaded",
         "true",
     )
