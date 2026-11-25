@@ -198,6 +198,59 @@ pub async fn login_with_google(driver: &WebDriver, server: &DevServer) {
         .await
         .expect("the Google login button must be clickable");
     wait_for_route(driver, "/").await;
+    wait_for_home(driver, server).await;
+}
+
+/// ホームの準備ができるまで待つ。
+///
+/// 端末内の記録の確認が一度だけ遅れることがあるため、
+/// 待ち切れないときはホームを読み直す。
+async fn wait_for_home(driver: &WebDriver, server: &DevServer) {
+    for _ in 0..3 {
+        if attribute_becomes(
+            driver,
+            "[data-start]",
+            "data-active-session-checked",
+            "true",
+            Duration::from_secs(15),
+        )
+        .await
+        {
+            return;
+        }
+        driver
+            .goto(format!("{}/", server.origin()))
+            .await
+            .expect("the home must reload");
+        wait_for_route(driver, "/").await;
+    }
+    wait_for_attribute(
+        driver,
+        "[data-start]",
+        "data-active-session-checked",
+        "true",
+    )
+    .await;
+}
+
+/// 要素の属性が期待値になるまで待ち、時間内に変わらなければ false を返す。
+async fn attribute_becomes(
+    driver: &WebDriver,
+    selector: &str,
+    attribute_name: &str,
+    expected: &str,
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if attribute(driver, selector, attribute_name).await == expected {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
 }
 
 /// ログアウトの要求を送る。
