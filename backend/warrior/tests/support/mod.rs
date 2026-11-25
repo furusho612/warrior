@@ -21,6 +21,7 @@ pub mod record_common;
 pub mod record_unilateral_superset;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const D1_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const R2_BUCKET: &str = "warrior-local";
 static R2_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -139,8 +140,11 @@ impl DevServer {
     }
 
     /// ローカルの D1 で SQL を実行し、結果の JSON を返す。
+    ///
+    /// 起動中の dev サーバーが D1 を書き込んでいる間は SQLite が一時的にロックされる。
+    /// ロックが解けるまで同じ要求を繰り返す。
     pub fn execute_d1_json(&self, sql: &str) -> Result<serde_json::Value, String> {
-        let output = self.run_wrangler(&[
+        let arguments = [
             "d1",
             "execute",
             "DB",
@@ -150,9 +154,24 @@ impl DevServer {
             "--command",
             sql,
             "--json",
-        ])?;
-        serde_json::from_str(&output)
-            .map_err(|error| format!("the d1 output must be JSON but was {output}: {error}"))
+        ];
+        let deadline = Instant::now() + D1_LOCK_TIMEOUT;
+        loop {
+            match self.run_wrangler(&arguments) {
+                Ok(output) => {
+                    return serde_json::from_str(&output).map_err(|error| {
+                        format!("the d1 output must be JSON but was {output}: {error}")
+                    });
+                }
+                Err(error)
+                    if (error.contains("database is locked") || error.contains("SQLITE_BUSY"))
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// ローカルの D1 で SQL ファイルを実行する。
