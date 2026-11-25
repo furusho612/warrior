@@ -311,6 +311,34 @@ pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
         .unwrap_or_else(|error| panic!("the input {selector} must be typed: {error}"));
 }
 
+/// 入力要素の値が指定した文字列になるまで、入力し直す。
+///
+/// 保存のたびに画面が描き直されると、入力中の要素が置き換わり、
+/// 最後の 1 文字が古い要素へ送られることがある。値が一致するまでやり直す。
+pub async fn set_text(driver: &WebDriver, selector: &str, value: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        wait_for_enabled(driver, selector).await;
+        set_input(driver, selector, value).await;
+        let current = match driver.find(By::Css(selector)).await {
+            Ok(element) => element
+                .value()
+                .await
+                .unwrap_or_default()
+                .unwrap_or_default(),
+            Err(_) => String::new(),
+        };
+        if current == value {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the value of {selector} did not become {value:?}: {current:?}"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 /// セレクタの選択要素で、値を選ぶ。
 pub async fn select_value(driver: &WebDriver, selector: &str, value: &str) {
     let select = driver

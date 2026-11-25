@@ -61,6 +61,7 @@ async fn saves_and_shows_the_training_and_exercise_memos() {
     let driver = browser::open(Browser::Chrome, &driver_process).await;
 
     login(&driver, &server, &provider).await;
+    let cookie = cookie_header(&driver).await;
     seed_profile(&server, &current_user_id(&driver).await);
     driver
         .goto(format!("{origin}/record"))
@@ -69,16 +70,16 @@ async fn saves_and_shows_the_training_and_exercise_memos() {
     browser::wait_for_present(&driver, "[data-start-record]").await;
     let training_id = start_training(&driver).await;
 
-    type_into(&driver, "textarea[data-memo]", SESSION_MEMO).await;
-    wait_for_session_memo(&server, &training_id, SESSION_MEMO).await;
+    browser::set_text(&driver, "textarea[data-memo]", SESSION_MEMO).await;
+    wait_for_session_memo(&server, &cookie, &training_id, SESSION_MEMO).await;
 
     browser::add_exercise(&driver, BENCH_EXERCISE_ID).await;
     browser::select_exercise(&driver, BENCH_EXERCISE_ID).await;
     let exercise_memo = format!(
         "[data-exercise-detail][data-exercise-id=\"{BENCH_EXERCISE_ID}\"] textarea[data-exercise-memo]"
     );
-    type_into(&driver, &exercise_memo, EXERCISE_MEMO).await;
-    wait_for_exercise_memo(&server, &training_id, EXERCISE_MEMO).await;
+    browser::set_text(&driver, &exercise_memo, EXERCISE_MEMO).await;
+    wait_for_exercise_memo(&server, &cookie, &training_id, EXERCISE_MEMO).await;
 
     // 読み直しても、端末内の保存から同じメモを読み出せる。
     driver
@@ -150,11 +151,11 @@ async fn saves_and_shows_the_training_and_exercise_memos() {
     browser::wait_for_present(&driver, "[data-record-finished]").await;
     let edited_session_memo = format!("{SESSION_MEMO}\n編集した");
     let edited_exercise_memo = format!("{EXERCISE_MEMO}\n編集した");
-    replace_into(&driver, "textarea[data-memo]", &edited_session_memo).await;
-    wait_for_session_memo(&server, &training_id, &edited_session_memo).await;
+    browser::set_text(&driver, "textarea[data-memo]", &edited_session_memo).await;
+    wait_for_session_memo(&server, &cookie, &training_id, &edited_session_memo).await;
     browser::select_exercise(&driver, BENCH_EXERCISE_ID).await;
-    replace_into(&driver, &exercise_memo, &edited_exercise_memo).await;
-    wait_for_exercise_memo(&server, &training_id, &edited_exercise_memo).await;
+    browser::set_text(&driver, &exercise_memo, &edited_exercise_memo).await;
+    wait_for_exercise_memo(&server, &cookie, &training_id, &edited_exercise_memo).await;
     driver
         .goto(format!("{origin}/record/{training_id}"))
         .await
@@ -201,43 +202,30 @@ async fn start_training(driver: &WebDriver) -> String {
     training_id
 }
 
-async fn type_into(driver: &WebDriver, selector: &str, text: &str) {
-    browser::wait_for_enabled(driver, selector).await;
-    let element = memo_element(driver, selector).await;
-    element.click().await.expect("the memo must be focusable");
-    for character in text.chars() {
-        element
-            .send_keys(character.to_string())
-            .await
-            .expect("the memo character must be typed");
-    }
-}
-
-async fn replace_into(driver: &WebDriver, selector: &str, text: &str) {
-    browser::wait_for_enabled(driver, selector).await;
-    let element = memo_element(driver, selector).await;
-    element.clear().await.expect("the memo must be clearable");
-    element.click().await.expect("the memo must be focusable");
-    for character in text.chars() {
-        element
-            .send_keys(character.to_string())
-            .await
-            .expect("the memo character must be typed");
-    }
-}
-
-async fn memo_element(driver: &WebDriver, selector: &str) -> WebElement {
+async fn cookie_header(driver: &WebDriver) -> String {
     driver
-        .find(By::Css(selector))
+        .get_all_cookies()
         .await
-        .unwrap_or_else(|error| panic!("the memo {selector} must exist: {error}"))
+        .expect("the browser cookies must be readable")
+        .iter()
+        .map(|cookie| format!("{}={}", cookie.name, cookie.value))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
-async fn wait_for_session_memo(server: &DevServer, training_id: &str, expected: &str) {
+async fn wait_for_session_memo(
+    server: &DevServer,
+    cookie: &str,
+    training_id: &str,
+    expected: &str,
+) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
-        let sql = format!("SELECT memo FROM training_sessions WHERE id = '{training_id}'");
-        let memo = d1_text(server, &sql, "memo");
+        let record = training_record(server, cookie, training_id);
+        let memo = record["session"]["memo"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         if memo == expected {
             return;
         }
@@ -249,14 +237,21 @@ async fn wait_for_session_memo(server: &DevServer, training_id: &str, expected: 
     }
 }
 
-async fn wait_for_exercise_memo(server: &DevServer, training_id: &str, expected: &str) {
+async fn wait_for_exercise_memo(
+    server: &DevServer,
+    cookie: &str,
+    training_id: &str,
+    expected: &str,
+) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
-        let sql = format!(
-            "SELECT memo FROM training_exercises \
-             WHERE training_id = '{training_id}' ORDER BY position LIMIT 1"
-        );
-        let memo = d1_text(server, &sql, "memo");
+        let record = training_record(server, cookie, training_id);
+        let memo = record["exercises"]
+            .as_array()
+            .and_then(|exercises| exercises.first())
+            .and_then(|exercise| exercise["memo"].as_str())
+            .unwrap_or_default()
+            .to_owned();
         if memo == expected {
             return;
         }
@@ -266,6 +261,16 @@ async fn wait_for_exercise_memo(server: &DevServer, training_id: &str, expected:
         );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+fn training_record(server: &DevServer, cookie: &str, training_id: &str) -> serde_json::Value {
+    let response = server.request(
+        "GET",
+        &format!("/api/trainings/{training_id}"),
+        &[("Cookie", cookie)],
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    serde_json::from_str(&response.body).expect("the training record is JSON")
 }
 
 fn d1_text(server: &DevServer, sql: &str, column: &str) -> String {
