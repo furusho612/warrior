@@ -120,19 +120,15 @@ async fn saves_and_shows_the_training_and_exercise_memos() {
     );
 
     // AI に渡す user メッセージに、トレーニングと種目のメモが入る。
-    let session_memo = d1_text(
-        &server,
-        &format!("SELECT memo FROM training_sessions WHERE id = '{training_id}'"),
-        "memo",
-    );
-    let exercise_memo_value = d1_text(
-        &server,
-        &format!(
-            "SELECT memo FROM training_exercises \
-             WHERE training_id = '{training_id}' ORDER BY position LIMIT 1"
-        ),
-        "memo",
-    );
+    let record = training_record(&server, &cookie, &training_id);
+    let session_memo = record["session"]["memo"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let exercise_memo_value = record["exercises"][0]["memo"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     assert_eq!(session_memo, SESSION_MEMO);
     assert_eq!(exercise_memo_value, EXERCISE_MEMO);
     let prompt = ai_user_message(&session_memo, &exercise_memo_value);
@@ -271,19 +267,6 @@ fn training_record(server: &DevServer, cookie: &str, training_id: &str) -> serde
     );
     assert_eq!(response.status, 200, "{}", response.body);
     serde_json::from_str(&response.body).expect("the training record is JSON")
-}
-
-fn d1_text(server: &DevServer, sql: &str, column: &str) -> String {
-    server
-        .execute_d1_json(sql)
-        .expect("the query must run")
-        .get(0)
-        .and_then(|entry| entry.get("results"))
-        .and_then(|rows| rows.get(0))
-        .and_then(|row| row.get(column))
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_owned()
 }
 
 fn ai_user_message(session_memo: &str, exercise_memo: &str) -> serde_json::Value {
