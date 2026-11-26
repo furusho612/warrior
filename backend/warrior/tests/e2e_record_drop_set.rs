@@ -366,12 +366,6 @@ async fn wait_for_set_deleted(server: &DevServer, set_id: &str) {
 async fn finish_and_check_the_summary(driver: &WebDriver) {
     browser::click(driver, "[data-finish]").await;
     browser::wait_for_route(driver, "/summary/:training_id").await;
-    assert_eq!(
-        browser::attribute(driver, "[data-summary]", "data-set-count").await,
-        "2"
-    );
-    assert_eq!(
-        browser::attribute(driver, "[data-summary]", "data-total-weight-kg").await,
-        "1740"
-    );
+    browser::wait_for_attribute(driver, "[data-summary]", "data-set-count", "2").await;
+    browser::wait_for_attribute(driver, "[data-summary]", "data-total-weight-kg", "1740").await;
 }
