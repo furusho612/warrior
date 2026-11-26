@@ -1,11 +1,16 @@
 //! ホーム。次のメニュー、開始、今週の実施状況、部位ごとの回復状況。
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use warrior_core::body_part_analysis::{AnalysisMetric, AnalysisPeriod, BodyPartAnalysis};
 use warrior_core::exercise::BodyPart;
 use warrior_core::recovery::{RecoveryState, RecoveryStatus};
 use warrior_core::routine::Routine;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 
 use crate::analysis as analysis_api;
 use crate::calendar_view::part_label;
@@ -27,9 +32,35 @@ const DIAL_PARTS: [(BodyPart, &str, &str); 7] = [
     (BodyPart::Abs, "16%", "22.9%"),
 ];
 
+/// 端末内の確認が終わらないときに、開始ボタンを有効にするまでの時間。
+const STORAGE_CHECK_TIMEOUT_MS: i32 = 10_000;
+
+/// 端末内の確認が終わらない場合に備え、開始ボタンを有効にするタイマーを仕掛ける。
+fn schedule_checked_fallback(mut checked: Signal<bool>, done: Rc<Cell<bool>>) -> Option<i32> {
+    let window = web_sys::window()?;
+    let callback = Closure::once_into_js(move || {
+        if !done.get() {
+            checked.set(true);
+        }
+    });
+    window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            callback.unchecked_ref(),
+            STORAGE_CHECK_TIMEOUT_MS,
+        )
+        .ok()
+}
+
+/// 仕掛けたタイマーを取り消す。
+fn clear_checked_fallback(timeout: Option<i32>) {
+    if let (Some(timeout), Some(window)) = (timeout, web_sys::window()) {
+        window.clear_timeout_with_handle(timeout);
+    }
+}
+
 #[component]
 pub fn HomeScreen() -> Element {
-    let mut checked = use_signal(|| false);
+    let checked = use_signal(|| false);
     let starting = use_signal(|| false);
     let error = use_signal(|| Option::<String>::None);
     let mut show_onboarding = use_signal(|| false);
@@ -37,6 +68,9 @@ pub fn HomeScreen() -> Element {
     let current = use_signal(|| Option::<program_api::CurrentProgram>::None);
     let routines = use_signal(Vec::<Routine>::new);
     let unsaved = use_signal(|| false);
+    let check_timeout = use_hook(|| Rc::new(Cell::new(None::<i32>)));
+    let drop_timeout = check_timeout.clone();
+    use_drop(move || clear_checked_fallback(drop_timeout.take()));
     let weekly = use_signal(|| Option::<BodyPartAnalysis>::None);
     let recovery = use_signal(|| Option::<RecoveryStatus>::None);
     let load_error = use_signal(|| Option::<String>::None);
@@ -53,10 +87,17 @@ pub fn HomeScreen() -> Element {
     });
 
     use_effect(move || {
+        let mut checked = checked;
         let mut unsaved = unsaved;
+        let done = Rc::new(Cell::new(false));
+        check_timeout.set(schedule_checked_fallback(checked, done.clone()));
+        let done_check = done;
+        let timeout_check = check_timeout.clone();
         spawn(async move {
             if let Ok(storage) = storage::current().await {
                 if let Ok(Some(session)) = storage.active_session().await {
+                    done_check.set(true);
+                    clear_checked_fallback(timeout_check.take());
                     navigate(&format!("/record/{}", session.id));
                     return;
                 }
@@ -64,6 +105,8 @@ pub fn HomeScreen() -> Element {
                     unsaved.set(!entries.is_empty());
                 }
             }
+            done_check.set(true);
+            clear_checked_fallback(timeout_check.take());
             checked.set(true);
         });
     });
