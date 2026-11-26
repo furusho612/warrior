@@ -395,13 +395,7 @@ async fn check_the_month_navigation(driver: &WebDriver, dates: &FixtureDates) {
 }
 
 async fn click(driver: &WebDriver, selector: &str) {
-    driver
-        .find(By::Css(selector))
-        .await
-        .unwrap_or_else(|error| panic!("the button {selector} must exist: {error}"))
-        .click()
-        .await
-        .unwrap_or_else(|error| panic!("the button {selector} must be clickable: {error}"));
+    browser::click(driver, selector).await;
 }
 
 async fn legend_color(driver: &WebDriver, part: &str) -> String {

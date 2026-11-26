@@ -274,10 +274,17 @@ pub async fn click(driver: &WebDriver, selector: &str) {
             )
             .await
             .ok();
-        let element = driver
-            .find(By::Css(selector))
-            .await
-            .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
+        let element = match driver.find(By::Css(selector)).await {
+            Ok(element) => element,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the element {selector} must exist: {error}"
+                );
+                std::thread::sleep(POLL_INTERVAL);
+                continue;
+            }
+        };
         match element.click().await {
             Ok(()) => return,
             Err(error) => {
