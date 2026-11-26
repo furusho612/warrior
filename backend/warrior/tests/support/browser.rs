@@ -274,10 +274,17 @@ pub async fn click(driver: &WebDriver, selector: &str) {
             )
             .await
             .ok();
-        let element = driver
-            .find(By::Css(selector))
-            .await
-            .unwrap_or_else(|error| panic!("the element {selector} must exist: {error}"));
+        let element = match driver.find(By::Css(selector)).await {
+            Ok(element) => element,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the element {selector} must exist: {error}"
+                );
+                std::thread::sleep(POLL_INTERVAL);
+                continue;
+            }
+        };
         match element.click().await {
             Ok(()) => return,
             Err(error) => {
@@ -291,7 +298,10 @@ pub async fn click(driver: &WebDriver, selector: &str) {
     }
 }
 
-/// 数値の入力要素を空にして、値を入れる。
+/// 入力要素を空にして、値を入れる。
+///
+/// WebDriver の `clear` はブラウザによって input イベントを発火しない。
+/// 空にするときは空白を入れてから消し、画面の状態を空へ更新させる。
 pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
     let input = driver
         .find(By::Css(selector))
@@ -301,10 +311,39 @@ pub async fn set_input(driver: &WebDriver, selector: &str, value: &str) {
         .clear()
         .await
         .unwrap_or_else(|error| panic!("the input {selector} must be cleared: {error}"));
+    let value = if value.is_empty() { " \u{e003}" } else { value };
     input
         .send_keys(value)
         .await
         .unwrap_or_else(|error| panic!("the input {selector} must be typed: {error}"));
+}
+
+/// 入力要素の値が指定した文字列になるまで、入力し直す。
+///
+/// 保存のたびに画面が描き直されると、入力中の要素が置き換わり、
+/// 最後の 1 文字が古い要素へ送られることがある。値が一致するまでやり直す。
+pub async fn set_text(driver: &WebDriver, selector: &str, value: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        wait_for_enabled(driver, selector).await;
+        set_input(driver, selector, value).await;
+        let current = match driver.find(By::Css(selector)).await {
+            Ok(element) => element
+                .value()
+                .await
+                .unwrap_or_default()
+                .unwrap_or_default(),
+            Err(_) => String::new(),
+        };
+        if current == value {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the value of {selector} did not become {value:?}: {current:?}"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
 }
 
 /// セレクタの選択要素で、値を選ぶ。
@@ -341,6 +380,23 @@ pub async fn select_exercise(driver: &WebDriver, exercise_id: &str) {
     wait_for_present(driver, &row).await;
     click(driver, &row).await;
     wait_for_attribute(driver, &row, "data-selected", "true").await;
+}
+
+/// 同じオリジンの JSON を fetch で読み、UTF-8 の本文を返す。
+pub async fn get_json_text(driver: &WebDriver, url: &str) -> String {
+    driver
+        .execute_async(
+            "const done = arguments[arguments.length - 1]; \
+             fetch(arguments[0]).then((response) => response.text()).then(done) \
+               .catch((error) => done(String(error)));",
+            vec![serde_json::json!(url)],
+        )
+        .await
+        .expect("the JSON response must be readable")
+        .json()
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// ページを開き、本文が現れるまで待って返す。
@@ -427,13 +483,15 @@ pub async fn wait_for_attribute_within(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        if attribute(driver, selector, attribute_name).await == expected {
+        let current = attribute(driver, selector, attribute_name).await;
+        if current == expected {
             return;
         }
         if Instant::now() >= deadline {
             let logs = driver.get_log("browser").await.unwrap_or_default();
             panic!(
-                "the attribute {attribute_name} of {selector} did not become {expected} within {timeout:?}: {logs:?}"
+                "the attribute {attribute_name} of {selector} did not become {expected} within {timeout:?} (current {current:?}): URL {:?}; logs: {logs:?}",
+                driver.current_url().await
             );
         }
         std::thread::sleep(POLL_INTERVAL);

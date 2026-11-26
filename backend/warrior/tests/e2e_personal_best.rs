@@ -265,6 +265,7 @@ async fn record_bests(driver: &WebDriver) -> Vec<(String, f64)> {
 async fn finish_and_check_the_summary(driver: &WebDriver, record_bests: &[(String, f64)]) {
     browser::click(driver, "[data-finish]").await;
     browser::wait_for_route(driver, "/summary/:training_id").await;
+    browser::wait_for_present(driver, "[data-summary]").await;
     let values = browser::eval_json(
         driver,
         "const done = arguments[arguments.length - 1]; \

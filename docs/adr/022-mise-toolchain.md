@@ -20,6 +20,7 @@ Safari と `safaridriver` は macOS に付属するものを使い、mise では
 `cargo-fuzz` は 0.13.2 とし、`cargo:cargo-fuzz` で入れる。
 `ripgrep` は lint の絵文字と禁止語の検査に使い、15.2.0 とする。
 版は `latest` にせず、更新は ADR で記録する。
+Cloudflare のビルド環境が持つグローバル設定のツールを読み込まないよう、`auto_install` を無効にし、ビルドに必要なツールはビルドコマンドで明示的にインストールする。
 
 `mise` のタスクに、セットアップ、整形、lint、単体テスト、PBT、Fuzzing の型検査、結合テスト、ブラウザのテスト、E2E、形式手法、ビルド、Service Worker のビルド、マイグレーション、デプロイを置く。
 `frontend:build-service-worker` を `frontend:build` の依存に置く。

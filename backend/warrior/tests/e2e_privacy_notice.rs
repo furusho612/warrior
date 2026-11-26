@@ -83,6 +83,7 @@ async fn the_ai_privacy_notice_is_visible_on_the_ai_screens_and_can_be_expanded(
     check_notice(&driver, false).await;
     browser::click(&driver, "[data-finish]").await;
     browser::wait_for_route(&driver, "/summary/:training_id").await;
+    browser::wait_for_present(&driver, "[data-summary]").await;
     check_notice(&driver, false).await;
 
     if browser == Browser::Chrome {

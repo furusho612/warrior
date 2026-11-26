@@ -265,14 +265,8 @@ async fn wait_for_set(
 async fn finish_and_check_the_summary(driver: &WebDriver) {
     browser::click(driver, "[data-finish]").await;
     browser::wait_for_route(driver, "/summary/:training_id").await;
-    assert_eq!(
-        browser::attribute(driver, "[data-summary]", "data-set-count").await,
-        "3"
-    );
-    assert_eq!(
-        browser::attribute(driver, "[data-summary]", "data-total-weight-kg").await,
-        "1840"
-    );
+    browser::wait_for_attribute(driver, "[data-summary]", "data-set-count", "3").await;
+    browser::wait_for_attribute(driver, "[data-summary]", "data-total-weight-kg", "1840").await;
 }
 
 async fn current_user_id(driver: &WebDriver) -> String {

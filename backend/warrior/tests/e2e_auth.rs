@@ -28,7 +28,7 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
         .expect("the test user must be selected");
 
     browser::login_with_google(&driver, &server).await;
-    let me = browser::get_text(&driver, &format!("{}/api/me", server.origin())).await;
+    let me = browser::get_json_text(&driver, &format!("{}/api/me", server.origin())).await;
     assert!(me.contains("\"email\":\"alice@example.test\""), "{me}");
     assert!(me.contains("\"display_name\":\"テスト利用者\""), "{me}");
     let first_id = serde_json::from_str::<serde_json::Value>(&me)
@@ -49,8 +49,8 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
     if browser == Browser::Chrome {
         assert_eq!(
             session.secure,
-            Some(true),
-            "the session cookie must be Secure"
+            Some(false),
+            "the local HTTP session cookie must not be Secure"
         );
         assert_eq!(
             session.http_only,
@@ -60,7 +60,7 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
         assert_eq!(session.same_site, Some(SameSite::Lax));
     } else {
         // SafariDriver は Cookie の属性を返さないことがある。属性の正本は結合テストと単体テストで確かめる。
-        assert_ne!(session.secure, Some(false));
+        assert_ne!(session.secure, Some(true));
         assert_ne!(session.http_only, Some(false));
         if let Some(same_site) = session.same_site {
             assert_eq!(same_site, SameSite::Lax);
@@ -97,7 +97,8 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
         .expect("the home page must open");
     browser::wait_for_route(&driver, "/").await;
     browser::logout(&driver).await;
-    let after_logout = browser::get_text(&driver, &format!("{}/api/me", server.origin())).await;
+    let after_logout =
+        browser::get_json_text(&driver, &format!("{}/api/me", server.origin())).await;
     assert!(
         after_logout.contains("\"code\":\"unauthorized\""),
         "{after_logout}"
@@ -130,7 +131,7 @@ async fn wrangler_google_login_creates_and_revokes_a_session_in_a_browser() {
     );
 
     browser::login_with_google(&driver, &server).await;
-    let again = browser::get_text(&driver, &format!("{}/api/me", server.origin())).await;
+    let again = browser::get_json_text(&driver, &format!("{}/api/me", server.origin())).await;
     assert!(
         again.contains("\"email\":\"alice@example.test\""),
         "{again}"
@@ -173,8 +174,8 @@ fn check_terminal_cookie(browser: Browser, terminal: &Cookie) {
     if browser == Browser::Chrome {
         assert_eq!(
             terminal.secure,
-            Some(true),
-            "the terminal cookie must be Secure"
+            Some(false),
+            "the local HTTP terminal cookie must not be Secure"
         );
         assert_eq!(
             terminal.http_only,
@@ -184,7 +185,7 @@ fn check_terminal_cookie(browser: Browser, terminal: &Cookie) {
         assert_eq!(terminal.same_site, Some(SameSite::Lax));
     } else {
         // SafariDriver は Cookie の属性を返さないことがある。属性の正本は結合テストと単体テストで確かめる。
-        assert_ne!(terminal.secure, Some(false));
+        assert_ne!(terminal.secure, Some(true));
         assert_ne!(terminal.http_only, Some(false));
         if let Some(same_site) = terminal.same_site {
             assert_eq!(same_site, SameSite::Lax);

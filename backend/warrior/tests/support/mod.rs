@@ -21,6 +21,7 @@ pub mod record_common;
 pub mod record_unilateral_superset;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const D1_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const R2_BUCKET: &str = "warrior-local";
 static R2_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -41,6 +42,7 @@ impl DevServer {
 
     /// vars を上書きして `wrangler dev` を起動する。
     pub fn start_with_vars(port: u16, vars: &[(&str, &str)]) -> Self {
+        wait_for_port_free(port);
         let persist_dir = unique_persist_dir();
         fs::create_dir_all(&persist_dir).expect("the persistence directory must be created");
         let root = repository_root();
@@ -138,8 +140,11 @@ impl DevServer {
     }
 
     /// ローカルの D1 で SQL を実行し、結果の JSON を返す。
+    ///
+    /// 起動中の dev サーバーが D1 を書き込んでいる間は SQLite が一時的にロックされる。
+    /// ロックが解けるまで同じ要求を繰り返す。
     pub fn execute_d1_json(&self, sql: &str) -> Result<serde_json::Value, String> {
-        let output = self.run_wrangler(&[
+        let arguments = [
             "d1",
             "execute",
             "DB",
@@ -149,9 +154,24 @@ impl DevServer {
             "--command",
             sql,
             "--json",
-        ])?;
-        serde_json::from_str(&output)
-            .map_err(|error| format!("the d1 output must be JSON but was {output}: {error}"))
+        ];
+        let deadline = Instant::now() + D1_LOCK_TIMEOUT;
+        loop {
+            match self.run_wrangler(&arguments) {
+                Ok(output) => {
+                    return serde_json::from_str(&output).map_err(|error| {
+                        format!("the d1 output must be JSON but was {output}: {error}")
+                    });
+                }
+                Err(error)
+                    if (error.contains("database is locked") || error.contains("SQLITE_BUSY"))
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// ローカルの D1 で SQL ファイルを実行する。
@@ -315,6 +335,7 @@ pub struct TestOidc {
 impl TestOidc {
     /// テスト専用の OIDC の提供者を起動し、health が 200 になるまで待つ。
     pub fn start(port: u16) -> Self {
+        wait_for_port_free(port);
         let binary =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/warrior_test_oidc");
         let child = Command::new(&binary)
@@ -369,6 +390,18 @@ fn stop_process_group(child: &mut Child) {
         .args(["-KILL", "--", &group.to_string()])
         .stderr(Stdio::null())
         .status();
+}
+
+fn wait_for_port_free(port: u16) {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "the port {port} is still used by another process"
+        );
+        std::thread::sleep(POLL_INTERVAL);
+    }
 }
 
 fn wait_for_http(port: u16, path: &str) {

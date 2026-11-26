@@ -530,14 +530,8 @@ async fn wait_for_side_durations(server: &DevServer, set: &str, left: i64, right
 async fn finish_and_check_the_summary(driver: &WebDriver) {
     browser::click(driver, "[data-finish]").await;
     browser::wait_for_route(driver, "/summary/:training_id").await;
-    assert_eq!(
-        browser::attribute(driver, "[data-summary]", "data-total-weight-kg").await,
-        "0"
-    );
-    assert_eq!(
-        browser::attribute(driver, "[data-summary]", "data-set-count").await,
-        "3"
-    );
+    browser::wait_for_attribute(driver, "[data-summary]", "data-total-weight-kg", "0").await;
+    browser::wait_for_attribute(driver, "[data-summary]", "data-set-count", "3").await;
     let kinds = browser::eval_json(
         driver,
         "const done = arguments[arguments.length - 1]; \

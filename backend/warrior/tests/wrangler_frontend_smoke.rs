@@ -7,16 +7,52 @@ mod support;
 
 use serde_json::Value;
 use support::browser::{self, Browser};
-use support::DevServer;
+use support::{DevServer, TestOidc};
 use thirtyfour::WebDriver;
+
+const SERVER_PORT: u16 = 8795;
+const PROVIDER_PORT: u16 = 8796;
 
 #[tokio::test]
 async fn wrangler_frontend_smoke_opens_every_route_and_the_record_shell() {
     let browser = Browser::from_env();
-    let server = DevServer::start(8795);
+    let origin = format!("http://localhost:{SERVER_PORT}");
+    let provider_origin = format!("http://localhost:{PROVIDER_PORT}");
+    let server = DevServer::start_with_vars(
+        SERVER_PORT,
+        &[
+            ("ORIGIN", origin.as_str()),
+            (
+                "GOOGLE_OAUTH_AUTHORIZE_URL",
+                format!("{provider_origin}/authorize").as_str(),
+            ),
+            ("GOOGLE_OAUTH_ISSUER", provider_origin.as_str()),
+            (
+                "GOOGLE_OAUTH_TOKEN_URL",
+                format!("{provider_origin}/token").as_str(),
+            ),
+            (
+                "GOOGLE_OAUTH_USERINFO_URL",
+                format!("{provider_origin}/userinfo").as_str(),
+            ),
+            (
+                "GOOGLE_OAUTH_REDIRECT_URI",
+                format!("{origin}/api/auth/google/callback").as_str(),
+            ),
+        ],
+    );
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let provider = TestOidc::start(PROVIDER_PORT);
     let driver_port = browser::free_port();
     let driver_process = browser::DriverProcess::start(browser, driver_port);
     let driver = browser::open(browser, &driver_process).await;
+    driver
+        .goto(format!("{}/test/user?sub=smoke", provider.origin()))
+        .await
+        .expect("the test user must be selected");
+    browser::login_with_google(&driver, &server).await;
 
     for (path, expected) in [
         ("/login", "/login"),
@@ -50,7 +86,7 @@ async fn wrangler_frontend_smoke_opens_every_route_and_the_record_shell() {
     open_route(&driver, &server, "/record", "/record").await;
     let record_shell = eval_json(
         &driver,
-        "return JSON.stringify({nav: document.querySelector('nav') !== null, rail: document.querySelector('aside')?.textContent.trim() ?? null, timer: Array.from(document.querySelectorAll('div')).some((el) => el.textContent.trim() === 'レストタイマー')})",
+        "return JSON.stringify({nav: document.querySelector('nav') !== null, rail: document.querySelector('aside')?.textContent.trim() ?? null, timer: document.querySelector('[data-rest-timer]') !== null})",
     )
     .await;
     assert_eq!(

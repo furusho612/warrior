@@ -246,7 +246,7 @@ async fn finish_as_the_owner(driver: &WebDriver, server: &DevServer, training_id
     }
 }
 
-/// 終了済みの記録を読み直すと、閲覧のみが解けて入力と終了が有効になる。
+/// 終了済みの記録を読み直すと、閲覧のみが解けてメモを編集でき、サマリーを開ける。
 async fn reload_the_finished_record(driver: &WebDriver, server: &DevServer, training_id: &str) {
     driver
         .find(By::Css("[data-reload-server]"))
@@ -256,7 +256,8 @@ async fn reload_the_finished_record(driver: &WebDriver, server: &DevServer, trai
         .await
         .expect("the reload button must be clickable");
     browser::wait_for_enabled(driver, "textarea[data-memo]").await;
-    browser::wait_for_enabled(driver, "button[data-finish]").await;
+    browser::wait_for_present(driver, "[data-record-finished]").await;
+    browser::wait_for_present(driver, "[data-record-summary]").await;
     wait_for_absent(driver, "[data-view-only]").await;
     assert_eq!(
         d1_memo(server, training_id),

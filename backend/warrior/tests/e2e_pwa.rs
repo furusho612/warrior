@@ -7,16 +7,52 @@ mod support;
 
 use serde_json::Value;
 use support::browser::{self, Browser};
-use support::DevServer;
+use support::{DevServer, TestOidc};
 use thirtyfour::prelude::*;
+
+const SERVER_PORT: u16 = 8787;
+const PROVIDER_PORT: u16 = 8788;
 
 #[tokio::test]
 async fn chrome_registers_the_service_worker_and_caches_static_assets() {
-    let server = DevServer::start(8787);
+    let origin = format!("http://localhost:{SERVER_PORT}");
+    let provider_origin = format!("http://localhost:{PROVIDER_PORT}");
+    let server = DevServer::start_with_vars(
+        SERVER_PORT,
+        &[
+            ("ORIGIN", origin.as_str()),
+            (
+                "GOOGLE_OAUTH_AUTHORIZE_URL",
+                &format!("{provider_origin}/authorize"),
+            ),
+            ("GOOGLE_OAUTH_ISSUER", provider_origin.as_str()),
+            (
+                "GOOGLE_OAUTH_TOKEN_URL",
+                &format!("{provider_origin}/token"),
+            ),
+            (
+                "GOOGLE_OAUTH_USERINFO_URL",
+                &format!("{provider_origin}/userinfo"),
+            ),
+            (
+                "GOOGLE_OAUTH_REDIRECT_URI",
+                &format!("{origin}/api/auth/google/callback"),
+            ),
+        ],
+    );
+    server
+        .apply_migrations()
+        .expect("the local D1 migrations must apply");
+    let provider = TestOidc::start(PROVIDER_PORT);
     let driver_port = browser::free_port();
     let driver_process = browser::DriverProcess::start(Browser::Chrome, driver_port);
     let driver = browser::open(Browser::Chrome, &driver_process).await;
 
+    driver
+        .goto(format!("{}/test/user?sub=pwa", provider.origin()))
+        .await
+        .expect("the test user must be selected");
+    browser::login_with_google(&driver, &server).await;
     driver
         .goto(server.origin())
         .await
